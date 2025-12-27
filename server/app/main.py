@@ -88,6 +88,89 @@ async def root():
     lovable_path = os.path.join(static_dir, "lovable-index.html")
     if os.path.exists(lovable_path):
         return FileResponse(lovable_path, media_type="text/html")
+import os
+import logging
+from dotenv import load_dotenv
+
+load_dotenv()  # load .env from project root if present
+
+# Configure logging with colored output when available
+try:
+    import coloredlogs
+
+    coloredlogs.install(level="INFO", fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+logger = logging.getLogger(__name__)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if GEMINI_API_KEY:
+    logger.info("✅ Gemini API key loaded (%d chars)", len(GEMINI_API_KEY))
+    os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
+else:
+    logger.warning(
+        "❌ Gemini API key not found in environment — AI features will use fallbacks"
+    )
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from .api import compat
+from .api.v1.api import api_router
+from .config import settings
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description="SENTINEL-AI: AI-Powered Threat Detection System",
+    docs_url="/api/docs" if settings.DEBUG else None,
+    redoc_url="/api/redoc" if settings.DEBUG else None,
+    openapi_url="/api/openapi.json" if settings.DEBUG else None,
+)
+
+# Add CORS middleware with explicit OPTIONS support
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if settings.DEBUG else [],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
+)
+
+# Add trusted host middleware
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=(["*"] if settings.DEBUG else ["sentinel-ai.local", "api.sentinel-ai.local"]),
+)
+
+# Mount static files (if exists)
+static_path = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+
+# Include API router
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+app.include_router(compat.router, prefix="/api")
+
+
+@app.get("/")
+async def root():
+    """Serve the frontend files with correct Content-Type headers."""
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path, media_type="text/html")
+
+    lovable_path = os.path.join(static_dir, "lovable-index.html")
+    if os.path.exists(lovable_path):
+        return FileResponse(lovable_path, media_type="text/html")
 
     return {
         "message": "Welcome to SENTINEL-AI Threat Detection System",
@@ -104,7 +187,6 @@ async def health():
 
 @app.get("/cors-test")
 async def cors_test_page():
-    """Serve CORS test page."""
     test_path = os.path.join(os.path.dirname(__file__), "static", "cors-test.html")
     if os.path.exists(test_path):
         return FileResponse(test_path, media_type="text/html")

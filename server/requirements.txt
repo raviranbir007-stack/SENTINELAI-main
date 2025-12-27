@@ -1,13 +1,16 @@
 # Core 
-pydantic-core==2.20.0
-pydantic==2.8.0
+# Align pydantic-core with pydantic==2.12.5
+pydantic-core==2.41.5
+# Require modern pydantic compatible with google-genai
+pydantic==2.12.5
 pydantic-settings==2.1.0
-fastapi==0.104.1
+# Allow pip to pick a FastAPI version compatible with anyio v4
+fastapi>=0.118.0
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # Database
-sqlalchemy==2.0.23
+sqlalchemy==2.0.45
 # asyncpg is optional and can fail to build on some Python versions (e.g. 3.13);
 # install it separately if you need Postgres async driver in a compatible environment.
 # asyncpg==0.29.0
@@ -27,10 +30,13 @@ bcrypt==4.1.2
 
 # API Clients
 aiohttp==3.13.2
-httpx==0.25.1
+# Use httpx compatible with google-genai
+httpx==0.28.1
 requests==2.31.0
 
-# Threat Detection APIs
+# AI client: migrate to modern google-genai (preferred). Keep legacy fallback if needed.
+google-genai==1.56.0
+# legacy fallback (optional)
 google-generativeai==0.3.0
 
 # Report Generation
@@ -63,4 +69,5 @@ aiosqlite==0.20.0
 
 # Async testing/runtime helpers
 pytest-asyncio==0.21.0
-anyio==3.7.1
+# anyio v4 required by modern google-genai and newer httpx
+anyio==4.12.0

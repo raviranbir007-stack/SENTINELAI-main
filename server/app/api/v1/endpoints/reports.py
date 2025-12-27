@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from ....core.report_generator import report_generator
 
 # ---------- ReportLab Import Handling ----------
 try:
@@ -75,6 +76,7 @@ Scan Summary:
 # ---------- PDF Generator ----------
 def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
     if not REPORTLAB_AVAILABLE:
+        # If ReportLab is not installed, raise to be handled by endpoint
         raise HTTPException(
             status_code=500,
             detail="ReportLab not installed. Run: pip install reportlab",
@@ -104,6 +106,14 @@ async def generate_report(data: ReportRequest):
         logger.info(f"Generating report for target: {data.target}")
 
         report_text = generate_ai_report(data)
+        # If ReportLab is not available, return the generated report text as JSON
+        if not REPORTLAB_AVAILABLE:
+            return {
+                "target": data.target,
+                "report_text": report_text,
+                "note": "ReportLab not installed. Install with: pip install reportlab to receive PDF output.",
+            }
+
         pdf_file = create_pdf(report_text, data)
 
         filename = f"{data.target}_security_report.pdf"
@@ -119,3 +129,50 @@ async def generate_report(data: ReportRequest):
     except Exception as e:
         logger.error(f"Report generation failed: {e}")
         raise HTTPException(status_code=500, detail="Report generation failed")
+
+
+@router.get("/download/{report_id}")
+async def download_report(report_id: str):
+    """Generate and return a PDF report for the given report_id.
+
+    Note: This endpoint generates a report on-demand using minimal placeholder
+    data when persistent storage is not available.
+    """
+    try:
+        # Build a minimal threat_analysis payload for the report
+        threat_analysis = {
+            "input": report_id,
+            "input_type": "report_id",
+            "verdict": "unknown",
+            "confidence": 0.0,
+            "threat_indicators": [],
+            "api_results": {"apis_called": []},
+            "timestamp": None,
+        }
+
+        # Try standard generation first; if it fails, build PDF from fallback analysis
+        pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
+        if not pdf_bytes:
+            # Fallback: create AI analysis text and render PDF directly
+            try:
+                ai_text = report_generator._get_fallback_analysis(threat_analysis)
+                pdf_bytes = report_generator._create_pdf_report(threat_analysis, ai_text)
+            except Exception:
+                raise HTTPException(status_code=404, detail="Report not found or generation failed")
+
+        from io import BytesIO
+
+        buf = BytesIO(pdf_bytes)
+        buf.seek(0)
+
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={report_id}.pdf"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download report failed: {e}")
+        raise HTTPException(status_code=500, detail="Report download failed")

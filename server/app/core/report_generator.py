@@ -10,11 +10,16 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 try:
-    import google.generativeai as genai
+    import google.genai as genai
 
     GEMINI_AVAILABLE = True
 except ImportError:
-    GEMINI_AVAILABLE = False
+    try:
+        import google.generativeai as genai
+
+        GEMINI_AVAILABLE = True
+    except ImportError:
+        GEMINI_AVAILABLE = False
 
 try:
     from reportlab.lib import colors
@@ -40,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 if GEMINI_AVAILABLE is False:
     logger.warning(
-        "google-generativeai not installed. Install with: pip install google-generativeai"
+        "google.genai or google-generativeai not installed. Install with: pip install google-genai or pip install google-generativeai"
     )
 if REPORTLAB_AVAILABLE is False:
     logger.warning("reportlab not installed. Install with: pip install reportlab")
@@ -55,9 +60,18 @@ class ReportGenerator:
 
         if GEMINI_AVAILABLE and self.gemini_key:
             try:
-                genai.configure(api_key=self.gemini_key)
-                self.initialized = True
-                logger.info("Gemini API initialized successfully")
+                # Prefer older `configure` call when available (legacy package)
+                if hasattr(genai, "configure"):
+                    genai.configure(api_key=self.gemini_key)
+                    self.initialized = True
+                    logger.info("Gemini API initialized successfully (legacy client)")
+                # Newer `google.genai` provides a `client.Client` class
+                elif hasattr(genai, "client") and hasattr(genai.client, "Client"):
+                    # We don't need to call configure; client will accept api_key at call time
+                    self.initialized = True
+                    logger.info("Gemini API available via google.genai client")
+                else:
+                    logger.warning("Gemini client present but no supported initializer found")
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini: {str(e)}")
 
@@ -76,8 +90,10 @@ class ReportGenerator:
         """
 
         if not REPORTLAB_AVAILABLE:
-            logger.error("reportlab not installed. Cannot generate PDF.")
-            return None
+            logger.warning("reportlab not installed. Returning text fallback instead of PDF.")
+            # Generate AI analysis and return as UTF-8 bytes so callers receive a report
+            ai_analysis = await self._generate_ai_analysis(threat_analysis)
+            return ai_analysis.encode("utf-8")
 
         try:
             # Generate AI analysis using Gemini
@@ -94,32 +110,88 @@ class ReportGenerator:
 
     async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
         """Generate AI analysis using Gemini API"""
-
         if not self.initialized or not GEMINI_AVAILABLE:
             return self._get_fallback_analysis(threat_data)
+        # Prepare prompt for Gemini
+        prompt = self._prepare_analysis_prompt(threat_data)
 
-        try:
-            # Prepare prompt for Gemini
-            prompt = self._prepare_analysis_prompt(threat_data)
+        # Unified call with retry/backoff for modern and legacy clients
+        async def _call_genai_with_retry(p: str, max_attempts: int = 4) -> Optional[str]:
+            for attempt in range(1, max_attempts + 1):
+                # Try modern google.genai client first
+                if hasattr(genai, "client") and hasattr(genai.client, "Client"):
+                    try:
+                        client = genai.client.Client(api_key=self.gemini_key)
 
-            # Call Gemini API asynchronously
-            loop = asyncio.get_event_loop()
-            model = genai.GenerativeModel("gemini-2.0-flash-exp")
+                        # Try to pick a reasonable model if available
+                        model_name = None
+                        try:
+                            models_list = client.models.list()
+                            if getattr(models_list, "models", None):
+                                m = models_list.models[0]
+                                model_name = getattr(m, "name", None) or getattr(m, "id", None)
+                        except Exception:
+                            model_name = None
 
-            # Run in executor to avoid blocking
-            response = await loop.run_in_executor(
-                None, lambda: model.generate_content(prompt)
-            )
+                        if not model_name:
+                            model_name = "gemini-1.0"
 
-            return (
-                response.text
-                if response.text
-                else self._get_fallback_analysis(threat_data)
-            )
+                        response = client.models.generate_content(model=model_name, contents=p)
 
-        except Exception as e:
-            logger.warning(f"Gemini analysis failed, using fallback: {str(e)}")
-            return self._get_fallback_analysis(threat_data)
+                        # Extract textual content when possible
+                        if getattr(response, "output", None):
+                            out = response.output[0]
+                            if getattr(out, "content", None) and len(out.content) > 0:
+                                return getattr(out.content[0], "text", str(response))
+                        return str(response)
+
+                    except Exception as e:
+                        msg = str(e)
+                        logger.warning("google.genai attempt %d failed: %s", attempt, msg)
+                        # detect transient quota errors and retry with backoff
+                        if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
+                            if attempt < max_attempts:
+                                backoff = min(2 ** attempt, 30)
+                                logger.info("Transient Gemini error, retrying in %s seconds (attempt %d/%d)", backoff, attempt, max_attempts)
+                                await asyncio.sleep(backoff)
+                                continue
+                            else:
+                                logger.error("Exceeded retries for google.genai client")
+                        # non-transient or exhausted retries -> continue to legacy fallback
+
+                # Fallback to legacy google.generativeai if available (sync API)
+                if hasattr(genai, "GenerativeModel"):
+                    try:
+                        loop = asyncio.get_event_loop()
+                        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+                        response = await loop.run_in_executor(None, lambda: model.generate_content(p))
+                        return getattr(response, "text", None)
+                    except Exception as e:
+                        msg = str(e)
+                        logger.warning("legacy generativeai attempt %d failed: %s", attempt, msg)
+                        if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
+                            if attempt < max_attempts:
+                                backoff = min(2 ** attempt, 30)
+                                logger.info("Transient legacy Gemini error, retrying in %s seconds (attempt %d/%d)", backoff, attempt, max_attempts)
+                                await asyncio.sleep(backoff)
+                                continue
+                            else:
+                                logger.error("Exceeded retries for legacy generativeai client")
+                        # else continue to next attempt or final fallback
+
+                # If neither client yields or we should not retry further, break
+                break
+
+            return None
+
+        # Attempt to call Gemini with retries
+        genai_result = await _call_genai_with_retry(prompt)
+        if genai_result:
+            return genai_result
+
+        # Final fallback to deterministic local analysis
+        logger.info("Falling back to local analysis (Gemini unavailable or failed)")
+        return self._get_fallback_analysis(threat_data)
 
     def _prepare_analysis_prompt(self, threat_data: Dict[str, Any]) -> str:
         """Prepare prompt for Gemini analysis"""
