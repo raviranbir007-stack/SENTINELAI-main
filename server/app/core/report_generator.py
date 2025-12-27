@@ -1,0 +1,394 @@
+"""
+PDF Report Generator using Gemini API
+Generates AI-analyzed threat reports in PDF format
+"""
+
+import asyncio
+import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+try:
+    import google.generativeai as genai
+
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+
+
+logger = logging.getLogger(__name__)
+
+if GEMINI_AVAILABLE is False:
+    logger.warning(
+        "google-generativeai not installed. Install with: pip install google-generativeai"
+    )
+if REPORTLAB_AVAILABLE is False:
+    logger.warning("reportlab not installed. Install with: pip install reportlab")
+
+
+class ReportGenerator:
+    """Generate AI-analyzed threat reports in PDF format"""
+
+    def __init__(self):
+        self.gemini_key = os.getenv("GEMINI_API_KEY", "")
+        self.initialized = False
+
+        if GEMINI_AVAILABLE and self.gemini_key:
+            try:
+                genai.configure(api_key=self.gemini_key)
+                self.initialized = True
+                logger.info("Gemini API initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini: {str(e)}")
+
+    async def generate_analysis_report(
+        self, threat_analysis: Dict[str, Any], output_filename: Optional[str] = None
+    ) -> Optional[bytes]:
+        """
+        Generate comprehensive AI-analyzed threat report
+
+        Args:
+            threat_analysis: Output from ThreatAnalyzer
+            output_filename: Optional filename for the PDF
+
+        Returns:
+            PDF file bytes or None if generation fails
+        """
+
+        if not REPORTLAB_AVAILABLE:
+            logger.error("reportlab not installed. Cannot generate PDF.")
+            return None
+
+        try:
+            # Generate AI analysis using Gemini
+            ai_analysis = await self._generate_ai_analysis(threat_analysis)
+
+            # Create PDF
+            pdf_bytes = self._create_pdf_report(threat_analysis, ai_analysis)
+
+            return pdf_bytes
+
+        except Exception as e:
+            logger.error(f"Error generating report: {str(e)}")
+            return None
+
+    async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
+        """Generate AI analysis using Gemini API"""
+
+        if not self.initialized or not GEMINI_AVAILABLE:
+            return self._get_fallback_analysis(threat_data)
+
+        try:
+            # Prepare prompt for Gemini
+            prompt = self._prepare_analysis_prompt(threat_data)
+
+            # Call Gemini API asynchronously
+            loop = asyncio.get_event_loop()
+            model = genai.GenerativeModel("gemini-2.0-flash-exp")
+
+            # Run in executor to avoid blocking
+            response = await loop.run_in_executor(
+                None, lambda: model.generate_content(prompt)
+            )
+
+            return (
+                response.text
+                if response.text
+                else self._get_fallback_analysis(threat_data)
+            )
+
+        except Exception as e:
+            logger.warning(f"Gemini analysis failed, using fallback: {str(e)}")
+            return self._get_fallback_analysis(threat_data)
+
+    def _prepare_analysis_prompt(self, threat_data: Dict[str, Any]) -> str:
+        """Prepare prompt for Gemini analysis"""
+
+        input_val = threat_data.get("input", "Unknown")
+        input_type = threat_data.get("input_type", "Unknown")
+        verdict = threat_data.get("verdict", "unknown")
+        confidence = threat_data.get("confidence", 0.0)
+        threats = threat_data.get("threat_indicators", [])
+        api_results = threat_data.get("api_results", {})
+
+        if threats:
+            parts = []
+            for t in threats:
+                parts.append(
+                    "- {}: {} (Severity: {})".format(
+                        t.get("source", "Unknown"),
+                        t.get("indicator", "No details"),
+                        t.get("severity", "unknown"),
+                    )
+                )
+            threats_str = "\n".join(parts)
+        else:
+            threats_str = ""
+
+        prompt = f"""
+Analyze the following security threat assessment and provide a comprehensive professional report:
+
+SCAN TARGET:
+- Input: {input_val}
+- Type: {input_type}
+
+VERDICT: {verdict.upper()}
+Confidence Score: {confidence * 100:.1f}%
+
+DETECTED THREATS:
+{threats_str if threats else 'No threats detected'}
+
+APIS CALLED: {', '.join(api_results.get('apis_called', []))}
+
+Please provide:
+1. Executive Summary: Brief assessment of the threat level
+2. Risk Analysis: Detailed analysis of each detected threat
+3. API Findings: Summary of what each security API found
+4. Recommendations: Actions to take based on findings
+5. Conclusion: Final professional recommendation
+
+Format the response in clear sections with markdown headers.
+Keep it professional and concise (500-800 words).
+"""
+
+        return prompt
+
+    def _get_fallback_analysis(self, threat_data: Dict[str, Any]) -> str:
+        """Generate fallback analysis when Gemini is unavailable"""
+
+        verdict = threat_data.get("verdict", "unknown").upper()
+        confidence = threat_data.get("confidence", 0.0) * 100
+        threats = threat_data.get("threat_indicators", [])
+
+        analysis = f"""## Executive Summary
+The target has been assessed as {verdict} with {confidence:.1f}% confidence.
+
+## Risk Analysis
+"""
+
+        if threats:
+            analysis += "The following security threats were detected:\n\n"
+            for threat in threats:
+                analysis += f"- **{threat.get('source', 'Unknown')}**: {threat.get('indicator', 'No details')}\n"
+                analysis += (
+                    f"  Severity: {threat.get('severity', 'Unknown').upper()}\n\n"
+                )
+        else:
+            analysis += (
+                "No significant security threats were detected during the scan.\n\n"
+            )
+
+        analysis += """## Recommendations
+- Review the detailed API results in the technical section
+- Take appropriate action based on the threat level
+- Monitor the target for any future suspicious activity
+- Update security policies if needed
+
+## Conclusion
+"""
+
+        if verdict == "MALICIOUS":
+            analysis += (
+                "This target poses a critical security risk and should be treated "
+                "with maximum caution. Immediate action is recommended."
+            )
+        elif verdict == "SUSPICIOUS":
+            analysis += (
+                "This target exhibits suspicious characteristics and warrants "
+                "further investigation. Exercise caution when interacting with this resource."
+            )
+        else:
+            analysis += "This target appears to be safe based on the security assessments performed."
+
+        return analysis
+
+    def _create_pdf_report(
+        self, threat_analysis: Dict[str, Any], ai_analysis: str
+    ) -> bytes:
+        """Create PDF report using ReportLab"""
+
+        from io import BytesIO
+
+        # Create PDF in memory
+        pdf_buffer = BytesIO()
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+
+        # Styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "CustomTitle",
+            parent=styles["Heading1"],
+            fontSize=24,
+            textColor=colors.HexColor("#1a1a1a"),
+            spaceAfter=6,
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+        )
+
+        heading_style = ParagraphStyle(
+            "CustomHeading",
+            parent=styles["Heading2"],
+            fontSize=14,
+            textColor=colors.HexColor("#0066cc"),
+            spaceAfter=12,
+            spaceBefore=12,
+            fontName="Helvetica-Bold",
+        )
+
+        normal_style = ParagraphStyle(
+            "CustomNormal",
+            parent=styles["Normal"],
+            fontSize=10,
+            spaceAfter=8,
+            leading=14,
+        )
+
+        # Build document elements
+        elements = []
+
+        # Header
+        elements.append(Paragraph("SENTINEL-AI THREAT ANALYSIS REPORT", title_style))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # Report Info
+        timestamp = threat_analysis.get("timestamp", datetime.utcnow().isoformat())
+        input_val = threat_analysis.get("input", "Unknown")
+        input_type = threat_analysis.get("input_type", "Unknown")
+        verdict = threat_analysis.get("verdict", "unknown")
+        confidence = threat_analysis.get("confidence", 0.0)
+
+        info_data = [
+            ["Report Generated:", timestamp],
+            ["Target:", input_val],
+            ["Target Type:", input_type.upper()],
+            ["Verdict:", verdict.upper()],
+            ["Confidence:", f"{confidence * 100:.1f}%"],
+        ]
+
+        info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
+        info_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e6e6e6")),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ]
+            )
+        )
+
+        elements.append(info_table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Threat Summary
+        elements.append(Paragraph("THREAT SUMMARY", heading_style))
+        threats = threat_analysis.get("threat_indicators", [])
+
+        if threats:
+            threat_data = [["Source", "Severity", "Indicator"]]
+            for threat in threats:
+                threat_data.append(
+                    [
+                        threat.get("source", "Unknown"),
+                        threat.get("severity", "unknown").upper(),
+                        threat.get("indicator", "")[:80],  # Truncate long indicators
+                    ]
+                )
+
+            threat_table = Table(
+                threat_data, colWidths=[1.5 * inch, 1.2 * inch, 3.3 * inch]
+            )
+            threat_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0066cc")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                        (
+                            "ROWBACKGROUNDS",
+                            (0, 1),
+                            (-1, -1),
+                            [colors.white, colors.HexColor("#f9f9f9")],
+                        ),
+                    ]
+                )
+            )
+
+            elements.append(threat_table)
+        else:
+            elements.append(Paragraph("No threats detected.", normal_style))
+
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # AI Analysis
+        elements.append(PageBreak())
+        elements.append(Paragraph("AI ANALYSIS & RECOMMENDATIONS", heading_style))
+
+        # Parse AI analysis into paragraphs
+        for paragraph_text in ai_analysis.split("\n"):
+            if paragraph_text.strip().startswith("##"):
+                elements.append(
+                    Paragraph(paragraph_text.replace("##", "").strip(), heading_style)
+                )
+            elif paragraph_text.strip().startswith("#"):
+                elements.append(
+                    Paragraph(paragraph_text.replace("#", "").strip(), heading_style)
+                )
+            elif paragraph_text.strip():
+                elements.append(Paragraph(paragraph_text.strip(), normal_style))
+
+        # Footer
+        elements.append(Spacer(1, 0.5 * inch))
+        footer_text = "SENTINEL-AI | Automated Threat Detection & Analysis | Powered by Google Gemini"
+        elements.append(
+            Paragraph(
+                footer_text,
+                ParagraphStyle(
+                    "Footer",
+                    parent=styles["Normal"],
+                    fontSize=8,
+                    textColor=colors.grey,
+                    alignment=TA_CENTER,
+                ),
+            )
+        )
+
+        # Build PDF
+        doc.build(elements)
+
+        # Get PDF bytes
+        pdf_buffer.seek(0)
+        return pdf_buffer.read()
+
+
+# Global instance
+report_generator = ReportGenerator()

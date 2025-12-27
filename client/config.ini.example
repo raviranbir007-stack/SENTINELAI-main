@@ -1,0 +1,13 @@
+[client]
+# Server URL
+SERVER_URL=http://localhost:8000
+
+# Client ID
+CLIENT_ID=default
+
+# Scan Intervals (in seconds)
+FILE_SCAN_INTERVAL=3600
+NETWORK_SCAN_INTERVAL=1800
+
+# Log Level
+LOG_LEVEL=INFO

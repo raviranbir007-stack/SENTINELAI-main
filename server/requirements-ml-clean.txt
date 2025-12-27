@@ -1,0 +1,6 @@
+# Cleaned optional ML requirements (install in separate venv). This is a small, commonly-compatible subset.
+numpy
+scikit-learn
+pandas
+transformers
+sentence-transformers
