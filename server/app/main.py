@@ -118,35 +118,42 @@ def setup_fallback_mode():
 def get_system_status():
     """Get current system status including Gemini availability"""
     try:
-        from app.gemini_integration import get_analysis_status
+        from app.gemini_integration import get_analysis_status, get_gemini_client
         from app.gemini_config import get_gemini_config
         
         config = get_gemini_config()
         gemini_status = get_analysis_status()
+        client = get_gemini_client()
+        
+        # Determine if Gemini is truly enabled and available
+        is_enabled = config.get_config('enabled', False) and client.is_available()
+        is_available = gemini_status.get('available', False) and client.initialized
+        fallback_active = not is_available
         
         return {
             "gemini": {
-                "enabled": config.get_config('enabled', False),
-                "available": gemini_status.get('available', False),
-                "status": gemini_status.get('status', 'unknown'),
-                "model": gemini_status.get('model', 'N/A')
+                "enabled": is_enabled,
+                "available": is_available,
+                "status": gemini_status.get('status', 'unknown') if is_available else 'fallback_active',
+                "model": gemini_status.get('model', 'N/A') if is_available else 'N/A'
             },
             "api_key_present": bool(GEMINI_API_KEY),
-            "fallback_active": gemini_status.get('status') == 'fallback_active',
+            "fallback_active": fallback_active,
             "version": "2.0.0",
             "features": {
-                "gemini_analysis": gemini_status.get('available', False),
+                "gemini_analysis": is_available,
                 "local_analysis": True,
                 "real_time_monitoring": True,
                 "threat_prediction": True
             }
         }
-    except ImportError:
+    except Exception as e:
+        logger.warning(f"Could not get full system status: {e}")
         return {
             "gemini": {
                 "enabled": False,
                 "available": False,
-                "status": "not_configured",
+                "status": "error",
                 "model": "N/A"
             },
             "api_key_present": bool(GEMINI_API_KEY),

@@ -596,3 +596,28 @@ def get_gemini_client() -> GeminiIntegration:
         GeminiIntegration: Singleton instance of Gemini integration
     """
     return gemini_integration
+
+def get_analysis_status() -> Dict[str, Any]:
+    """
+    Get current Gemini analysis status
+    
+    Returns:
+        Dict with current status information
+    """
+    client = get_gemini_client()
+    
+    if not client.is_available():
+        return {
+            'available': False,
+            'status': 'not_available',
+            'model': 'N/A',
+            'message': 'Gemini AI is not initialized or unavailable'
+        }
+    
+    availability = client.check_availability()
+    return {
+        'available': availability.get('available', False),
+        'status': 'ready' if availability.get('available', False) else 'not_available',
+        'model': availability.get('model', 'N/A'),
+        'message': availability.get('message', 'Unknown status')
+    }
