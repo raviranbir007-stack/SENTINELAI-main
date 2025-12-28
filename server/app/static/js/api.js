@@ -89,7 +89,7 @@ class SentinelAPI {
   async scanUrl(url) {
     return this.request('/scan/url', {
       method: 'POST',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ target: url }),
     });
   }
 
@@ -126,9 +126,9 @@ class SentinelAPI {
    * Scan an IP address
    */
   async scanIP(ipAddress) {
-    return this.request('/threats/scan-ip', {
+    return this.request('/scan/ip', {
       method: 'POST',
-      body: JSON.stringify({ ip_address: ipAddress }),
+      body: JSON.stringify({ target: ipAddress }),
     });
   }
 

@@ -8,6 +8,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, Optional
+import time
 
 try:
     import google.genai as genai
@@ -57,6 +58,22 @@ class ReportGenerator:
     def __init__(self):
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
         self.initialized = False
+        # Circuit-breaker & retry configuration (env-configurable)
+        try:
+            self.gemini_max_attempts = int(os.getenv("GEMINI_MAX_ATTEMPTS", "4"))
+        except Exception:
+            self.gemini_max_attempts = 4
+        try:
+            self.circuit_threshold = int(os.getenv("GEMINI_CIRCUIT_THRESHOLD", "6"))
+        except Exception:
+            self.circuit_threshold = 6
+        try:
+            self.circuit_open_seconds = int(os.getenv("GEMINI_CIRCUIT_OPEN_SECONDS", "300"))
+        except Exception:
+            self.circuit_open_seconds = 300
+
+        self._failure_count = 0
+        self._circuit_open_until = 0
 
         if GEMINI_AVAILABLE and self.gemini_key:
             try:
@@ -116,7 +133,12 @@ class ReportGenerator:
         prompt = self._prepare_analysis_prompt(threat_data)
 
         # Unified call with retry/backoff for modern and legacy clients
-        async def _call_genai_with_retry(p: str, max_attempts: int = 4) -> Optional[str]:
+        async def _call_genai_with_retry(p: str, max_attempts: int = self.gemini_max_attempts) -> Optional[str]:
+            # Circuit open check
+            if time.time() < self._circuit_open_until:
+                logger.warning("Gemini circuit open until %s, skipping remote call", self._circuit_open_until)
+                return None
+
             for attempt in range(1, max_attempts + 1):
                 # Try modern google.genai client first
                 if hasattr(genai, "client") and hasattr(genai.client, "Client"):
@@ -137,18 +159,26 @@ class ReportGenerator:
                             model_name = "gemini-1.0"
 
                         response = client.models.generate_content(model=model_name, contents=p)
-
-                        # Extract textual content when possible
-                        if getattr(response, "output", None):
-                            out = response.output[0]
-                            if getattr(out, "content", None) and len(out.content) > 0:
-                                return getattr(out.content[0], "text", str(response))
+                        text = self._extract_text_from_genai_response(response)
+                        if text:
+                            # success -> reset failures
+                            self._failure_count = 0
+                            return text
+                        # fallback to stringified response
+                        self._failure_count = 0
                         return str(response)
 
                     except Exception as e:
                         msg = str(e)
                         logger.warning("google.genai attempt %d failed: %s", attempt, msg)
                         # detect transient quota errors and retry with backoff
+                        # increment failure counter
+                        self._failure_count += 1
+                        if self._failure_count >= self.circuit_threshold:
+                            self._circuit_open_until = time.time() + self.circuit_open_seconds
+                            logger.error("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
+                            return None
+
                         if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
                             if attempt < max_attempts:
                                 backoff = min(2 ** attempt, 30)
@@ -165,10 +195,22 @@ class ReportGenerator:
                         loop = asyncio.get_event_loop()
                         model = genai.GenerativeModel("gemini-2.0-flash-exp")
                         response = await loop.run_in_executor(None, lambda: model.generate_content(p))
+                        text = self._extract_text_from_genai_response(response)
+                        if text:
+                            self._failure_count = 0
+                            return text
+                        self._failure_count = 0
                         return getattr(response, "text", None)
                     except Exception as e:
                         msg = str(e)
                         logger.warning("legacy generativeai attempt %d failed: %s", attempt, msg)
+                        # increment failure counter
+                        self._failure_count += 1
+                        if self._failure_count >= self.circuit_threshold:
+                            self._circuit_open_until = time.time() + self.circuit_open_seconds
+                            logger.error("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
+                            return None
+
                         if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
                             if attempt < max_attempts:
                                 backoff = min(2 ** attempt, 30)
@@ -192,6 +234,92 @@ class ReportGenerator:
         # Final fallback to deterministic local analysis
         logger.info("Falling back to local analysis (Gemini unavailable or failed)")
         return self._get_fallback_analysis(threat_data)
+
+    def _extract_text_from_genai_response(self, response: Any) -> str:
+        """Best-effort extraction of textual content from various GenAI response shapes.
+
+        The modern `google.genai` and legacy `google.generativeai` clients return different
+        shapes. This helper inspects common attributes and dict structures to return
+        readable text when available, otherwise falls back to `str(response)`.
+        """
+        try:
+            # Common modern shape: response.output -> list of outputs -> each has content (list)
+            if getattr(response, "output", None):
+                parts = []
+                for out in response.output:
+                    content = getattr(out, "content", None)
+                    if content:
+                        for item in content:
+                            # item may be an object with .text or a dict
+                            txt = None
+                            if hasattr(item, "text"):
+                                txt = getattr(item, "text")
+                            elif isinstance(item, dict):
+                                txt = item.get("text") or item.get("content")
+                            if txt:
+                                parts.append(str(txt))
+                    else:
+                        # fallback: maybe out has text
+                        if hasattr(out, "text"):
+                            parts.append(str(getattr(out, "text")))
+                if parts:
+                    return "\n\n".join(parts)
+
+            # Another common pattern: response.candidates -> list
+            if getattr(response, "candidates", None):
+                texts = []
+                for cand in response.candidates:
+                    content = getattr(cand, "content", None) or (cand.get("content") if isinstance(cand, dict) else None)
+                    if isinstance(content, list):
+                        for item in content:
+                            if hasattr(item, "text"):
+                                texts.append(getattr(item, "text"))
+                            elif isinstance(item, dict) and item.get("text"):
+                                texts.append(item.get("text"))
+                    elif isinstance(content, str):
+                        texts.append(content)
+                if texts:
+                    return "\n\n".join(map(str, texts))
+
+            # Direct text attribute
+            if getattr(response, "text", None):
+                return str(getattr(response, "text"))
+
+            # If it's dict-like, try to find first text-like value
+            if isinstance(response, dict):
+                def _find_text(obj):
+                    if isinstance(obj, str):
+                        return obj
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if k.lower() in ("text", "content", "output") and v:
+                                res = _find_text(v)
+                                if res:
+                                    return res
+                        for v in obj.values():
+                            res = _find_text(v)
+                            if res:
+                                return res
+                    if isinstance(obj, list):
+                        for item in obj:
+                            res = _find_text(item)
+                            if res:
+                                return res
+                    return None
+
+                t = _find_text(response)
+                if t:
+                    return str(t)
+
+        except Exception:
+            # Be conservative; fall through to default
+            pass
+
+        # Fallback: stringify response
+        try:
+            return str(response)
+        except Exception:
+            return ""
 
     def _prepare_analysis_prompt(self, threat_data: Dict[str, Any]) -> str:
         """Prepare prompt for Gemini analysis"""

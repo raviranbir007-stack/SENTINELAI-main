@@ -272,15 +272,24 @@ class Dashboard {
       console.log('📄 File Scan Result:', result);
 
       const resultDiv = document.getElementById('file-scan-result');
-      resultDiv.className = 'scan-result success';
+      const threatLevel = result.threat_level || result.analysis?.verdict || 'unknown';
+      const isSafe = threatLevel === 'safe' || threatLevel === 'clean';
+      const threats = result.threats_detected || 0;
+      
+      resultDiv.className = isSafe ? 'scan-result success' : 'scan-result error';
       resultDiv.innerHTML = `
-        <strong>✓ Scan Complete</strong><br>
+        <strong>${isSafe ? '✓' : '⚠'} Scan Complete</strong><br>
         File: ${this.selectedFile.name}<br>
-        Status: Clean<br>
+        Hash: ${result.file_hash || 'N/A'}<br>
+        Threat Level: ${threatLevel}<br>
+        Threats Detected: ${threats}<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%<br>
         <small>Scanned at: ${new Date().toLocaleTimeString()}</small>
       `;
 
       this.showLoading(false);
+      this.selectedFile = null;
+      document.getElementById('file-input').value = '';
     } catch (error) {
       console.error('File scan error:', error);
       const resultDiv = document.getElementById('file-scan-result');
@@ -307,11 +316,15 @@ class Dashboard {
       console.log('🌐 URL Scan Result:', result);
 
       const resultDiv = document.getElementById('url-scan-result');
-      resultDiv.className = 'scan-result success';
+      const threatLevel = result.threat_level || result.analysis?.verdict || 'unknown';
+      const isSafe = threatLevel === 'safe' || threatLevel === 'clean';
+      
+      resultDiv.className = isSafe ? 'scan-result success' : 'scan-result error';
       resultDiv.innerHTML = `
-        <strong>✓ Scan Complete</strong><br>
+        <strong>${isSafe ? '✓' : '⚠'} Scan Complete</strong><br>
         URL: ${url}<br>
-        Status: Safe<br>
+        Threat Level: ${threatLevel}<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%<br>
         <small>Scanned at: ${new Date().toLocaleTimeString()}</small>
       `;
 
@@ -342,11 +355,17 @@ class Dashboard {
       console.log('🔗 IP Scan Result:', result);
 
       const resultDiv = document.getElementById('ip-scan-result');
-      resultDiv.className = 'scan-result success';
+      const threatLevel = result.threat_level || result.analysis?.verdict || 'unknown';
+      const isSafe = threatLevel === 'safe' || threatLevel === 'clean';
+      const threats = result.threats_detected || 0;
+      
+      resultDiv.className = isSafe ? 'scan-result success' : 'scan-result error';
       resultDiv.innerHTML = `
-        <strong>✓ Scan Complete</strong><br>
+        <strong>${isSafe ? '✓' : '⚠'} Scan Complete</strong><br>
         IP Address: ${ip}<br>
-        Status: Clean<br>
+        Threat Level: ${threatLevel}<br>
+        Threats Detected: ${threats}<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%<br>
         <small>Scanned at: ${new Date().toLocaleTimeString()}</small>
       `;
 
