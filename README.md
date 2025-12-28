@@ -3,6 +3,99 @@
 ## Overview
 SENTINEL-AI is a comprehensive threat detection and response system that combines AI/ML analysis with multiple security APIs to provide real-time threat intelligence.
 
+## Quick Start Guide
+
+### Prerequisites
+- Python 3.9 or higher
+- Git
+- 2GB free disk space (minimal mode)
+
+### Installation Steps
+
+1. **Clone the Repository**
+   ```bash
+   git clone https://github.com/raviranbir007-stack/SENTINELAI-main.git
+   cd SENTINELAI-main
+   ```
+
+2. **Create Virtual Environment**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate  # On Linux/Mac
+   # OR
+   .venv\Scripts\activate  # On Windows
+   ```
+
+3. **Install Dependencies**
+   ```bash
+   # Install server dependencies (minimal mode - no heavy ML packages)
+   pip install -r server/requirements.txt
+   ```
+
+4. **Configure Environment**
+   ```bash
+   # Copy example environment file
+   cp .env.example .env
+   
+   # Edit .env and add your API keys:
+   # GEMINI_API_KEY=your_key_here
+   # VIRUSTOTAL_API_KEY=your_key_here
+   # ABUSEIPDB_API_KEY=your_key_here
+   # SHODAN_API_KEY=your_key_here
+   ```
+
+5. **Run the Server**
+   ```bash
+   # Start the FastAPI server
+   PYTHONPATH=server .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+   
+   # Or use the run script
+   PYTHONPATH=server .venv/bin/python server/run_server.py
+   ```
+
+6. **Access the Dashboard**
+   - Open your browser to: `http://127.0.0.1:8000`
+   - API documentation: `http://127.0.0.1:8000/docs`
+
+### Running Tests
+
+```bash
+# Run all tests
+.venv/bin/python -m pytest
+
+# Run with verbose output
+.venv/bin/python -m pytest -v
+
+# Run specific test file
+.venv/bin/python -m pytest server/tests/test_run_scripts.py
+
+# Check imports and compilation
+PYTHONPATH=. .venv/bin/python tools/check_imports.py
+```
+
+### Common Commands
+
+```bash
+# Start server (production mode)
+PYTHONPATH=server .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Start server (development mode with auto-reload)
+PYTHONPATH=server .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Check server health
+curl http://127.0.0.1:8000/api/v1/health
+
+# Test IP scan
+curl -X POST http://127.0.0.1:8000/api/v1/scan/ip \
+  -H "Content-Type: application/json" \
+  -d '{"target":"8.8.8.8"}'
+
+# Test URL scan
+curl -X POST http://127.0.0.1:8000/api/v1/scan/url \
+  -H "Content-Type: application/json" \
+  -d '{"target":"https://example.com"}'
+```
+
 ## Project Structure
 
 ```
