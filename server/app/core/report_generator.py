@@ -12,6 +12,7 @@ import time
 
 try:
     import google.genai as genai
+    from google.genai.types import GenerateContentConfig
 
     GEMINI_AVAILABLE = True
 except ImportError:
@@ -127,9 +128,25 @@ class ReportGenerator:
 
     async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
         """Generate AI analysis using Gemini API"""
+        # Check daily limit (20 reports per day)
+        if not hasattr(self, '_daily_reports'):
+            self._daily_reports = []
+            self._last_reset = datetime.now().date()
+        
+        # Reset counter if new day
+        if datetime.now().date() > self._last_reset:
+            self._daily_reports = []
+            self._last_reset = datetime.now().date()
+        
+        # Check if we hit daily limit
+        if len(self._daily_reports) >= 20:
+            logger.warning("Daily Gemini report limit (20) reached. Using local fallback.")
+            return self._get_fallback_analysis(threat_data)
+        
         if not self.initialized or not GEMINI_AVAILABLE:
             return self._get_fallback_analysis(threat_data)
-        # Prepare prompt for Gemini
+        
+        # Prepare simplified prompt for Gemini (reduce tokens)
         prompt = self._prepare_analysis_prompt(threat_data)
 
         # Unified call with retry/backoff for modern and legacy clients
@@ -156,13 +173,14 @@ class ReportGenerator:
                             model_name = None
 
                         if not model_name:
-                            model_name = "gemini-1.0"
+                            model_name = "gemini-2.0-flash-exp"
 
-                        response = client.models.generate_content(model=model_name, contents=p)
+                        response = client.models.generate_content(model=model_name, contents=p, config=GenerateContentConfig(max_output_tokens=150))
                         text = self._extract_text_from_genai_response(response)
                         if text:
-                            # success -> reset failures
+                            # success -> reset failures and track daily usage
                             self._failure_count = 0
+                            self._daily_reports.append(datetime.now())
                             return text
                         # fallback to stringified response
                         self._failure_count = 0
@@ -322,7 +340,7 @@ class ReportGenerator:
             return ""
 
     def _prepare_analysis_prompt(self, threat_data: Dict[str, Any]) -> str:
-        """Prepare prompt for Gemini analysis"""
+        """Prepare concise prompt for Gemini analysis (reduced tokens)"""
 
         input_val = threat_data.get("input", "Unknown")
         input_type = threat_data.get("input_type", "Unknown")

@@ -75,18 +75,14 @@ def initialize_gemini_integration():
             logger.info(f"   Status: {status['status']}")
             
             # Test connection with simple prompt
-            import asyncio
             try:
-                # Simple test to verify API works
-                test_result = asyncio.run(client.analyze_with_gemini(
-                    prompt="Test connection",
-                    context={"test": True}
-                ))
+                # Use synchronous test_connection method instead of async
+                test_result = client.test_connection()
                 
-                if test_result.get('success', False):
+                if test_result.get('status') == 'success':
                     logger.info("✅ Gemini API connection test passed")
                 else:
-                    logger.warning("⚠️  Gemini API connection test failed, using fallback")
+                    logger.warning(f"⚠️  Gemini API connection test failed: {test_result.get('message', 'unknown')}, using fallback")
                     setup_fallback_mode()
                     
             except Exception as e:

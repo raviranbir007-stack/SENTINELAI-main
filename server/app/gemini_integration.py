@@ -52,6 +52,68 @@ class GeminiIntegration:
         """Check if Gemini AI is available"""
         return self.initialized and self.client is not None
     
+    def check_availability(self) -> Dict[str, Any]:
+        """
+        Check Gemini availability and return status
+        
+        Returns:
+            Dict with availability status and details
+        """
+        if not self.is_available():
+            return {
+                'available': False,
+                'status': 'not_initialized',
+                'message': 'Gemini AI not initialized'
+            }
+        
+        return {
+            'available': True,
+            'status': 'ready',
+            'message': 'Gemini AI is available',
+            'model': self.available_models[0] if self.available_models else 'gemini-1.5-flash',
+            'models_available': len(self.available_models)
+        }
+    
+    async def analyze_with_gemini(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Analyze content with Gemini AI (async wrapper)
+        
+        Args:
+            prompt: The prompt to send to Gemini
+            context: Optional context dictionary
+            
+        Returns:
+            Dict with analysis results
+        """
+        if not self.is_available():
+            return {
+                'success': False,
+                'error': 'Gemini AI not available',
+                'fallback': True
+            }
+        
+        try:
+            response = self._generate_content(prompt)
+            if response:
+                return {
+                    'success': True,
+                    'response': response,
+                    'model': self.available_models[0] if self.available_models else 'gemini-1.5-flash'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'No response from Gemini',
+                    'fallback': True
+                }
+        except Exception as e:
+            logger.error(f"Gemini analysis error: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'fallback': True
+            }
+    
     def analyze_threat(self, scan_data: Dict[str, Any], scan_type: str = "general") -> Optional[Dict[str, Any]]:
         """
         Analyze threat using Gemini AI
@@ -496,9 +558,12 @@ CRITICAL GUIDELINES:
             }
         
         try:
+            # Use the first available model or fall back to a known working model
+            test_model = self.available_models[0] if self.available_models else "gemini-2.0-flash-exp"
+            
             # Simple test prompt
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model=test_model,
                 contents="Hello, respond with 'Gemini AI is working' if functional.",
                 config=GenerateContentConfig(max_output_tokens=20)
             )
@@ -507,6 +572,7 @@ CRITICAL GUIDELINES:
                 "status": "success",
                 "message": "Gemini AI connection successful",
                 "response": response.text,
+                "model_used": test_model,
                 "available_models": self.available_models[:5],
                 "initialized": True
             }
@@ -521,3 +587,12 @@ CRITICAL GUIDELINES:
 
 # Singleton instance
 gemini_integration = GeminiIntegration()
+
+def get_gemini_client() -> GeminiIntegration:
+    """
+    Get the singleton Gemini integration instance
+    
+    Returns:
+        GeminiIntegration: Singleton instance of Gemini integration
+    """
+    return gemini_integration

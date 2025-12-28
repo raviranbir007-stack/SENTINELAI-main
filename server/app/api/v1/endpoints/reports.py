@@ -135,30 +135,37 @@ async def generate_report(data: ReportRequest):
 async def download_report(report_id: str):
     """Generate and return a PDF report for the given report_id.
 
-    Note: This endpoint generates a report on-demand using minimal placeholder
-    data when persistent storage is not available.
+    First checks if report exists in cache, otherwise generates on-demand.
     """
     try:
-        # Build a minimal threat_analysis payload for the report
-        threat_analysis = {
-            "input": report_id,
-            "input_type": "report_id",
-            "verdict": "unknown",
-            "confidence": 0.0,
-            "threat_indicators": [],
-            "api_results": {"apis_called": []},
-            "timestamp": None,
-        }
+        from ....core.report_generator import report_generator
+        
+        # Check cache first
+        if hasattr(report_generator, '_reports_cache') and report_id in report_generator._reports_cache:
+            logger.info(f"Returning cached report for {report_id}")
+            pdf_bytes = report_generator._reports_cache[report_id]
+        else:
+            logger.info(f"Generating new report for {report_id}")
+            # Build a minimal threat_analysis payload for the report
+            threat_analysis = {
+                "input": report_id,
+                "input_type": "report_id",
+                "verdict": "unknown",
+                "confidence": 0.0,
+                "threat_indicators": [],
+                "api_results": {"apis_called": []},
+                "timestamp": None,
+            }
 
-        # Try standard generation first; if it fails, build PDF from fallback analysis
-        pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
-        if not pdf_bytes:
-            # Fallback: create AI analysis text and render PDF directly
-            try:
-                ai_text = report_generator._get_fallback_analysis(threat_analysis)
-                pdf_bytes = report_generator._create_pdf_report(threat_analysis, ai_text)
-            except Exception:
-                raise HTTPException(status_code=404, detail="Report not found or generation failed")
+            # Try standard generation first; if it fails, build PDF from fallback analysis
+            pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
+            if not pdf_bytes:
+                # Fallback: create AI analysis text and render PDF directly
+                try:
+                    ai_text = report_generator._get_fallback_analysis(threat_analysis)
+                    pdf_bytes = report_generator._create_pdf_report(threat_analysis, ai_text)
+                except Exception:
+                    raise HTTPException(status_code=404, detail="Report not found or generation failed")
 
         from io import BytesIO
 

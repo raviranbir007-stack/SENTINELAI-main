@@ -17,6 +17,9 @@ from ....core.threat_analyzer import threat_analyzer
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# In-memory scan history (in production, use database)
+_scan_history = []
+
 
 class ThreatScanRequest(BaseModel):
     """Request model for threat scanning"""
@@ -68,6 +71,24 @@ async def options_universal_scan():
     return {}
 
 
+def _store_scan_result(scan_data: dict):
+    """Store scan result in history"""
+    global _scan_history
+    _scan_history.insert(0, scan_data)  # Add to front
+    # Keep only last 100 scans
+    if len(_scan_history) > 100:
+        _scan_history = _scan_history[:100]
+
+
+@router.get("/history")
+async def get_scan_history():
+    """Get recent scan history"""
+    return {
+        "total": len(_scan_history),
+        "scans": _scan_history
+    }
+
+
 @router.post("/file")
 async def scan_file(file: UploadFile = File(...), include_report: bool = False):
     """
@@ -115,8 +136,24 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
                     "data": pdf_bytes.hex(),  # Convert bytes to hex string for JSON
                 }
 
-        return {
-            "scan_id": f"FILE_{datetime.now().timestamp()}",
+        scan_id = f"FILE_{int(datetime.now().timestamp())}"
+        
+        # Generate PDF report automatically
+        report_url = None
+        try:
+            from ....core.report_generator import report_generator
+            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+            if pdf_bytes:
+                report_url = f"/api/v1/reports/download/{scan_id}"
+                # Store report for later retrieval (in-memory for now)
+                if not hasattr(report_generator, '_reports_cache'):
+                    report_generator._reports_cache = {}
+                report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
+        
+        result = {
+            "scan_id": scan_id,
             "filename": file.filename,
             "file_hash": file_hash,
             "status": "complete",
@@ -125,7 +162,15 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
             "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "file",
+            "target_name": file.filename
         }
+        
+        # Store in scan history
+        _store_scan_result(result)
+        
+        return result
 
     except HTTPException:
         raise
@@ -168,8 +213,24 @@ async def scan_url(request: ThreatScanRequest):
                     "data": pdf_bytes.hex(),
                 }
 
-        return {
-            "scan_id": f"URL_{datetime.now().timestamp()}",
+        scan_id = f"URL_{int(datetime.now().timestamp())}"
+        
+        # Generate PDF report automatically
+        report_url = None
+        try:
+            from ....core.report_generator import report_generator
+            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+            if pdf_bytes:
+                report_url = f"/api/v1/reports/download/{scan_id}"
+                # Store report for later retrieval
+                if not hasattr(report_generator, '_reports_cache'):
+                    report_generator._reports_cache = {}
+                report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
+        
+        result = {
+            "scan_id": scan_id,
             "url": url,
             "status": "complete",
             "threat_level": analysis_result.get("verdict", "unknown"),
@@ -177,7 +238,15 @@ async def scan_url(request: ThreatScanRequest):
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
             "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "url",
+            "target_name": url
         }
+        
+        # Store in scan history
+        _store_scan_result(result)
+        
+        return result
 
     except Exception as e:
         logger.error(f"URL scan error: {str(e)}")
@@ -214,8 +283,24 @@ async def scan_ip(request: ThreatScanRequest):
                     "data": pdf_bytes.hex(),
                 }
 
-        return {
-            "scan_id": f"IP_{datetime.now().timestamp()}",
+        scan_id = f"IP_{int(datetime.now().timestamp())}"
+        
+        # Generate PDF report automatically
+        report_url = None
+        try:
+            from ....core.report_generator import report_generator
+            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+            if pdf_bytes:
+                report_url = f"/api/v1/reports/download/{scan_id}"
+                # Store report for later retrieval
+                if not hasattr(report_generator, '_reports_cache'):
+                    report_generator._reports_cache = {}
+                report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
+        
+        result = {
+            "scan_id": scan_id,
             "ip": ip,
             "status": "complete",
             "threat_level": analysis_result.get("verdict", "unknown"),
@@ -223,7 +308,15 @@ async def scan_ip(request: ThreatScanRequest):
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
             "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "ip",
+            "target_name": ip
         }
+        
+        # Store in scan history
+        _store_scan_result(result)
+        
+        return result
 
     except Exception as e:
         logger.error(f"IP scan error: {str(e)}")

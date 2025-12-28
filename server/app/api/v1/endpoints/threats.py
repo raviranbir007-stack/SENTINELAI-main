@@ -46,8 +46,11 @@ async def get_threats(
     ),
     end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
 ):
-    """Get all detected threats filtered by time range"""
+    """Get all detected threats filtered by time range - shows actual scanned items"""
 
+    # Import scan history
+    from .scan import _scan_history
+    
     # Calculate date range
     now = datetime.now()
 
@@ -66,8 +69,47 @@ async def get_threats(
             return {"error": "Invalid date format. Use YYYY-MM-DD"}
     else:
         start = now - timedelta(hours=24)
+    
+    # Convert scan history to threat format
+    threats_from_scans = []
+    for scan in _scan_history:
+        scan_time = datetime.fromisoformat(scan['timestamp'])
+        if scan_time >= start:
+            threat_level = scan.get('threat_level', 'unknown')
+            threats_count = scan.get('threats_detected', 0)
+            
+            # Determine severity based on threat level
+            severity_map = {
+                'malicious': 'critical',
+                'suspicious': 'high',
+                'clean': 'low',
+                'safe': 'low',
+                'unknown': 'medium'
+            }
+            severity = severity_map.get(threat_level, 'medium')
+            
+            # Determine status
+            status = 'active' if severity in ['critical', 'high'] else 'resolved'
+            
+            threat_item = {
+                "threat_id": scan['scan_id'],
+                "name": f"{scan['target_type'].upper()} Scan: {scan['target_name']}",
+                "type": f"{scan['target_type']} Analysis",
+                "details": f"Threat Level: {threat_level}, Threats Found: {threats_count}",
+                "severity": severity,
+                "timestamp": scan['timestamp'],
+                "status": status,
+                "source": scan['target_name'],
+                "location": "SENTINEL-AI System",
+                "source_country": "N/A",
+                "detected_by": f"Multi-API Scan ({scan['target_type']})",
+                "report_url": scan.get('report_url'),
+                "confidence": scan.get('confidence', 0.0),
+                "target_type": scan['target_type']
+            }
+            threats_from_scans.append(threat_item)
 
-    # Mock data with proper threat information including location
+    # Add mock threats for demonstration (optional)
     mock_threats = [
         {
             "threat_id": "THR001",
@@ -149,10 +191,13 @@ async def get_threats(
         },
     ]
 
-    # Filter by date range
-    filtered_threats = [
+    # Filter mock threats by date range if needed
+    filtered_mock = [
         t for t in mock_threats if datetime.fromisoformat(t["timestamp"]) >= start
     ]
+    
+    # Combine scan history threats with mock data
+    all_threats = threats_from_scans + filtered_mock
 
     return {
         "time_range": time_range,
@@ -162,9 +207,10 @@ async def get_threats(
             if time_range == "custom"
             else now.isoformat()
         ),
-        "total_threats": len(filtered_threats),
-        "threats": filtered_threats,
+        "total_threats": len(all_threats),
+        "threats": all_threats,
     }
+
 
 
 @router.get("/{threat_id}")
