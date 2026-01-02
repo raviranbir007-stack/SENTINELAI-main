@@ -60,21 +60,26 @@ class ReportGenerator:
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
         self.initialized = False
         # Circuit-breaker & retry configuration (env-configurable)
+        # Reduced to 1 attempt to save quota - each retry wastes requests
         try:
-            self.gemini_max_attempts = int(os.getenv("GEMINI_MAX_ATTEMPTS", "4"))
+            self.gemini_max_attempts = int(os.getenv("GEMINI_MAX_ATTEMPTS", "1"))
         except Exception:
-            self.gemini_max_attempts = 4
+            self.gemini_max_attempts = 1
         try:
-            self.circuit_threshold = int(os.getenv("GEMINI_CIRCUIT_THRESHOLD", "6"))
+            self.circuit_threshold = int(os.getenv("GEMINI_CIRCUIT_THRESHOLD", "5"))
         except Exception:
-            self.circuit_threshold = 6
+            self.circuit_threshold = 5
         try:
-            self.circuit_open_seconds = int(os.getenv("GEMINI_CIRCUIT_OPEN_SECONDS", "300"))
+            self.circuit_open_seconds = int(os.getenv("GEMINI_CIRCUIT_OPEN_SECONDS", "60"))
         except Exception:
-            self.circuit_open_seconds = 300
+            self.circuit_open_seconds = 60
 
         self._failure_count = 0
         self._circuit_open_until = 0
+        
+        # Rate limiter: track last request time (min 4 seconds between requests for 15 RPM)
+        self._last_request_time = 0
+        self._min_request_interval = 4.0  # seconds between requests
 
         if GEMINI_AVAILABLE and self.gemini_key:
             try:
@@ -128,7 +133,7 @@ class ReportGenerator:
 
     async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
         """Generate AI analysis using Gemini API"""
-        # Check daily limit (20 reports per day)
+        # Check daily limit (50 reports per day - conservative limit for free tier)
         if not hasattr(self, '_daily_reports'):
             self._daily_reports = []
             self._last_reset = datetime.now().date()
@@ -139,8 +144,8 @@ class ReportGenerator:
             self._last_reset = datetime.now().date()
         
         # Check if we hit daily limit
-        if len(self._daily_reports) >= 20:
-            logger.warning("Daily Gemini report limit (20) reached. Using local fallback.")
+        if len(self._daily_reports) >= 50:
+            logger.warning("Daily Gemini report limit (50) reached. Using local fallback.")
             return self._get_fallback_analysis(threat_data)
         
         if not self.initialized or not GEMINI_AVAILABLE:
@@ -151,6 +156,15 @@ class ReportGenerator:
 
         # Unified call with retry/backoff for modern and legacy clients
         async def _call_genai_with_retry(p: str, max_attempts: int = self.gemini_max_attempts) -> Optional[str]:
+            # Rate limiter: ensure minimum interval between requests
+            time_since_last = time.time() - self._last_request_time
+            if time_since_last < self._min_request_interval:
+                wait_time = self._min_request_interval - time_since_last
+                logger.info(f"Rate limiting: waiting {wait_time:.1f}s before next Gemini request")
+                await asyncio.sleep(wait_time)
+            
+            self._last_request_time = time.time()
+            
             # Circuit open check
             if time.time() < self._circuit_open_until:
                 logger.warning("Gemini circuit open until %s, skipping remote call", self._circuit_open_until)
@@ -162,20 +176,34 @@ class ReportGenerator:
                     try:
                         client = genai.client.Client(api_key=self.gemini_key)
 
-                        # Try to pick a reasonable model if available
-                        model_name = None
+                        # Use gemini-2.5-flash which is available and has good quotas
+                        model_name = "gemini-2.5-flash"
+                        
+                        # Try to get first available model from API
                         try:
                             models_list = client.models.list()
-                            if getattr(models_list, "models", None):
+                            if getattr(models_list, "models", None) and len(models_list.models) > 0:
                                 m = models_list.models[0]
-                                model_name = getattr(m, "name", None) or getattr(m, "id", None)
-                        except Exception:
-                            model_name = None
+                                # Get model name and strip "models/" prefix if present
+                                name = getattr(m, "name", None) or getattr(m, "id", None)
+                                if name:
+                                    # Remove "models/" prefix if present for v1beta API
+                                    if name.startswith("models/"):
+                                        model_name = name  # Use full name for newer API
+                                    else:
+                                        model_name = name
+                        except Exception as e:
+                            logger.debug(f"Could not list models, using default: {e}")
 
-                        if not model_name:
-                            model_name = "gemini-2.0-flash-exp"
-
-                        response = client.models.generate_content(model=model_name, contents=p, config=GenerateContentConfig(max_output_tokens=150))
+                        response = client.models.generate_content(
+                            model=model_name, 
+                            contents=p, 
+                            config=GenerateContentConfig(
+                                temperature=0.7,
+                                top_p=0.9,
+                                max_output_tokens=2048
+                            )
+                        )
                         text = self._extract_text_from_genai_response(response)
                         if text:
                             # success -> reset failures and track daily usage
@@ -188,7 +216,7 @@ class ReportGenerator:
 
                     except Exception as e:
                         msg = str(e)
-                        logger.warning("google.genai attempt %d failed: %s", attempt, msg)
+                        logger.debug("google.genai attempt %d failed: %s", attempt, msg)
                         # detect transient quota errors and retry with backoff
                         # increment failure counter
                         self._failure_count += 1
@@ -200,18 +228,18 @@ class ReportGenerator:
                         if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
                             if attempt < max_attempts:
                                 backoff = min(2 ** attempt, 30)
-                                logger.info("Transient Gemini error, retrying in %s seconds (attempt %d/%d)", backoff, attempt, max_attempts)
+                                logger.debug("Transient Gemini error, retrying in %s seconds (attempt %d/%d)", backoff, attempt, max_attempts)
                                 await asyncio.sleep(backoff)
                                 continue
                             else:
-                                logger.error("Exceeded retries for google.genai client")
+                                logger.debug("Quota exceeded, using local analysis")
                         # non-transient or exhausted retries -> continue to legacy fallback
 
                 # Fallback to legacy google.generativeai if available (sync API)
                 if hasattr(genai, "GenerativeModel"):
                     try:
                         loop = asyncio.get_event_loop()
-                        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+                        model = genai.GenerativeModel("gemini-2.5-flash")
                         response = await loop.run_in_executor(None, lambda: model.generate_content(p))
                         text = self._extract_text_from_genai_response(response)
                         if text:
@@ -250,7 +278,7 @@ class ReportGenerator:
             return genai_result
 
         # Final fallback to deterministic local analysis
-        logger.info("Falling back to local analysis (Gemini unavailable or failed)")
+        logger.debug("Using local analysis (Gemini quota exhausted or unavailable)")
         return self._get_fallback_analysis(threat_data)
 
     def _extract_text_from_genai_response(self, response: Any) -> str:

@@ -19,14 +19,17 @@ except Exception:
 try:
     import os
 
-    import google.generativeai as genai
-
-    GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-    if GEMINI_KEY:
-        genai.configure(api_key=GEMINI_KEY)
+    try:
+        # Prefer newer google-genai package
+        import google.genai as genai
         GEMINI_READY = True
-    else:
-        GEMINI_READY = False
+    except ImportError:
+        # Fallback to deprecated package
+        import google.generativeai as genai
+        GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+        if GEMINI_KEY:
+            genai.configure(api_key=GEMINI_KEY)
+        GEMINI_READY = True
 except Exception:
     GEMINI_READY = False
 

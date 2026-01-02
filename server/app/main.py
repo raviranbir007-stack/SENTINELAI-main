@@ -74,20 +74,9 @@ def initialize_gemini_integration():
             logger.info(f"✅ Gemini API initialized successfully with model: {status.get('model', 'N/A')}")
             logger.info(f"   Status: {status['status']}")
             
-            # Test connection with simple prompt
-            try:
-                # Use synchronous test_connection method instead of async
-                test_result = client.test_connection()
-                
-                if test_result.get('status') == 'success':
-                    logger.info("✅ Gemini API connection test passed")
-                else:
-                    logger.warning(f"⚠️  Gemini API connection test failed: {test_result.get('message', 'unknown')}, using fallback")
-                    setup_fallback_mode()
-                    
-            except Exception as e:
-                logger.warning(f"Gemini API test failed: {e}, using fallback")
-                setup_fallback_mode()
+            # Skip connection test to save quota (each test wastes 1 request)
+            # Test will happen naturally when first report is generated
+            logger.info("⚡ Gemini API ready (skipping startup test to preserve quota)")
                 
         else:
             logger.warning(f"⚠️  Gemini API not available: {status.get('status', 'unknown')}")

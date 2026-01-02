@@ -126,29 +126,19 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
             "sha256": file_hash,
         }
 
-        # Generate PDF report if requested
-        if include_report:
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                analysis_result["report"] = {
-                    "format": "pdf",
-                    "size": len(pdf_bytes),
-                    "data": pdf_bytes.hex(),  # Convert bytes to hex string for JSON
-                }
-
         scan_id = f"FILE_{int(datetime.now().timestamp())}"
         
-        # Generate PDF report automatically
+        # Generate PDF report if requested
         report_url = None
         try:
-            from ....core.report_generator import report_generator
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                report_url = f"/api/v1/reports/download/{scan_id}"
-                # Store report for later retrieval (in-memory for now)
-                if not hasattr(report_generator, '_reports_cache'):
-                    report_generator._reports_cache = {}
-                report_generator._reports_cache[scan_id] = pdf_bytes
+            if include_report:
+                pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    # Store report for later retrieval (in-memory for now)
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
         except Exception as e:
             logger.error(f"Report generation failed: {str(e)}")
         
@@ -203,29 +193,19 @@ async def scan_url(request: ThreatScanRequest):
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(url)
 
-        # Generate PDF report if requested
-        if include_report:
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                analysis_result["report"] = {
-                    "format": "pdf",
-                    "size": len(pdf_bytes),
-                    "data": pdf_bytes.hex(),
-                }
-
         scan_id = f"URL_{int(datetime.now().timestamp())}"
         
-        # Generate PDF report automatically
+        # Generate PDF report if requested
         report_url = None
         try:
-            from ....core.report_generator import report_generator
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                report_url = f"/api/v1/reports/download/{scan_id}"
-                # Store report for later retrieval
-                if not hasattr(report_generator, '_reports_cache'):
-                    report_generator._reports_cache = {}
-                report_generator._reports_cache[scan_id] = pdf_bytes
+            if include_report:
+                pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    # Store report for later retrieval
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
         except Exception as e:
             logger.error(f"Report generation failed: {str(e)}")
         
@@ -273,29 +253,19 @@ async def scan_ip(request: ThreatScanRequest):
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(ip)
 
-        # Generate PDF report if requested
-        if include_report:
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                analysis_result["report"] = {
-                    "format": "pdf",
-                    "size": len(pdf_bytes),
-                    "data": pdf_bytes.hex(),
-                }
-
         scan_id = f"IP_{int(datetime.now().timestamp())}"
         
-        # Generate PDF report automatically
+        # Generate PDF report if requested
         report_url = None
         try:
-            from ....core.report_generator import report_generator
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                report_url = f"/api/v1/reports/download/{scan_id}"
-                # Store report for later retrieval
-                if not hasattr(report_generator, '_reports_cache'):
-                    report_generator._reports_cache = {}
-                report_generator._reports_cache[scan_id] = pdf_bytes
+            if include_report:
+                pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    # Store report for later retrieval
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
         except Exception as e:
             logger.error(f"Report generation failed: {str(e)}")
         
@@ -343,18 +313,23 @@ async def scan_hash(request: ThreatScanRequest):
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(file_hash)
 
+        scan_id = f"HASH_{int(datetime.now().timestamp())}"
+        
         # Generate PDF report if requested
-        if include_report:
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                analysis_result["report"] = {
-                    "format": "pdf",
-                    "size": len(pdf_bytes),
-                    "data": pdf_bytes.hex(),
-                }
+        report_url = None
+        try:
+            if include_report:
+                pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
 
         return {
-            "scan_id": f"HASH_{datetime.now().timestamp()}",
+            "scan_id": scan_id,
             "hash": file_hash,
             "status": "complete",
             "threat_level": analysis_result.get("verdict", "unknown"),
@@ -362,6 +337,9 @@ async def scan_hash(request: ThreatScanRequest):
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
             "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "hash",
+            "target_name": file_hash
         }
 
     except Exception as e:
@@ -394,18 +372,23 @@ async def universal_scan(request: ThreatScanRequest):
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(target)
 
+        scan_id = f"SCAN_{int(datetime.now().timestamp())}"
+        
         # Generate PDF report if requested
-        if include_report:
-            pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-            if pdf_bytes:
-                analysis_result["report"] = {
-                    "format": "pdf",
-                    "size": len(pdf_bytes),
-                    "data": pdf_bytes.hex(),
-                }
+        report_url = None
+        try:
+            if include_report:
+                pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
 
         return {
-            "scan_id": f"SCAN_{datetime.now().timestamp()}",
+            "scan_id": scan_id,
             "target": target,
             "detected_type": input_type.value,
             "status": "complete",
@@ -414,6 +397,7 @@ async def universal_scan(request: ThreatScanRequest):
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
             "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
         }
 
     except Exception as e:

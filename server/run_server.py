@@ -7,6 +7,9 @@ import logging
 import os
 import sys
 
+# Preserve Gemini quota by skipping startup tests
+os.environ.setdefault("SKIP_GEMINI_STARTUP_TESTS", "true")
+
 import uvicorn
 
 # Setup logging

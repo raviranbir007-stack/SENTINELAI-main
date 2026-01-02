@@ -1,19 +1,2 @@
-"""
-Configuration package for SENTINEL-AI
-"""
-
-from .gemini_config import (
-    GeminiConfig,
-    get_gemini_config,
-    validate_gemini_config,
-    get_gemini_api_key,
-    is_gemini_enabled
-)
-
-__all__ = [
-    'GeminiConfig',
-    'get_gemini_config',
-    'validate_gemini_config',
-    'get_gemini_api_key',
-    'is_gemini_enabled'
-]
+# This file should not exist - use app/__init__.py instead
+# Minimal placeholder to avoid import errors during transition

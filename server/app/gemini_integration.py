@@ -5,12 +5,16 @@ Handles all Gemini AI interactions for threat analysis
 
 import json
 import logging
+import os
 from typing import Dict, Any, Optional, List
 import google.genai as genai
 from google.genai.types import GenerateContentConfig, HttpOptions
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Skip expensive API tests during startup to preserve quota
+SKIP_STARTUP_TESTS = os.getenv("SKIP_GEMINI_STARTUP_TESTS", "true").lower() == "true"
 
 class GeminiIntegration:
     """Gemini AI integration for advanced threat analysis"""
@@ -70,7 +74,7 @@ class GeminiIntegration:
             'available': True,
             'status': 'ready',
             'message': 'Gemini AI is available',
-            'model': self.available_models[0] if self.available_models else 'gemini-1.5-flash',
+            'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash',
             'models_available': len(self.available_models)
         }
     
@@ -98,7 +102,7 @@ class GeminiIntegration:
                 return {
                     'success': True,
                     'response': response,
-                    'model': self.available_models[0] if self.available_models else 'gemini-1.5-flash'
+                    'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash'
                 }
             else:
                 return {
@@ -352,8 +356,8 @@ CRITICAL GUIDELINES:
             return None
         
         try:
-            # Try different models
-            models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+            # Try different models (prioritize free tier friendly models)
+            models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-exp"]
             
             for model_name in models_to_try:
                 try:
@@ -406,7 +410,7 @@ CRITICAL GUIDELINES:
                 analysis["metadata"] = {
                     "analyzed_by": "gemini_ai",
                     "scan_type": scan_type,
-                    "model_used": "gemini-1.5-flash",
+                    "model_used": "gemini-2.5-flash",
                     "timestamp": "current"
                 }
                 return analysis
@@ -549,7 +553,7 @@ CRITICAL GUIDELINES:
             return ["Very limited data", "Uncertain indicators"]
     
     def test_connection(self) -> Dict[str, Any]:
-        """Test Gemini AI connection"""
+        """Test Gemini AI connection (skips actual API call to preserve quota)"""
         if not self.is_available():
             return {
                 "status": "error",
@@ -557,9 +561,22 @@ CRITICAL GUIDELINES:
                 "available": False
             }
         
+        # Skip expensive API tests to preserve daily quota
+        if SKIP_STARTUP_TESTS:
+            logger.debug("Skipping Gemini API test call to preserve quota")
+            return {
+                "status": "success",
+                "message": "Gemini AI ready (test skipped to preserve quota)",
+                "response": "Connection test skipped",
+                "model_used": self.available_models[0] if self.available_models else "gemini-2.5-flash",
+                "available_models": self.available_models[:5],
+                "initialized": True,
+                "test_skipped": True
+            }
+        
         try:
             # Use the first available model or fall back to a known working model
-            test_model = self.available_models[0] if self.available_models else "gemini-2.0-flash-exp"
+            test_model = self.available_models[0] if self.available_models else "gemini-2.5-flash"
             
             # Simple test prompt
             response = self.client.models.generate_content(
