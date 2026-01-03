@@ -60,5 +60,5 @@ echo "🚀 Starting SENTINEL-AI server..."
 echo "================================"
 echo ""
 
-# Start server
-./venv/bin/python run_server.py
+# Start server with system Python (has reportlab installed)
+python3 run_server.py
