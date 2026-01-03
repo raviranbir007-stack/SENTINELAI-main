@@ -193,83 +193,135 @@ class ThreatAnalyzer:
 
         threats = []
         apis_called = []
+        warnings = []
 
         try:
             # Scan with VirusTotal
             logger.info(f"Scanning URL with VirusTotal: {url}")
             vt_result = await self.virustotal.scan_url(url)
             result["api_results"]["virustotal"] = vt_result
-            apis_called.append("VirusTotal")
+            
+            # Check if API is configured
+            if vt_result and vt_result.get("error"):
+                if "not configured" in vt_result.get("error", ""):
+                    warnings.append("VirusTotal API key not configured")
+                    logger.warning("VirusTotal API key not configured")
+                else:
+                    apis_called.append("VirusTotal")
+            else:
+                apis_called.append("VirusTotal")
 
-            if vt_result:
+            if vt_result and not vt_result.get("error"):
                 # Check if URL already has analysis results
                 if "data" in vt_result:
-                    analysis = (
-                        vt_result.get("data", {})
-                        .get("attributes", {})
-                        .get("last_analysis_stats", {})
-                    )
+                    attributes = vt_result.get("data", {}).get("attributes", {})
+                    
+                    # Try both "stats" and "last_analysis_stats" (different API responses)
+                    analysis = attributes.get("stats") or attributes.get("last_analysis_stats", {})
+                    
                     malicious = analysis.get("malicious", 0)
                     suspicious = analysis.get("suspicious", 0)
+                    harmless = analysis.get("harmless", 0)
+                    undetected = analysis.get("undetected", 0)
+                    total_engines = sum([malicious, suspicious, harmless, undetected])
 
-                    if malicious > 0:
+                    logger.info(f"VirusTotal results: {malicious} malicious, {suspicious} suspicious out of {total_engines} engines")
+
+                    # Only flag as threat if multiple vendors detect it (reduces false positives)
+                    if malicious >= 5:  # At least 5 vendors consider it malicious
                         threats.append(
                             {
                                 "source": "VirusTotal",
                                 "severity": "critical",
-                                "indicator": f"Malicious detection: {malicious} vendor(s)",
+                                "indicator": f"Malicious detection: {malicious}/{total_engines} vendor(s)",
                                 "count": malicious,
                             }
                         )
-                    elif suspicious > 0:
+                    elif malicious >= 2:  # 2-4 vendors - suspicious
                         threats.append(
                             {
                                 "source": "VirusTotal",
                                 "severity": "medium",
-                                "indicator": f"Suspicious detection: {suspicious} vendor(s)",
+                                "indicator": f"Possible threat: {malicious}/{total_engines} vendor(s)",
+                                "count": malicious,
+                            }
+                        )
+                    elif suspicious >= 3:
+                        threats.append(
+                            {
+                                "source": "VirusTotal",
+                                "severity": "medium",
+                                "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)",
                                 "count": suspicious,
                             }
                         )
+                    elif total_engines > 0:
+                        if malicious > 0 or suspicious > 0:
+                            logger.info(f"Low threat indicators: {malicious} malicious, {suspicious} suspicious (below threshold)")
+                        else:
+                            logger.info(f"URL appears clean according to VirusTotal ({total_engines} engines)")
 
         except Exception as e:
             logger.warning(f"VirusTotal scan failed for {url}: {str(e)}")
+            warnings.append(f"VirusTotal scan failed: {str(e)}")
 
         try:
             # Scan with URLScan.io
             logger.info(f"Scanning URL with URLScan.io: {url}")
             urlscan_result = await self.urlscan.scan_url(url)
             result["api_results"]["urlscan"] = urlscan_result
-            apis_called.append("URLScan.io")
+            
+            # Check if API is configured
+            if urlscan_result and urlscan_result.get("error"):
+                if "not configured" in urlscan_result.get("error", ""):
+                    warnings.append("URLScan API key not configured")
+                    logger.warning("URLScan API key not configured")
+                else:
+                    apis_called.append("URLScan.io")
+            else:
+                apis_called.append("URLScan.io")
 
             if urlscan_result and not urlscan_result.get("error"):
-                # Analyze scan results
-                result_data = urlscan_result.get("result", {})
+                # URLScan returns a UUID immediately, results come later
+                # For now, we just record that the scan was submitted
+                if "uuid" in urlscan_result:
+                    logger.info(f"URLScan.io scan submitted successfully: {urlscan_result.get('uuid')}")
+                
+                # Check if we have actual results (would need to poll the API)
+                if isinstance(urlscan_result, dict) and "data" in urlscan_result:
+                    result_data = urlscan_result.get("data", {})
 
-                # Check for phishing/malware
-                classifications = result_data.get("classifications", {})
-                if classifications.get("phishing"):
-                    threats.append(
-                        {
-                            "source": "URLScan.io",
-                            "severity": "critical",
-                            "indicator": "Phishing site detected",
-                        }
-                    )
+                    # Check for phishing/malware
+                    classifications = result_data.get("classifications", {})
+                    if isinstance(classifications, dict):
+                        if classifications.get("phishing"):
+                            threats.append(
+                                {
+                                    "source": "URLScan.io",
+                                    "severity": "critical",
+                                    "indicator": "Phishing site detected",
+                                }
+                            )
 
-                if classifications.get("malware"):
-                    threats.append(
-                        {
-                            "source": "URLScan.io",
-                            "severity": "critical",
-                            "indicator": "Malware detected",
-                        }
-                    )
+                        if classifications.get("malware"):
+                            threats.append(
+                                {
+                                    "source": "URLScan.io",
+                                    "severity": "critical",
+                                    "indicator": "Malware detected",
+                                }
+                            )
 
         except Exception as e:
             logger.warning(f"URLScan scan failed for {url}: {str(e)}")
+            warnings.append(f"URLScan scan failed: {str(e)}")
 
         result["api_results"]["apis_called"] = apis_called
         result["threat_indicators"] = threats
+        
+        if warnings:
+            result["warnings"] = warnings
+            
         result = self._calculate_verdict(result)
 
         return result

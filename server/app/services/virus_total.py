@@ -62,7 +62,7 @@ class VirusTotalService:
     @staticmethod
     async def scan_url(url: str):
         """
-        Scan URL on VirusTotal
+        Scan URL on VirusTotal and retrieve analysis results
 
         Args:
             url: URL to scan
@@ -76,10 +76,10 @@ class VirusTotalService:
 
         try:
             headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
-            data = {"url": url}
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # First, try to get existing analysis
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                # First, submit the URL for scanning
+                data = {"url": url}
                 response = await client.post(
                     f"{VirusTotalService.BASE_URL}/urls",
                     headers=headers,
@@ -88,8 +88,51 @@ class VirusTotalService:
                 )
 
                 if response.status_code == 200:
-                    return response.json()
+                    result = response.json()
+                    
+                    # Get the analysis ID to retrieve results
+                    analysis_id = result.get("data", {}).get("id")
+                    
+                    if analysis_id:
+                        # Wait a moment for analysis to start
+                        import asyncio
+                        await asyncio.sleep(2)
+                        
+                        # Retrieve the analysis results
+                        analysis_response = await client.get(
+                            f"{VirusTotalService.BASE_URL}/analyses/{analysis_id}",
+                            headers=headers,
+                            follow_redirects=True,
+                        )
+                        
+                        if analysis_response.status_code == 200:
+                            analysis_data = analysis_response.json()
+                            
+                            # Check if analysis is complete
+                            status = analysis_data.get("data", {}).get("attributes", {}).get("status")
+                            
+                            if status == "completed":
+                                return analysis_data
+                            else:
+                                # If not complete, try to get URL object directly
+                                logger.info(f"Analysis status: {status}, fetching URL object")
+                        
+                        # Try to get URL object for immediate results
+                        import base64
+                        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+                        
+                        url_response = await client.get(
+                            f"{VirusTotalService.BASE_URL}/urls/{url_id}",
+                            headers=headers,
+                            follow_redirects=True,
+                        )
+                        
+                        if url_response.status_code == 200:
+                            return url_response.json()
+                    
+                    return result
                 else:
+                    logger.warning(f"VirusTotal scan error: {response.status_code} - {response.text}")
                     return {"error": f"VirusTotal scan error: {response.status_code}"}
 
         except httpx.TimeoutException:
