@@ -76,21 +76,21 @@ async def options_reports_generate():
     """Handle CORS preflight for /reports/generate endpoint."""
     return {}
 
-@router.options(\"/scans/{scan_id}\")
+@router.options("/scans/{scan_id}")
 async def options_scan_detail():
-    \"\"\"Handle CORS preflight for /scans/{scan_id} endpoint.\"\"\"
+    """Handle CORS preflight for /scans/{scan_id} endpoint."""
     return {}
 
 
-@router.options(\"/reports/{report_id}\")
+@router.options("/reports/{report_id}")
 async def options_report_detail():
-    \"\"\"Handle CORS preflight for /reports/{report_id} endpoint.\"\"\"
+    """Handle CORS preflight for /reports/{report_id} endpoint."""
     return {}
 
 
-@router.options(\"/reports/{report_id}/download\")
+@router.options("/reports/{report_id}/download")
 async def options_report_download():
-    \"\"\"Handle CORS preflight for /reports/{report_id}/download endpoint.\"\"\"
+    """Handle CORS preflight for /reports/{report_id}/download endpoint."""
     return {}
 
 @router.post("/scan")

@@ -1680,6 +1680,67 @@
                 .then(scan => {
                     const threatColor = scan.threat_level === 'safe' ? 'var(--success)' : scan.threat_level === 'suspicious' ? 'var(--warning)' : 'var(--destructive)';
                     
+                    // Build API results section
+                    let apiResultsHTML = '';
+                    if (scan.api_results) {
+                        const apis = scan.api_results.apis_called || [];
+                        if (apis.length > 0) {
+                            apiResultsHTML = `
+                                <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px;">
+                                    <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔍 APIs Consulted</div>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                        ${apis.map(api => `<span class="badge" style="background: rgba(45, 212, 191, 0.2);">${api}</span>`).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    }
+                    
+                    // Build threat indicators section
+                    let threatIndicatorsHTML = '';
+                    if (scan.threat_indicators && scan.threat_indicators.length > 0) {
+                        threatIndicatorsHTML = `
+                            <div style="margin-bottom: 1.5rem;">
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">⚠️ Threat Indicators (${scan.threat_indicators.length})</div>
+                                <div style="display: grid; gap: 0.5rem; max-height: 300px; overflow-y: auto;">
+                                    ${scan.threat_indicators.map(indicator => {
+                                        const severityColor = indicator.severity === 'critical' ? 'var(--destructive)' : 
+                                                             indicator.severity === 'medium' ? 'var(--warning)' : 'var(--muted-foreground)';
+                                        return `
+                                            <div style="padding: 0.75rem; background: rgba(255,255,255,0.02); border-left: 3px solid ${severityColor}; border-radius: 4px;">
+                                                <div style="font-size: 0.75rem; color: ${severityColor}; font-weight: 600; margin-bottom: 0.25rem;">
+                                                    ${indicator.severity.toUpperCase()} - ${indicator.source}
+                                                </div>
+                                                <div style="font-size: 0.875rem;">${indicator.indicator}</div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // Build verdict/confidence section
+                    let verdictHTML = '';
+                    if (scan.verdict || scan.confidence !== undefined) {
+                        verdictHTML = `
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                                ${scan.verdict ? `
+                                    <div>
+                                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Verdict</div>
+                                        <div><span class="badge badge-${scan.verdict === 'clean' ? 'safe' : 'threat'}">${scan.verdict.toUpperCase()}</span></div>
+                                    </div>
+                                ` : ''}
+                                ${scan.confidence !== undefined ? `
+                                    <div>
+                                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Confidence</div>
+                                        <div>${(scan.confidence * 100).toFixed(0)}%</div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    }
+                    
                     content.innerHTML = `
                         <div style="margin-bottom: 1.5rem;">
                             <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Scan ID</div>
@@ -1688,7 +1749,7 @@
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
                             <div>
                                 <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Target</div>
-                                <div style="font-family: 'JetBrains Mono', monospace;">${scan.target}</div>
+                                <div style="font-family: 'JetBrains Mono', monospace; word-break: break-all;">${scan.target}</div>
                             </div>
                             <div>
                                 <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Type</div>
@@ -1703,10 +1764,25 @@
                                 <div><span class="badge ${scan.threat_level === 'safe' ? 'badge-safe' : scan.threat_level === 'suspicious' ? 'badge-warning' : 'badge-threat'}">${scan.threat_level || 'unknown'}</span></div>
                             </div>
                         </div>
+                        ${verdictHTML}
                         <div style="margin-bottom: 1.5rem;">
                             <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Timestamp</div>
                             <div>${new Date(scan.timestamp).toLocaleString()}</div>
                         </div>
+                        ${scan.threats_detected !== undefined ? `
+                            <div style="margin-bottom: 1.5rem;">
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Threats Detected</div>
+                                <div style="font-size: 1.5rem; font-weight: 600; color: ${scan.threats_detected > 0 ? 'var(--destructive)' : 'var(--success)'}">${scan.threats_detected}</div>
+                            </div>
+                        ` : ''}
+                        ${scan.summary ? `
+                            <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem;">📋 Summary</div>
+                                <div style="font-size: 0.875rem; line-height: 1.6;">${scan.summary}</div>
+                            </div>
+                        ` : ''}
+                        ${apiResultsHTML}
+                        ${threatIndicatorsHTML}
                         ${scan.file_size ? `
                             <div style="margin-bottom: 1.5rem;">
                                 <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">File Size</div>
@@ -1729,8 +1805,20 @@
         }
 
         function viewThreatDetail(threatId) {
-            showToast(`Viewing threat details for ${threatId}`, 'info');
-            // Could open similar modal for threat details
+            // Find the threat in recent threats
+            const threat = recentThreats.find(t => t.id === threatId);
+            
+            if (!threat) {
+                showToast('Threat details not found', 'error');
+                return;
+            }
+            
+            // Open scan detail modal with the associated scan
+            if (threat.scan_id) {
+                viewScanDetail(threat.scan_id);
+            } else {
+                showToast(`Threat: ${threat.target} - ${threat.description}`, 'info');
+            }
         }
 
         async function viewAllReports() {
@@ -1976,10 +2064,23 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
 
             try {
-                // Get selected options (you can enhance this to read actual form values)
-                const reportType = 'executive'; // Could be read from UI selection
-                const timeRange = '24h'; // Could be read from UI selection
-                const target = document.getElementById('scanInput').value.trim() || 'all_scans';
+                // Use the latest scan from recent scans or get from input
+                let target = document.getElementById('scanInput').value.trim();
+                
+                // If no target in input, use the most recent scan
+                if (!target && recentScans && recentScans.length > 0) {
+                    const latestScan = recentScans[0];
+                    target = latestScan.target;
+                    showToast(`Generating report for latest scan: ${target}`, 'info');
+                }
+                
+                if (!target) {
+                    showToast('Please perform a scan first or enter a target', 'warning');
+                    return;
+                }
+
+                const reportType = 'executive';
+                const timeRange = '24h';
 
                 const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
                     method: 'POST',
