@@ -1,4 +1,5 @@
 import random
+import hashlib
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -8,12 +9,18 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..core.report_generator import report_generator
+from ..core.threat_analyzer import threat_analyzer
 
 router = APIRouter()
 
 # In-memory scan store for compatibility (ephemeral)
 SCANS_STORE: list[dict] = []
 MAX_STORE = 100
+
+# In-memory reports store
+REPORTS_STORE: list[dict] = []
+# Report PDF cache (report_id -> pdf_bytes)
+REPORTS_PDF_CACHE: dict[str, bytes] = {}
 
 
 class GenericScanRequest(BaseModel):
@@ -69,34 +76,79 @@ async def options_reports_generate():
     """Handle CORS preflight for /reports/generate endpoint."""
     return {}
 
+@router.options(\"/scans/{scan_id}\")
+async def options_scan_detail():
+    \"\"\"Handle CORS preflight for /scans/{scan_id} endpoint.\"\"\"
+    return {}
+
+
+@router.options(\"/reports/{report_id}\")
+async def options_report_detail():
+    \"\"\"Handle CORS preflight for /reports/{report_id} endpoint.\"\"\"
+    return {}
+
+
+@router.options(\"/reports/{report_id}/download\")
+async def options_report_download():
+    \"\"\"Handle CORS preflight for /reports/{report_id}/download endpoint.\"\"\"
+    return {}
 
 @router.post("/scan")
 async def generic_scan(req: GenericScanRequest):
     """Compatibility endpoint: accepts {type, target} and returns a scan result.
 
-    Also persists the result in an in-memory list so the `/scans` endpoint
-    returns recent scans for the frontend Scans page.
+    Uses real threat analyzer with VirusTotal, Shodan, URLScan, AbuseIPDB, 
+    and Hybrid Analysis to provide actual threat detection.
     """
     scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
-    # Simple heuristic response mimicking existing scan endpoints
-    if req.type.lower() in ("url", "domain"):
-        status = "complete"
-        threat_level = "safe"
-        threats_detected = 0
-    else:
-        status = "queued"
-        threat_level = "unknown"
-        threats_detected = 0
-
-    result = {
-        "scan_id": scan_id,
-        "target": req.target,
-        "type": req.type,
-        "status": status,
-        "threat_level": threat_level,
-        "threats_detected": threats_detected,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    
+    try:
+        # Perform real threat analysis using all 5 APIs
+        analysis_result = await threat_analyzer.analyze(req.target)
+        
+        # Map analyzer verdict to threat_level
+        verdict = analysis_result.get("verdict", "unknown")
+        threat_level_map = {
+            "clean": "safe",
+            "suspicious": "suspicious",
+            "malicious": "malicious"
+        }
+        threat_level = threat_level_map.get(verdict, "unknown")
+        
+        # Count detected threats
+        threats_detected = len(analysis_result.get("threat_indicators", []))
+        
+        # Build scan result with real data
+        result = {
+            "scan_id": scan_id,
+            "target": req.target,
+            "type": analysis_result.get("input_type", req.type),
+            "status": "complete",
+            "threat_level": threat_level,
+            "threats_detected": threats_detected,
+            "verdict": verdict,
+            "confidence": analysis_result.get("confidence", 0.0),
+            "summary": analysis_result.get("summary", "Analysis complete"),
+            "timestamp": datetime.utcnow().isoformat(),
+            # Include API results for detailed view
+            "api_results": analysis_result.get("api_results", {}),
+            "threat_indicators": analysis_result.get("threat_indicators", []),
+        }
+    except Exception as e:
+        # Fallback if analysis fails
+        result = {
+            "scan_id": scan_id,
+            "target": req.target,
+            "type": req.type,
+            "status": "error",
+            "threat_level": "unknown",
+            "threats_detected": 0,
+            "verdict": "error",
+            "confidence": 0.0,
+            "summary": f"Analysis failed: {str(e)}",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e),
+        }
 
     # prepend to store (most recent first)
     SCANS_STORE.insert(0, result)
@@ -109,38 +161,64 @@ async def generic_scan(req: GenericScanRequest):
 
 @router.post("/scan/file")
 async def scan_file(file: UploadFile = File(...)):
-    """File upload scan endpoint. Accepts a file and returns a scan result."""
+    """File upload scan endpoint. Computes hash and analyzes with real threat APIs."""
     scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
     filename = file.filename or "unknown"
 
-    # Read file content (for demo, just read filename; real implementation would analyze)
-    file_size = 0
     try:
+        # Read file content and compute hash
         content = await file.read()
         file_size = len(content)
-    except Exception:
-        pass
-
-    # Mock analysis: check file extension for threat simulation
-    threat_level = "safe"
-    threats_detected = 0
-    if any(
-        ext in filename.lower()
-        for ext in [".exe", ".dll", ".bat", ".cmd", ".scr", ".vbs"]
-    ):
-        threat_level = "suspicious"
-        threats_detected = 1
-
-    result = {
-        "scan_id": scan_id,
-        "target": filename,
-        "type": "file",
-        "file_size": file_size,
-        "status": "complete",
-        "threat_level": threat_level,
-        "threats_detected": threats_detected,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+        
+        # Compute SHA256 hash
+        file_hash = hashlib.sha256(content).hexdigest()
+        
+        # Perform real threat analysis on file hash
+        analysis_result = await threat_analyzer.analyze(file_hash)
+        
+        # Map analyzer verdict to threat_level
+        verdict = analysis_result.get("verdict", "unknown")
+        threat_level_map = {
+            "clean": "safe",
+            "suspicious": "suspicious",
+            "malicious": "malicious"
+        }
+        threat_level = threat_level_map.get(verdict, "unknown")
+        
+        # Count detected threats
+        threats_detected = len(analysis_result.get("threat_indicators", []))
+        
+        result = {
+            "scan_id": scan_id,
+            "target": filename,
+            "type": "file",
+            "file_size": file_size,
+            "file_hash": file_hash,
+            "status": "complete",
+            "threat_level": threat_level,
+            "threats_detected": threats_detected,
+            "verdict": verdict,
+            "confidence": analysis_result.get("confidence", 0.0),
+            "summary": analysis_result.get("summary", "File analysis complete"),
+            "timestamp": datetime.utcnow().isoformat(),
+            # Include API results
+            "api_results": analysis_result.get("api_results", {}),
+            "threat_indicators": analysis_result.get("threat_indicators", []),
+        }
+    except Exception as e:
+        result = {
+            "scan_id": scan_id,
+            "target": filename,
+            "type": "file",
+            "file_size": 0,
+            "status": "error",
+            "threat_level": "unknown",
+            "threats_detected": 0,
+            "verdict": "error",
+            "summary": f"File analysis failed: {str(e)}",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e),
+        }
 
     # prepend to store (most recent first)
     SCANS_STORE.insert(0, result)
@@ -155,6 +233,15 @@ async def scan_file(file: UploadFile = File(...)):
 async def list_scans():
     """Return recent scans from in-memory store."""
     return SCANS_STORE
+
+
+@router.get("/scans/{scan_id}")
+async def get_scan_detail(scan_id: str):
+    """Get detailed information about a specific scan."""
+    for scan in SCANS_STORE:
+        if scan.get("scan_id") == scan_id:
+            return scan
+    raise HTTPException(status_code=404, detail="Scan not found")
 
 
 @router.get("/dashboard/stats")
@@ -214,16 +301,9 @@ async def get_threats():
 
 @router.get("/reports")
 async def list_reports():
-    """Return mock reports list."""
-    now = datetime.utcnow()
-    return [
-        {
-            "report_id": f"RPT_{int(now.timestamp()) - i}",
-            "title": "Threat Analysis",
-            "created": (now.isoformat()),
-        }
-        for i in range(3)
-    ]
+    """Return all generated reports from store."""
+    # Return reports in reverse chronological order (newest first)
+    return list(reversed(REPORTS_STORE)) if REPORTS_STORE else []
 
 
 class ReportRequest(BaseModel):
@@ -246,26 +326,101 @@ async def generate_report(req: ReportRequest):
             detail="Unable to generate report: gemini api key is not given",
         )
 
-    # Build a minimal threat_analysis payload for the report generator
+    # Generate unique report ID
+    now = datetime.utcnow()
+    report_id = f"RPT_{int(now.timestamp())}_{random.randint(1000, 9999)}"
+    
     target = req.target or "unknown"
-    threat_analysis = {
-        "input": target,
-        "input_type": req.type or "unknown",
-        "verdict": "unknown",
-        "confidence": 0.0,
-        "threat_indicators": [],
-        "api_results": {"apis_called": []},
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    scan_type = req.type or "unknown"
+    time_range = req.timeRange or "24h"
+    
+    # Get the most recent scan for this target from SCANS_STORE to use its full analysis
+    target_scans = [s for s in SCANS_STORE if target in s.get("target", "")]
+    
+    # If we have a recent scan with full analysis data, use it
+    if target_scans:
+        # Use the most recent scan with complete data
+        latest_scan = target_scans[-1]
+        
+        # If scan has api_results and threat_indicators, use them directly
+        if "api_results" in latest_scan and "threat_indicators" in latest_scan:
+            threat_analysis = {
+                "input": target,
+                "input_type": latest_scan.get("type", scan_type),
+                "verdict": latest_scan.get("verdict", "unknown"),
+                "confidence": latest_scan.get("confidence", 0.5),
+                "threat_indicators": latest_scan.get("threat_indicators", []),
+                "api_results": latest_scan.get("api_results", {}),
+                "timestamp": now.isoformat(),
+                "report_id": report_id,
+                "summary": latest_scan.get("summary", ""),
+                "threats_detected": latest_scan.get("threats_detected", 0),
+            }
+        else:
+            # Fallback: perform fresh analysis
+            threat_analysis = await threat_analyzer.analyze(target)
+            threat_analysis["report_id"] = report_id
+    else:
+        # No recent scans - perform fresh analysis
+        threat_analysis = await threat_analyzer.analyze(target)
+        threat_analysis["report_id"] = report_id
 
-    # Generate PDF bytes
+    # Generate PDF bytes with full analysis data
     pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
 
     if not pdf_bytes:
         raise HTTPException(status_code=500, detail="Report generation failed")
 
+    # Store report metadata using actual analysis data
+    report_meta = {
+        "report_id": report_id,
+        "title": f"Threat Analysis - {target}",
+        "target": target,
+        "type": threat_analysis.get("input_type", scan_type),
+        "time_range": time_range,
+        "threats_detected": threat_analysis.get("threats_detected", len(threat_analysis.get("threat_indicators", []))),
+        "verdict": threat_analysis.get("verdict", "unknown"),
+        "confidence": threat_analysis.get("confidence", 0.5),
+        "created": now.isoformat(),
+    }
+    REPORTS_STORE.append(report_meta)
+    
+    # Cache PDF for later retrieval
+    REPORTS_PDF_CACHE[report_id] = pdf_bytes
+    
+    # Trim old cache (keep last 50 reports)
+    if len(REPORTS_PDF_CACHE) > 50:
+        # Remove oldest entries
+        sorted_ids = sorted(REPORTS_PDF_CACHE.keys())
+        for old_id in sorted_ids[:-50]:
+            del REPORTS_PDF_CACHE[old_id]
+
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=sentinel_report.pdf"},
+        headers={"Content-Disposition": f"attachment; filename={target}_report_{report_id}.pdf"},
+    )
+
+@router.get("/reports/{report_id}")
+async def get_report(report_id: str):
+    """Get report metadata by ID."""
+    for report in REPORTS_STORE:
+        if report.get("report_id") == report_id:
+            return report
+    raise HTTPException(status_code=404, detail="Report not found")
+
+
+@router.get("/reports/{report_id}/download")
+async def download_report(report_id: str):
+    """Download a specific report PDF by ID."""
+    # Check if report exists in cache
+    if report_id not in REPORTS_PDF_CACHE:
+        raise HTTPException(status_code=404, detail="Report not found or expired")
+    
+    pdf_bytes = REPORTS_PDF_CACHE[report_id]
+    
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={report_id}.pdf"},
     )

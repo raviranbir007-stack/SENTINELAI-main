@@ -1188,7 +1188,7 @@
                     <div class="card card-glass report-card">
                         <div class="reports-header">
                             <h3>Recent Reports</h3>
-                            <button class="btn btn-ghost btn-sm">View All →</button>
+                            <button class="btn btn-ghost btn-sm" id="viewAllReportsBtn">View All →</button>
                         </div>
                         <div id="recentReports">
                             <!-- Reports will be inserted here -->
@@ -1332,10 +1332,11 @@
                         <h2>Security Reports</h2>
                         <p>AI-generated threat analysis reports</p>
                     </div>
+                    <button class="btn btn-cyber" onclick="generateReport()">✨ Generate New Report</button>
                 </div>
                 <div class="card card-glass" style="padding: 1.5rem;">
-                    <div id="allReports">
-                        <p style="color: var(--muted-foreground);">Loading reports...</p>
+                    <div id="allReportsPage">
+                        <p style="color: var(--muted-foreground); text-align: center; padding: 2rem;">Loading reports...</p>
                     </div>
                 </div>
             </div>
@@ -1386,6 +1387,98 @@
             </div>
         </div>
     </footer>
+
+    <!-- Modals -->
+    <!-- Scan Detail Modal -->
+    <div id="scanDetailModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+        <div class="card card-cyber" style="max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="margin: 0;">Scan Details</h2>
+                <button onclick="closeScanDetail()" class="icon-btn">✖️</button>
+            </div>
+            <div id="scanDetailContent">
+                <!-- Scan details will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- All Reports Modal -->
+    <div id="allReportsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+        <div class="card card-cyber" style="max-width: 900px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="margin: 0;">All Generated Reports</h2>
+                <button onclick="closeAllReports()" class="icon-btn">✖️</button>
+            </div>
+            <div id="allReportsContent">
+                <div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">Loading reports...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Dropdown -->
+    <div id="notificationDropdown" style="display: none; position: fixed; top: 4rem; right: 2rem; z-index: 99; width: 400px; max-width: calc(100vw - 4rem);">
+        <div class="card card-cyber" style="padding: 0; max-height: 400px; overflow-y: auto;">
+            <div style="padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 1rem;">Notifications</h3>
+                <button onclick="closeNotifications()" class="icon-btn" style="padding: 0.25rem;">✖️</button>
+            </div>
+            <div id="notificationList">
+                <!-- Notifications will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .toast {
+            padding: 1rem 1.5rem;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.875rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+        }
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--destructive); }
+        .toast.info { border-left: 4px solid var(--primary); }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .notification-item {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+        .notification-item:hover {
+            background: rgba(255,255,255,0.03);
+        }
+        .notification-item:last-child {
+            border-bottom: none;
+        }
+        .notification-unread {
+            background: rgba(45, 212, 191, 0.05);
+            border-left: 3px solid var(--primary);
+        }
+        #toastContainer {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 101;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+        }
+        #toastContainer .toast {
+            pointer-events: auto;
+        }
+    </style>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
 
     <script>
         // =============================================
@@ -1534,7 +1627,7 @@
                         <div class="threat-time">🕐 ${threat.timestamp}</div>
                     </td>
                     <td style="text-align: right;">
-                        <button class="btn btn-ghost btn-sm">👁️</button>
+                        <button class="btn btn-ghost btn-sm" onclick="viewThreatDetail('${threat.id}')">👁️</button>
                     </td>
                 </tr>
             `).join('');
@@ -1542,23 +1635,268 @@
 
         function renderRecentReports() {
             const container = document.getElementById('recentReports');
+            
+            // Show loading state if no reports
+            if (!allReports || allReports.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No reports generated yet. Click "Generate Report" to create one.</div>';
+                return;
+            }
+
+            // Show only the 4 most recent reports
+            const recentReports = allReports.slice(0, 4);
+            
             container.innerHTML = recentReports.map(report => `
                 <div class="report-item">
                     <div class="report-item-left">
                         <div class="report-item-icon">📄</div>
                         <div>
-                            <div class="report-item-title">${report.title}</div>
+                            <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
                             <div class="report-item-meta">
-                                <span>🕐 ${report.date}</span>
-                                <span class="badge badge-threat" style="font-size: 10px;">${report.threats} threats</span>
+                                <span>🕐 ${new Date(report.created).toLocaleString()}</span>
+                                <span class="badge badge-threat" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
                             </div>
                         </div>
                     </div>
                     <div class="report-item-right">
                         <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
+                        <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️</button>
                     </div>
                 </div>
             `).join('');
+        }
+
+        // =============================================
+        // Modal Functions
+        // =============================================
+        function viewScanDetail(scanId) {
+            const modal = document.getElementById('scanDetailModal');
+            const content = document.getElementById('scanDetailContent');
+            
+            content.innerHTML = '<div style="text-align: center; padding: 2rem;">Loading scan details...</div>';
+            modal.style.display = 'flex';
+            
+            // Fetch scan detail from API
+            apiRequest(API_ENDPOINTS.scanResult(scanId))
+                .then(scan => {
+                    const threatColor = scan.threat_level === 'safe' ? 'var(--success)' : scan.threat_level === 'suspicious' ? 'var(--warning)' : 'var(--destructive)';
+                    
+                    content.innerHTML = `
+                        <div style="margin-bottom: 1.5rem;">
+                            <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Scan ID</div>
+                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.125rem;">${scan.scan_id}</div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                            <div>
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Target</div>
+                                <div style="font-family: 'JetBrains Mono', monospace;">${scan.target}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Type</div>
+                                <div><span class="badge">${scan.type || 'unknown'}</span></div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Status</div>
+                                <div style="color: var(--success);">✓ ${scan.status || 'complete'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Threat Level</div>
+                                <div><span class="badge ${scan.threat_level === 'safe' ? 'badge-safe' : scan.threat_level === 'suspicious' ? 'badge-warning' : 'badge-threat'}">${scan.threat_level || 'unknown'}</span></div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 1.5rem;">
+                            <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Timestamp</div>
+                            <div>${new Date(scan.timestamp).toLocaleString()}</div>
+                        </div>
+                        ${scan.file_size ? `
+                            <div style="margin-bottom: 1.5rem;">
+                                <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">File Size</div>
+                                <div>${(scan.file_size / 1024).toFixed(2)} KB</div>
+                            </div>
+                        ` : ''}
+                        <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
+                            <button class="btn btn-cyber" onclick="generateReportForScan('${scan.scan_id}', '${scan.target}')">Generate Report</button>
+                            <button class="btn btn-outline" onclick="closeScanDetail()">Close</button>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    content.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--destructive);">Failed to load scan details: ${error.message}</div>`;
+                });
+        }
+
+        function closeScanDetail() {
+            document.getElementById('scanDetailModal').style.display = 'none';
+        }
+
+        function viewThreatDetail(threatId) {
+            showToast(`Viewing threat details for ${threatId}`, 'info');
+            // Could open similar modal for threat details
+        }
+
+        async function viewAllReports() {
+            const modal = document.getElementById('allReportsModal');
+            const content = document.getElementById('allReportsContent');
+            
+            modal.style.display = 'flex';
+            content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">Loading all reports...</div>';
+            
+            try {
+                await fetchAllReports();
+                
+                if (!allReports || allReports.length === 0) {
+                    content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No reports found. Generate a report to see it here.</div>';
+                    return;
+                }
+                
+                content.innerHTML = `
+                    <div style="display: grid; gap: 1rem;">
+                        ${allReports.map(report => `
+                            <div class="report-item">
+                                <div class="report-item-left">
+                                    <div class="report-item-icon">📄</div>
+                                    <div style="flex: 1;">
+                                        <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
+                                        <div class="report-item-meta">
+                                            <span>🎯 ${report.target || 'N/A'}</span>
+                                            <span>🕐 ${new Date(report.created).toLocaleString()}</span>
+                                            <span class="badge badge-${report.verdict === 'safe' ? 'safe' : 'threat'}" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="report-item-right">
+                                    <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                content.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--destructive);">Failed to load reports: ${error.message}</div>`;
+            }
+        }
+
+        function closeAllReports() {
+            document.getElementById('allReportsModal').style.display = 'none';
+        }
+
+        async function renderAllReportsPage() {
+            const container = document.getElementById('allReportsPage');
+            
+            if (!container) return; // Not on reports page
+            
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">Loading reports...</div>';
+            
+            try {
+                await fetchAllReports();
+                
+                if (!allReports || allReports.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--muted-foreground);"><div style="font-size: 3rem; margin-bottom: 1rem;">📄</div><div style="font-size: 1.125rem; margin-bottom: 0.5rem;">No Reports Generated Yet</div><div style="font-size: 0.875rem;">Click "Generate New Report" to create your first report</div></div>';
+                    return;
+                }
+                
+                container.innerHTML = `
+                    <div style="display: grid; gap: 1rem;">
+                        ${allReports.map(report => `
+                            <div class="report-item">
+                                <div class="report-item-left">
+                                    <div class="report-item-icon">📄</div>
+                                    <div style="flex: 1;">
+                                        <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
+                                        <div class="report-item-meta">
+                                            <span>🎯 ${report.target || 'N/A'}</span>
+                                            <span>📅 ${new Date(report.created).toLocaleString()}</span>
+                                            <span class="badge badge-${report.verdict === 'safe' ? 'safe' : 'threat'}" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
+                                            <span class="badge" style="font-size: 10px;">${report.type || 'N/A'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="report-item-right">
+                                    <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
+                                    <button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download PDF</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--destructive);">Failed to load reports: ${error.message}</div>`;
+            }
+        }
+
+        // =============================================
+        // Notification Functions
+        // =============================================
+        function toggleNotifications() {
+            const dropdown = document.getElementById('notificationDropdown');
+            const isVisible = dropdown.style.display === 'flex';
+            
+            if (isVisible) {
+                dropdown.style.display = 'none';
+            } else {
+                dropdown.style.display = 'flex';
+                renderNotifications();
+            }
+        }
+
+        function closeNotifications() {
+            document.getElementById('notificationDropdown').style.display = 'none';
+        }
+
+        function renderNotifications() {
+            const list = document.getElementById('notificationList');
+            
+            if (notifications.length === 0) {
+                list.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--muted-foreground);">No notifications</div>';
+                return;
+            }
+            
+            list.innerHTML = notifications.map(notif => `
+                <div class="notification-item ${notif.read ? '' : 'notification-unread'}" onclick="markNotificationRead(${notif.id})">
+                    <div style="font-weight: 500; margin-bottom: 0.25rem;">${notif.title}</div>
+                    <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">${notif.message}</div>
+                    <div style="font-size: 0.75rem; color: var(--muted-foreground);">${notif.time}</div>
+                </div>
+            `).join('');
+            
+            // Update badge count
+            const unreadCount = notifications.filter(n => !n.read).length;
+            const badge = document.querySelector('.notification-badge');
+            if (badge) {
+                badge.textContent = unreadCount;
+                badge.style.display = unreadCount > 0 ? 'flex' : 'none';
+            }
+        }
+
+        function markNotificationRead(notifId) {
+            const notif = notifications.find(n => n.id === notifId);
+            if (notif) {
+                notif.read = true;
+                renderNotifications();
+                showToast(notif.title, 'info');
+            }
+        }
+
+        function addNotification(title, message) {
+            notifications.unshift({
+                id: Date.now(),
+                title,
+                message,
+                time: 'Just now',
+                read: false
+            });
+            
+            // Update badge
+            const unreadCount = notifications.filter(n => !n.read).length;
+            const badge = document.querySelector('.notification-badge');
+            if (badge) {
+                badge.textContent = unreadCount;
+                badge.style.display = 'flex';
+            }
+            
+            // Keep only last 20 notifications
+            if (notifications.length > 20) {
+                notifications.length = 20;
+            }
         }
 
         // =============================================
@@ -1591,7 +1929,9 @@
                     body: JSON.stringify({ type, target })
                 });
 
-                showToast(`Scan complete: ${result.is_threat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, result.is_threat ? 'error' : 'success');
+                const isThreat = result.is_threat || result.threat_level !== 'safe';
+                showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
+                addNotification('Scan Completed', `${target} - ${isThreat ? 'Threat detected' : 'Safe'}`);
                 input.value = '';
                 
                 // Refresh data
@@ -1599,6 +1939,7 @@
                 fetchThreats();
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
+                addNotification('Scan Failed', error.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '⚡ SCAN';
@@ -1635,10 +1976,19 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
 
             try {
+                // Get selected options (you can enhance this to read actual form values)
+                const reportType = 'executive'; // Could be read from UI selection
+                const timeRange = '24h'; // Could be read from UI selection
+                const target = document.getElementById('scanInput').value.trim() || 'all_scans';
+
                 const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'executive', timeRange: '24h' })
+                    body: JSON.stringify({ 
+                        type: reportType, 
+                        timeRange: timeRange,
+                        target: target
+                    })
                 });
 
                 if (!res.ok) {
@@ -1651,9 +2001,11 @@
                     }
 
                     if (detail && detail.toLowerCase().includes('gemini')) {
-                        showToast('Unable to detect report as gemini api key is not given', 'error');
+                        showToast('Unable to generate report: Gemini API key is not configured', 'error');
+                        addNotification('Report Generation Failed', 'Gemini API key not configured');
                     } else {
                         showToast('Report generation failed: ' + detail, 'error');
+                        addNotification('Report Generation Failed', detail);
                     }
                     return;
                 }
@@ -1664,26 +2016,106 @@
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'sentinel_report.pdf';
+                    a.download = `sentinel_report_${Date.now()}.pdf`;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(url);
-                    showToast('Report downloaded', 'success');
+                    showToast('Report downloaded successfully!', 'success');
+                    addNotification('Report Generated', `Report for ${target} has been downloaded`);
+                    
+                    // Refresh reports list
+                    await fetchAllReports();
+                    renderRecentReports();
                 } else {
                     // fallback: try to parse JSON
                     try {
                         const data = await res.json();
                         showToast('Report generated successfully!', 'success');
+                        addNotification('Report Generated', 'New security report is ready');
+                        await fetchAllReports();
+                        renderRecentReports();
                     } catch (e) {
                         showToast('Report generated (unknown response)', 'success');
                     }
                 }
             } catch (error) {
-                showToast('Report generation failed', 'error');
+                showToast('Report generation failed: ' + error.message, 'error');
+                addNotification('Report Generation Error', error.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '✨ GENERATE REPORT';
+            }
+        }
+
+        async function generateReportForScan(scanId, target) {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Generating...';
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        type: 'scan_analysis', 
+                        timeRange: '24h',
+                        target: target
+                    })
+                });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scan_${scanId}_report.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                
+                showToast('Report generated and downloaded!', 'success');
+                addNotification('Scan Report Ready', `Report for scan ${scanId} downloaded`);
+                
+                await fetchAllReports();
+                renderRecentReports();
+            } catch (error) {
+                showToast('Failed to generate report: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Generate Report';
+            }
+        }
+
+        async function fetchAllReports() {
+            try {
+                const reports = await apiRequest(API_ENDPOINTS.reports);
+                allReports = reports || [];
+                return allReports;
+            } catch (error) {
+                console.error('Failed to fetch reports:', error);
+                return [];
+            }
+        }
+
+        async function downloadReportById(reportId) {
+            try {
+                showToast('Downloading report...', 'info');
+                const url = `${API_BASE_URL}/api/reports/${reportId}/download`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${reportId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                showToast('Report download started', 'success');
+                addNotification('Report Download', `Downloading report ${reportId}`);
+            } catch (error) {
+                showToast('Failed to download report: ' + error.message, 'error');
             }
         }
 
@@ -1720,7 +2152,9 @@
                     body: JSON.stringify({ type, target })
                 });
 
-                showToast(`Scan complete: ${result.threat_level === 'safe' ? '✅ Target is safe' : '⚠️ Threat detected!'}`, result.threat_level !== 'safe' ? 'error' : 'success');
+                const isThreat = result.threat_level !== 'safe';
+                showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
+                addNotification('New Scan Completed', `${target} - ${result.threat_level}`);
                 input.value = '';
                 statusDiv.textContent = `Scan ID: ${result.scan_id} - ${result.status}`;
                 
@@ -1728,6 +2162,7 @@
                 await fetchScanHistory();
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
+                addNotification('Scan Failed', error.message);
                 statusDiv.textContent = 'Scan failed';
             } finally {
                 btn.disabled = false;
@@ -1815,7 +2250,7 @@
                         <td style="color: ${threatColor === 'var(--success)' ? 'var(--success)' : threatColor === 'var(--warning)' ? 'var(--warning)' : 'var(--destructive)'};">✓ ${scan.status || 'unknown'}</td>
                         <td><span class="badge ${resultBadge}" style="font-size: 10px; text-transform: capitalize;">${threatLevel}</span></td>
                         <td style="text-align: right;">
-                            <button class="btn btn-ghost btn-sm">👁️</button>
+                            <button class="btn btn-ghost btn-sm" onclick="viewScanDetail('${scan.scan_id}')">👁️</button>
                         </td>
                     </tr>
                 `;
@@ -1831,9 +2266,12 @@
                 document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
                 btn.classList.add('active');
                 document.getElementById(btn.dataset.page).classList.add('active');
-                // Refresh scan history when navigating to Scans page
+                
+                // Load page-specific data
                 if (btn.dataset.page === 'scans') {
                     fetchScanHistory();
+                } else if (btn.dataset.page === 'reports') {
+                    renderAllReportsPage();
                 }
             });
         });
@@ -1846,6 +2284,20 @@
             if (e.key === 'Enter') performScan();
         });
         document.getElementById('generateReportBtn').addEventListener('click', generateReport);
+
+        // Notification icon handler
+        document.querySelectorAll('.icon-btn').forEach(btn => {
+            const text = btn.textContent.trim();
+            if (text === '🔔') {
+                btn.addEventListener('click', toggleNotifications);
+            }
+        });
+
+        // View all reports button
+        const viewAllReportsBtn = document.getElementById('viewAllReportsBtn');
+        if (viewAllReportsBtn) {
+            viewAllReportsBtn.addEventListener('click', viewAllReports);
+        }
 
         // Scans page handlers
         document.getElementById('newScanBtn').addEventListener('click', performNewScan);
@@ -1877,21 +2329,47 @@
             });
         });
 
+        // Close modals on outside click
+        document.getElementById('scanDetailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'scanDetailModal') closeScanDetail();
+        });
+
+        document.getElementById('allReportsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'allReportsModal') closeAllReports();
+        });
+
+        // Close notification dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('notificationDropdown');
+            const notifBtn = e.target.closest('.icon-btn');
+            if (dropdown.style.display === 'flex' && !dropdown.contains(e.target) && (!notifBtn || notifBtn.textContent.trim() !== '🔔')) {
+                closeNotifications();
+            }
+        });
+
         // =============================================
         // Initialize
         // =============================================
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
             
             renderAPIs();
             renderThreats();
             renderThreats('allThreatsTableBody');
-            renderRecentReports();
-            fetchScanHistory();
+            renderNotifications();
             
-            // Try to fetch live data
+            // Fetch live data
             fetchDashboardStats();
             fetchThreats();
+            fetchScanHistory();
+            
+            // Fetch and render reports
+            try {
+                await fetchAllReports();
+                renderRecentReports();
+            } catch (error) {
+                console.error('Failed to fetch reports:', error);
+            }
         });
     </script>
 </body>

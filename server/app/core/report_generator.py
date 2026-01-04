@@ -368,7 +368,7 @@ class ReportGenerator:
             return ""
 
     def _prepare_analysis_prompt(self, threat_data: Dict[str, Any]) -> str:
-        """Prepare concise prompt for Gemini analysis (reduced tokens)"""
+        """Prepare detailed prompt for Gemini analysis with all API results"""
 
         input_val = threat_data.get("input", "Unknown")
         input_type = threat_data.get("input_type", "Unknown")
@@ -377,94 +377,311 @@ class ReportGenerator:
         threats = threat_data.get("threat_indicators", [])
         api_results = threat_data.get("api_results", {})
 
+        # Format threat indicators with details
         if threats:
-            parts = []
+            threat_details = []
             for t in threats:
-                parts.append(
-                    "- {}: {} (Severity: {})".format(
-                        t.get("source", "Unknown"),
-                        t.get("indicator", "No details"),
-                        t.get("severity", "unknown"),
-                    )
-                )
-            threats_str = "\n".join(parts)
+                severity = t.get("severity", "unknown").upper()
+                source = t.get("source", "Unknown")
+                indicator = t.get("indicator", "No details")
+                # Include additional fields if present
+                extra = []
+                if "score" in t:
+                    extra.append(f"Score: {t['score']}")
+                if "count" in t:
+                    extra.append(f"Count: {t['count']}")
+                extra_str = f" ({', '.join(extra)})" if extra else ""
+                threat_details.append(f"  - [{severity}] {source}: {indicator}{extra_str}")
+            threats_str = "\n".join(threat_details)
         else:
-            threats_str = ""
+            threats_str = "  No threats detected"
+
+        # Format detailed API results
+        api_details = []
+        apis_called = api_results.get("apis_called", [])
+        
+        # AbuseIPDB Details
+        if "abuseipdb" in api_results and api_results["abuseipdb"]:
+            abuse_data = api_results["abuseipdb"].get("data", {})
+            if abuse_data:
+                api_details.append(f"""
+AbuseIPDB Analysis:
+  - Abuse Confidence: {abuse_data.get('abuseConfidenceScore', 0)}%
+  - Total Reports: {abuse_data.get('totalReports', 0)}
+  - Country: {abuse_data.get('countryCode', 'Unknown')}
+  - ISP: {abuse_data.get('isp', 'Unknown')}
+  - Domain: {abuse_data.get('domain', 'None')}
+  - Usage: {abuse_data.get('usageType', 'Unknown')}
+  - Last Report: {abuse_data.get('lastReportedAt', 'Never')}""")
+
+        # Shodan Details
+        if "shodan" in api_results and api_results["shodan"]:
+            shodan_data = api_results["shodan"]
+            if not shodan_data.get("error"):
+                ports = shodan_data.get("ports", [])
+                vulns = shodan_data.get("vulns", [])
+                api_details.append(f"""
+Shodan Analysis:
+  - Organization: {shodan_data.get('org', 'Unknown')}
+  - Country: {shodan_data.get('country_name', 'Unknown')}
+  - OS: {shodan_data.get('os', 'Unknown')}
+  - Open Ports: {', '.join(map(str, ports[:10])) if ports else 'None'}
+  - Vulnerabilities: {len(vulns)} found
+  - Hostnames: {', '.join(shodan_data.get('hostnames', [])[:3]) or 'None'}""")
+
+        # VirusTotal Details
+        if "virustotal" in api_results and api_results["virustotal"]:
+            vt_data = api_results["virustotal"]
+            if "data" in vt_data:
+                attrs = vt_data.get("data", {}).get("attributes", {})
+                stats = attrs.get("last_analysis_stats", {})
+                api_details.append(f"""
+VirusTotal Analysis:
+  - Malicious: {stats.get('malicious', 0)} engines
+  - Suspicious: {stats.get('suspicious', 0)} engines
+  - Undetected: {stats.get('undetected', 0)} engines
+  - Harmless: {stats.get('harmless', 0)} engines
+  - Total Engines: {sum(stats.values())}
+  - Reputation: {attrs.get('reputation', 0)}""")
+
+        # URLScan Details
+        if "urlscan" in api_results and api_results["urlscan"]:
+            url_data = api_results["urlscan"]
+            if "verdicts" in url_data:
+                overall = url_data.get("verdicts", {}).get("overall", {})
+                api_details.append(f"""
+URLScan Analysis:
+  - Risk Score: {overall.get('score', 0)}
+  - Malicious: {overall.get('malicious', False)}
+  - Categories: {', '.join(overall.get('categories', [])) or 'None'}
+  - Brands: {', '.join(url_data.get('brands', [])[:5]) or 'None'}
+  - Tags: {', '.join(url_data.get('tags', [])[:5]) or 'None'}""")
+
+        # Hybrid Analysis Details
+        if "hybrid_analysis" in api_results and api_results["hybrid_analysis"]:
+            ha_data = api_results["hybrid_analysis"]
+            if "results" in ha_data and ha_data["results"]:
+                item = ha_data["results"][0]
+                api_details.append(f"""
+Hybrid Analysis:
+  - Verdict: {item.get('verdict', 'Unknown')}
+  - Threat Score: {item.get('threat_score', 0)}/100
+  - Malware Family: {item.get('vx_family', 'Unknown')}
+  - Environment: {item.get('environment_description', 'Unknown')}""")
+
+        api_results_str = "\n".join(api_details) if api_details else "No detailed API data available"
 
         prompt = f"""
-Analyze the following security threat assessment and provide a comprehensive professional report:
+You are a senior cybersecurity threat analyst. Analyze this security scan and provide a professional report.
 
-SCAN TARGET:
-- Input: {input_val}
+TARGET INFORMATION:
+- Target: {input_val}
 - Type: {input_type}
+- Scan Time: {threat_data.get('timestamp', 'Unknown')}
 
-VERDICT: {verdict.upper()}
-Confidence Score: {confidence * 100:.1f}%
+INITIAL VERDICT:
+- Assessment: {verdict.upper()}
+- Confidence: {confidence * 100:.1f}%
 
-DETECTED THREATS:
-{threats_str if threats else 'No threats detected'}
+THREAT INDICATORS:
+{threats_str}
 
-APIS CALLED: {', '.join(api_results.get('apis_called', []))}
+DETAILED API RESULTS:
+{api_results_str}
 
-Please provide:
-1. Executive Summary: Brief assessment of the threat level
-2. Risk Analysis: Detailed analysis of each detected threat
-3. API Findings: Summary of what each security API found
-4. Recommendations: Actions to take based on findings
-5. Conclusion: Final professional recommendation
+APIs Used: {', '.join(apis_called) if apis_called else 'None'}
 
-Format the response in clear sections with markdown headers.
-Keep it professional and concise (500-800 words).
+Provide a professional security analysis with these sections:
+
+1. EXECUTIVE SUMMARY (2-3 sentences)
+   Overall risk and key findings
+
+2. DETAILED ANALYSIS (4-5 paragraphs)
+   - Analyze each API's findings
+   - Explain threat implications
+   - Correlate findings across APIs
+   - Real-world risk assessment
+
+3. TECHNICAL FINDINGS (bulleted)
+   Key technical details from each API
+
+4. RISK ASSESSMENT
+   Risk level, impact, likelihood
+
+5. RECOMMENDATIONS (prioritized)
+   Immediate actions, remediation, prevention
+
+6. CONCLUSION
+   Final assessment and next steps
+
+Keep professional, cite specific data, 800-1200 words total.
 """
 
         return prompt
 
     def _get_fallback_analysis(self, threat_data: Dict[str, Any]) -> str:
-        """Generate fallback analysis when Gemini is unavailable"""
+        """Generate detailed fallback analysis when Gemini is unavailable"""
 
         verdict = threat_data.get("verdict", "unknown").upper()
         confidence = threat_data.get("confidence", 0.0) * 100
         threats = threat_data.get("threat_indicators", [])
+        api_results = threat_data.get("api_results", {})
+        input_val = threat_data.get("input", "Unknown")
+        input_type = threat_data.get("input_type", "Unknown")
 
-        analysis = f"""## Executive Summary
-The target has been assessed as {verdict} with {confidence:.1f}% confidence.
+        analysis = f"""## EXECUTIVE SUMMARY
 
-## Risk Analysis
+Target: {input_val} (Type: {input_type})
+Assessment: {verdict}
+Confidence: {confidence:.1f}%
+Scan Date: {threat_data.get('timestamp', 'Unknown')}
+
+The target has been assessed as {verdict} with {confidence:.1f}% confidence based on analysis from multiple security APIs including VirusTotal, Shodan, URLScan, AbuseIPDB, and Hybrid Analysis.
+
+## DETAILED ANALYSIS
+
 """
 
+        # Add API-specific findings
+        apis_called = api_results.get("apis_called", [])
+        if apis_called:
+            analysis += f"This analysis utilized {len(apis_called)} security intelligence APIs: {', '.join(apis_called)}.\n\n"
+
+        # Analyze threat indicators
         if threats:
-            analysis += "The following security threats were detected:\n\n"
-            for threat in threats:
-                analysis += f"- **{threat.get('source', 'Unknown')}**: {threat.get('indicator', 'No details')}\n"
-                analysis += (
-                    f"  Severity: {threat.get('severity', 'Unknown').upper()}\n\n"
-                )
+            analysis += f"### Threat Indicators Detected ({len(threats)})\n\n"
+            analysis += "The following security threats were identified during the scan:\n\n"
+            
+            # Group by severity
+            critical_threats = [t for t in threats if t.get('severity') == 'critical']
+            medium_threats = [t for t in threats if t.get('severity') == 'medium']
+            low_threats = [t for t in threats if t.get('severity') == 'low']
+            
+            if critical_threats:
+                analysis += "**CRITICAL THREATS:**\n"
+                for threat in critical_threats:
+                    source = threat.get('source', 'Unknown')
+                    indicator = threat.get('indicator', 'No details')
+                    analysis += f"- **{source}**: {indicator}\n"
+                    if 'score' in threat:
+                        analysis += f"  Risk Score: {threat['score']}\n"
+                analysis += "\n"
+            
+            if medium_threats:
+                analysis += "**MEDIUM THREATS:**\n"
+                for threat in medium_threats:
+                    source = threat.get('source', 'Unknown')
+                    indicator = threat.get('indicator', 'No details')
+                    analysis += f"- **{source}**: {indicator}\n"
+                analysis += "\n"
+            
+            if low_threats:
+                analysis += "**LOW-LEVEL THREATS:**\n"
+                for threat in low_threats:
+                    source = threat.get('source', 'Unknown')
+                    indicator = threat.get('indicator', 'No details')
+                    analysis += f"- **{source}**: {indicator}\n"
+                analysis += "\n"
         else:
-            analysis += (
-                "No significant security threats were detected during the scan.\n\n"
-            )
+            analysis += "### No Threats Detected\n\n"
+            analysis += "No significant security threats were detected during the comprehensive scan across all security intelligence APIs.\n\n"
 
-        analysis += """## Recommendations
-- Review the detailed API results in the technical section
-- Take appropriate action based on the threat level
-- Monitor the target for any future suspicious activity
-- Update security policies if needed
+        # Add API-specific details
+        analysis += "## TECHNICAL FINDINGS\n\n"
+        
+        if "abuseipdb" in api_results and api_results["abuseipdb"]:
+            abuse_data = api_results["abuseipdb"].get("data", {})
+            if abuse_data:
+                score = abuse_data.get("abuseConfidenceScore", 0)
+                analysis += f"**AbuseIPDB:**\n"
+                analysis += f"- Abuse Confidence: {score}%\n"
+                analysis += f"- Total Reports: {abuse_data.get('totalReports', 0)}\n"
+                analysis += f"- ISP: {abuse_data.get('isp', 'Unknown')}\n"
+                analysis += f"- Country: {abuse_data.get('countryCode', 'Unknown')}\n\n"
 
-## Conclusion
-"""
+        if "shodan" in api_results and api_results["shodan"]:
+            shodan_data = api_results["shodan"]
+            if not shodan_data.get("error"):
+                analysis += f"**Shodan:**\n"
+                analysis += f"- Organization: {shodan_data.get('org', 'Unknown')}\n"
+                analysis += f"- Open Ports: {len(shodan_data.get('ports', []))}\n"
+                analysis += f"- Vulnerabilities: {len(shodan_data.get('vulns', []))}\n\n"
 
+        if "virustotal" in api_results and api_results["virustotal"]:
+            vt_data = api_results["virustotal"]
+            if "data" in vt_data:
+                stats = vt_data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                malicious = stats.get("malicious", 0)
+                analysis += f"**VirusTotal:**\n"
+                analysis += f"- Malicious Detections: {malicious}/{sum(stats.values())}\n"
+                analysis += f"- Suspicious: {stats.get('suspicious', 0)}\n"
+                analysis += f"- Clean: {stats.get('harmless', 0)}\n\n"
+
+        analysis += "## RISK ASSESSMENT\n\n"
+        
         if verdict == "MALICIOUS":
-            analysis += (
-                "This target poses a critical security risk and should be treated "
-                "with maximum caution. Immediate action is recommended."
-            )
+            risk_level = "CRITICAL"
+            analysis += f"**Risk Level: {risk_level}**\n\n"
+            analysis += "This target poses a critical security risk and should be treated with maximum caution. "
+            analysis += "Immediate action is required to block or quarantine this threat.\n\n"
         elif verdict == "SUSPICIOUS":
-            analysis += (
-                "This target exhibits suspicious characteristics and warrants "
-                "further investigation. Exercise caution when interacting with this resource."
-            )
+            risk_level = "MEDIUM-HIGH"
+            analysis += f"**Risk Level: {risk_level}**\n\n"
+            analysis += "This target exhibits suspicious characteristics that warrant further investigation and caution. "
+            analysis += "Consider implementing additional monitoring or blocking measures.\n\n"
         else:
-            analysis += "This target appears to be safe based on the security assessments performed."
+            risk_level = "LOW"
+            analysis += f"**Risk Level: {risk_level}**\n\n"
+            analysis += "This target appears to be safe based on the current security assessments. "
+            analysis += "However, continued monitoring is recommended as threats can emerge over time.\n\n"
+
+        analysis += "## RECOMMENDATIONS\n\n"
+        
+        if verdict == "MALICIOUS":
+            analysis += "**Immediate Actions:**\n"
+            analysis += "1. Block all traffic to/from this target immediately\n"
+            analysis += "2. Investigate any systems that have communicated with this target\n"
+            analysis += "3. Initiate incident response procedures\n"
+            analysis += "4. Preserve logs and forensic data\n\n"
+            analysis += "**Remediation:**\n"
+            analysis += "1. Scan all affected systems for malware\n"
+            analysis += "2. Reset credentials for potentially compromised accounts\n"
+            analysis += "3. Review firewall and security policies\n"
+            analysis += "4. Document the incident for future reference\n\n"
+        elif verdict == "SUSPICIOUS":
+            analysis += "**Recommended Actions:**\n"
+            analysis += "1. Enable enhanced monitoring for this target\n"
+            analysis += "2. Restrict access based on business requirements\n"
+            analysis += "3. Conduct additional investigation if interaction is necessary\n"
+            analysis += "4. Update threat intelligence feeds\n\n"
+        else:
+            analysis += "**General Recommendations:**\n"
+            analysis += "1. Continue routine security monitoring\n"
+            analysis += "2. Keep security policies up to date\n"
+            analysis += "3. Maintain regular scan schedules\n"
+            analysis += "4. Train staff on security awareness\n\n"
+
+        analysis += "## CONCLUSION\n\n"
+        
+        if threats:
+            threat_summary = f"detected {len(threats)} threat indicator(s)"
+        else:
+            threat_summary = "found no significant threats"
+        
+        analysis += f"This comprehensive security analysis {threat_summary} "
+        analysis += f"across multiple intelligence sources. "
+        
+        if verdict == "MALICIOUS":
+            analysis += "The target represents a confirmed security threat requiring immediate action."
+        elif verdict == "SUSPICIOUS":
+            analysis += "The target exhibits characteristics that warrant caution and further investigation."
+        else:
+            analysis += "The target appears safe based on current intelligence, though ongoing monitoring is advised."
+
+        analysis += f"\n\nConfidence Level: {confidence:.1f}%\n"
+        analysis += f"APIs Consulted: {', '.join(apis_called) if apis_called else 'None'}\n"
+        analysis += "\n---\n"
+        analysis += "*Note: This is a local fallback analysis. For enhanced AI-powered insights, configure Gemini API.*"
 
         return analysis
 
