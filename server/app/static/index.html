@@ -327,9 +327,73 @@
         .btn-ghost {
             background: transparent;
             color: var(--muted-foreground);
+            position: relative;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
 
-        .btn-ghost:hover { background: var(--secondary); color: var(--foreground); }
+        .btn-ghost:hover { 
+            background: var(--secondary); 
+            color: var(--foreground);
+            transform: scale(1.1);
+        }
+        
+        .btn-ghost:active {
+            transform: scale(0.95);
+        }
+        
+        /* Tooltip styles */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 120px;
+            background-color: var(--card);
+            color: var(--foreground);
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1000;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -60px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .tooltip .tooltiptext::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: var(--card) transparent transparent transparent;
+        }
+        
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        /* Eye icon pulse effect on click */
+        @keyframes eyePulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+        
+        .btn-ghost.clicked {
+            animation: eyePulse 0.3s ease;
+        }
 
         .quick-stats {
             display: flex;
@@ -1056,21 +1120,21 @@
                                 </div>
                             </div>
                             <div class="status-item">
-                                <div class="status-item-icon" style="color: var(--primary);">📊</div>
+                                <div class="status-item-icon" style="color: var(--primary);">�</div>
                                 <div>
                                     <div class="status-item-label">Monitor</div>
                                     <div class="status-item-value" style="color: var(--primary);">Running</div>
                                 </div>
                             </div>
                             <div class="status-item">
-                                <div class="status-item-icon" style="color: var(--warning);">⚠️</div>
+                                <div class="status-item-icon" style="color: var(--warning);">🔔</div>
                                 <div>
                                     <div class="status-item-label">Alerts</div>
                                     <div class="status-item-value" style="color: var(--warning);">3 New</div>
                                 </div>
                             </div>
                             <div class="status-item">
-                                <div class="status-item-icon" style="color: var(--success);">✓</div>
+                                <div class="status-item-icon" style="color: var(--success);">🌐</div>
                                 <div>
                                     <div class="status-item-label">APIs</div>
                                     <div class="status-item-value" style="color: var(--success);">5/5 Online</div>
@@ -1116,7 +1180,7 @@
                         <h2>Recent Threats Detected</h2>
                         <p>Live feed from all connected intelligence sources</p>
                     </div>
-                    <button class="btn btn-outline">View All Threats →</button>
+                    <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
                 </div>
                 <div class="card card-glass">
                     <table class="threats-table">
@@ -1390,7 +1454,7 @@
 
     <!-- Modals -->
     <!-- Scan Detail Modal -->
-    <div id="scanDetailModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+    <div id="scanDetailModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
         <div class="card card-cyber" style="max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2 style="margin: 0;">Scan Details</h2>
@@ -1402,8 +1466,37 @@
         </div>
     </div>
 
+    <!-- All Threats Modal -->
+    <div id="allThreatsModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+        <div class="card card-cyber" style="max-width: 1200px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="margin: 0;">All Threats Detected</h2>
+                <button onclick="closeAllThreats()" class="icon-btn">✖️</button>
+            </div>
+            <div id="allThreatsContent">
+                <table class="threats-table">
+                    <thead>
+                        <tr>
+                            <th>Threat ID</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Severity</th>
+                            <th>Source</th>
+                            <th>Location</th>
+                            <th>Time</th>
+                            <th style="text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="allThreatsTableBody">
+                        <!-- All threats will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- All Reports Modal -->
-    <div id="allReportsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+    <div id="allReportsModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
         <div class="card card-cyber" style="max-width: 900px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2 style="margin: 0;">All Generated Reports</h2>
@@ -1515,8 +1608,8 @@
             { name: "VirusTotal", description: "Multi-antivirus file and URL scanning", icon: "🛡️", status: "online", lastCheck: "12s ago", queriesUsed: 842, queriesLimit: 1000 },
             { name: "Shodan", description: "Internet-connected device intelligence", icon: "🌐", status: "online", lastCheck: "34s ago", queriesUsed: 156, queriesLimit: 500 },
             { name: "URLScan.io", description: "Website security analysis & screenshots", icon: "🔍", status: "online", lastCheck: "1m ago", queriesUsed: 234, queriesLimit: 1000 },
-            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "⚠️", status: "limited", lastCheck: "45s ago", queriesUsed: 890, queriesLimit: 1000 },
-            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "📁", status: "online", lastCheck: "2m ago", queriesUsed: 67, queriesLimit: 200 }
+            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "🚨", status: "limited", lastCheck: "45s ago", queriesUsed: 890, queriesLimit: 1000 },
+            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "🔬", status: "online", lastCheck: "2m ago", queriesUsed: 67, queriesLimit: 200 }
         ];
 
         const threats = [
@@ -1524,7 +1617,7 @@
             { id: "THR-002", type: "phishing", icon: "🎣", target: "login-secure-bank.com", severity: "high", source: "URLScan", location: "Netherlands", timestamp: "5 min ago" },
             { id: "THR-003", type: "exploit", icon: "💥", target: "45.33.32.156", severity: "high", source: "Shodan", location: "United States", timestamp: "8 min ago" },
             { id: "THR-004", type: "botnet", icon: "🤖", target: "103.25.44.78", severity: "medium", source: "AbuseIPDB", location: "China", timestamp: "12 min ago" },
-            { id: "THR-005", type: "suspicious", icon: "⚠️", target: "update-check.exe", severity: "medium", source: "Hybrid Analysis", location: "Unknown", timestamp: "15 min ago" }
+            { id: "THR-005", type: "suspicious", icon: "🔎", target: "update-check.exe", severity: "medium", source: "Hybrid Analysis", location: "Unknown", timestamp: "15 min ago" }
         ];
 
         const recentReports = [
@@ -1627,7 +1720,12 @@
                         <div class="threat-time">🕐 ${threat.timestamp}</div>
                     </td>
                     <td style="text-align: right;">
-                        <button class="btn btn-ghost btn-sm" onclick="viewThreatDetail('${threat.id}')">👁️</button>
+                        <button class="btn btn-ghost btn-sm tooltip" 
+                                onclick="const btn = event.currentTarget; btn.classList.add('clicked'); setTimeout(() => btn.classList.remove('clicked'), 300); viewThreatDetail('${threat.id}')" 
+                                title="View Threat Details">
+                            👁️
+                            <span class="tooltiptext">View Threat Details</span>
+                        </button>
                     </td>
                 </tr>
             `).join('');
@@ -1672,8 +1770,28 @@
             const modal = document.getElementById('scanDetailModal');
             const content = document.getElementById('scanDetailContent');
             
-            content.innerHTML = '<div style="text-align: center; padding: 2rem;">Loading scan details...</div>';
+            // Show loading state with animation
+            content.innerHTML = `
+                <div style="text-align: center; padding: 3rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem; animation: pulse 1.5s ease-in-out infinite;">👁️</div>
+                    <div style="color: var(--primary); font-weight: 500;">Loading scan details...</div>
+                    <div style="color: var(--muted-foreground); font-size: 0.875rem; margin-top: 0.5rem;">Scan ID: ${scanId}</div>
+                </div>
+            `;
             modal.style.display = 'flex';
+            
+            // Add animation keyframes if not already present
+            if (!document.getElementById('pulseAnimation')) {
+                const style = document.createElement('style');
+                style.id = 'pulseAnimation';
+                style.textContent = `
+                    @keyframes pulse {
+                        0%, 100% { opacity: 1; transform: scale(1); }
+                        50% { opacity: 0.5; transform: scale(1.1); }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
             
             // Fetch scan detail from API
             apiRequest(API_ENDPOINTS.scanResult(scanId))
@@ -1801,7 +1919,26 @@
         }
 
         function closeScanDetail() {
-            document.getElementById('scanDetailModal').style.display = 'none';
+            const modal = document.getElementById('scanDetailModal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function viewAllThreats() {
+            const modal = document.getElementById('allThreatsModal');
+            const content = document.getElementById('allThreatsContent');
+            
+            if (!modal) return;
+            
+            // Render all threats in the modal
+            renderThreats('allThreatsTableBody');
+            
+            // Show modal
+            modal.style.display = 'flex';
+        }
+
+        function closeAllThreats() {
+            const modal = document.getElementById('allThreatsModal');
+            if (modal) modal.style.display = 'none';
         }
 
         function viewThreatDetail(threatId) {
@@ -2351,7 +2488,12 @@
                         <td style="color: ${threatColor === 'var(--success)' ? 'var(--success)' : threatColor === 'var(--warning)' ? 'var(--warning)' : 'var(--destructive)'};">✓ ${scan.status || 'unknown'}</td>
                         <td><span class="badge ${resultBadge}" style="font-size: 10px; text-transform: capitalize;">${threatLevel}</span></td>
                         <td style="text-align: right;">
-                            <button class="btn btn-ghost btn-sm" onclick="viewScanDetail('${scan.scan_id}')">👁️</button>
+                            <button class="btn btn-ghost btn-sm tooltip" 
+                                    onclick="const btn = event.currentTarget; btn.classList.add('clicked'); setTimeout(() => btn.classList.remove('clicked'), 300); viewScanDetail('${scan.scan_id}')" 
+                                    title="View Scan Details">
+                                👁️
+                                <span class="tooltiptext">View Details</span>
+                            </button>
                         </td>
                     </tr>
                 `;
@@ -2400,6 +2542,12 @@
             viewAllReportsBtn.addEventListener('click', viewAllReports);
         }
 
+        // View all threats button
+        const viewAllThreatsBtn = document.getElementById('viewAllThreatsBtn');
+        if (viewAllThreatsBtn) {
+            viewAllThreatsBtn.addEventListener('click', viewAllThreats);
+        }
+
         // Scans page handlers
         document.getElementById('newScanBtn').addEventListener('click', performNewScan);
         document.getElementById('newScanInput').addEventListener('keypress', (e) => {
@@ -2438,6 +2586,13 @@
         document.getElementById('allReportsModal').addEventListener('click', (e) => {
             if (e.target.id === 'allReportsModal') closeAllReports();
         });
+
+        const allThreatsModalEl = document.getElementById('allThreatsModal');
+        if (allThreatsModalEl) {
+            allThreatsModalEl.addEventListener('click', (e) => {
+                if (e.target.id === 'allThreatsModal') closeAllThreats();
+            });
+        }
 
         // Close notification dropdown when clicking outside
         document.addEventListener('click', (e) => {
