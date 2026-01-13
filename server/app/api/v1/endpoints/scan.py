@@ -5,7 +5,6 @@ Handles threat analysis for IPs, URLs, domains, and file hashes
 
 import hashlib
 import logging
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -23,7 +22,7 @@ from ....models import ClientInstallation, ScanHistory
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory scan history (for backward compatibility)
+# In-memory scan history (in production, use database)
 _scan_history = []
 
 
@@ -77,6 +76,7 @@ async def options_universal_scan():
     """Handle CORS preflight for /scan endpoint."""
     return {}
 
+
 async def _store_scan_result(scan_data: dict, db: AsyncSession):
     """Store scan result in history and database"""
     global _scan_history
@@ -96,19 +96,12 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
                 client_id_fk = client.id
         
         scan_record = ScanHistory(
-            scan_id=
-    file: UploadFile = File(...),
-    include_report: bool = False,
-    client_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Scan an uploaded file for threats using VirusTotal and Hybrid Analysis
-
-    Args:
-        file: File to scan
-        include_report: Include PDF report in response
-        client_id: Optional client ID for trackingtected", 0),
+            scan_id=scan_data["scan_id"],
+            target=scan_data.get("target", scan_data.get("filename", "")),
+            target_type=scan_data.get("target_type", "unknown"),
+            threat_level=scan_data.get("threat_level", "unknown"),
+            confidence=scan_data.get("confidence", 0.0),
+            threats_detected=scan_data.get("threats_detected", 0),
             analysis_data=scan_data.get("analysis", {}),
             client_id=client_id_fk,
             report_generated=scan_data.get("report_url") is not None,
@@ -120,7 +113,6 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
     except Exception as e:
         logger.error(f"Failed to store scan in database: {str(e)}")
         await db.rollback()
-        _scan_history = _scan_history[:100]
 
 
 @router.get("/history")
@@ -133,13 +125,19 @@ async def get_scan_history():
 
 
 @router.post("/file")
-async def scan_file(file: UploadFile = File(...), include_report: bool = False):
+async def scan_file(
+    file: UploadFile = File(...),
+    include_report: bool = False,
+    client_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Scan an uploaded file for threats using VirusTotal and Hybrid Analysis
 
     Args:
         file: File to scan
         include_report: Include PDF report in response
+        client_id: Optional client ID for tracking
 
     Returns:
         Threat analysis results with optional PDF report
@@ -160,12 +158,11 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
 
         # Run threat analysis on file hash
         analysis_result = await threat_analyzer.analyze(file_hash)
-,
-            "client_id": client_id,
-        }
-        
-        # Store in scan history and database
-        await _store_scan_result(result, db
+
+        # Add file metadata
+        analysis_result["file_info"] = {
+            "filename": file.filename,
+            "size": file_size,
             "content_type": file.content_type,
             "sha256": file_hash,
         }
@@ -177,7 +174,7 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
         try:
             if include_report:
                 pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-                if pdf_bytes:, db: AsyncSession = Depends(get_db)
+                if pdf_bytes:
                     report_url = f"/api/v1/reports/download/{scan_id}"
                     # Store report for later retrieval (in-memory for now)
                     if not hasattr(report_generator, '_reports_cache'):
@@ -198,11 +195,12 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
             "timestamp": datetime.utcnow().isoformat(),
             "report_url": report_url,
             "target_type": "file",
-            "target_name": file.filename
+            "target_name": file.filename,
+            "client_id": client_id,
         }
         
-        # Store in scan history
-        _store_scan_result(result)
+        # Store in scan history and database
+        await _store_scan_result(result, db)
         
         return result
 
@@ -214,7 +212,7 @@ async def scan_file(file: UploadFile = File(...), include_report: bool = False):
 
 
 @router.post("/url")
-async def scan_url(request: ThreatScanRequest):
+async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
     """
     Scan a URL for threats using VirusTotal and URLScan
 
@@ -257,21 +255,21 @@ async def scan_url(request: ThreatScanRequest):
             "scan_id": scan_id,
             "url": url,
             "status": "complete",
-            "threat_level": an,
+            "threat_level": analysis_result.get("verdict", "unknown"),
+            "confidence": analysis_result.get("confidence", 0.0),
+            "threats_detected": len(analysis_result.get("threat_indicators", [])),
+            "analysis": analysis_result,
+            "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "url",
+            "target_name": url,
             "client_id": request.client_id,
         }
         
         # Store in scan history and database
-        await _store_scan_result(result, db.utcnow().isoformat(),
-            "report_url": report_url,
-            "target_type": "url",
-            "target_name": url
-        }
+        await _store_scan_result(result, db)
         
-        # Store in scan history
-        _store_scan_result(result)
-        
-        return result, db: AsyncSession = Depends(get_db)
+        return result
 
     except Exception as e:
         logger.error(f"URL scan error: {str(e)}")
@@ -279,7 +277,7 @@ async def scan_url(request: ThreatScanRequest):
 
 
 @router.post("/ip")
-async def scan_ip(request: ThreatScanRequest):
+async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
     """
     Scan an IP address for threats using AbuseIPDB and Shodan
 
@@ -317,21 +315,21 @@ async def scan_ip(request: ThreatScanRequest):
         result = {
             "scan_id": scan_id,
             "ip": ip,
-            "status": "comple,
+            "status": "complete",
+            "threat_level": analysis_result.get("verdict", "unknown"),
+            "confidence": analysis_result.get("confidence", 0.0),
+            "threats_detected": len(analysis_result.get("threat_indicators", [])),
+            "analysis": analysis_result,
+            "timestamp": datetime.utcnow().isoformat(),
+            "report_url": report_url,
+            "target_type": "ip",
+            "target_name": ip,
             "client_id": request.client_id,
         }
         
         # Store in scan history and database
-        await _store_scan_result(result, dbresult,
-            "timestamp": datetime.utcnow().isoformat(),
-            "report_url": report_url,
-            "target_type": "ip",
-            "target_name": ip
-        }
+        await _store_scan_result(result, db)
         
-        # Store in scan history
-        _store_scan_result(result)
-        , db: AsyncSession = Depends(get_db)
         return result
 
     except Exception as e:
@@ -340,7 +338,7 @@ async def scan_ip(request: ThreatScanRequest):
 
 
 @router.post("/hash")
-async def scan_hash(request: ThreatScanRequest):
+async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
     """
     Scan a file hash for threats using VirusTotal and Hybrid Analysis
 
@@ -371,7 +369,10 @@ async def scan_hash(request: ThreatScanRequest):
                     if not hasattr(report_generator, '_reports_cache'):
                         report_generator._reports_cache = {}
                     report_generator._reports_cache[scan_id] = pdf_bytes
-        exsult = {
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
+
+        result = {
             "scan_id": scan_id,
             "hash": file_hash,
             "status": "complete",
@@ -389,10 +390,7 @@ async def scan_hash(request: ThreatScanRequest):
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        return result   "report_url": report_url,
-            "target_type": "hash",
-            "target_name": file_hash
-        }, db: AsyncSession = Depends(get_db)
+        return result
 
     except Exception as e:
         logger.error(f"Hash scan error: {str(e)}")
@@ -400,7 +398,7 @@ async def scan_hash(request: ThreatScanRequest):
 
 
 @router.post("/scan")
-async def universal_scan(request: ThreatScanRequest):
+async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
     """
     Universal scan endpoint - auto-detects input type and routes to appropriate analyzer
 
@@ -431,7 +429,15 @@ async def universal_scan(request: ThreatScanRequest):
         try:
             if include_report:
                 pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
-          sult = {
+                if pdf_bytes:
+                    report_url = f"/api/v1/reports/download/{scan_id}"
+                    if not hasattr(report_generator, '_reports_cache'):
+                        report_generator._reports_cache = {}
+                    report_generator._reports_cache[scan_id] = pdf_bytes
+        except Exception as e:
+            logger.error(f"Report generation failed: {str(e)}")
+
+        result = {
             "scan_id": scan_id,
             "target": target,
             "detected_type": input_type.value,
@@ -450,15 +456,7 @@ async def universal_scan(request: ThreatScanRequest):
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        return result   "detected_type": input_type.value,
-            "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
-            "confidence": analysis_result.get("confidence", 0.0),
-            "threats_detected": len(analysis_result.get("threat_indicators", [])),
-            "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
-            "report_url": report_url,
-        }
+        return result
 
     except Exception as e:
         logger.error(f"Universal scan error: {str(e)}")
