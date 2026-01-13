@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from .endpoints import auth, dashboard, reports, scan, threats
+from .endpoints import advanced_reports, auth, dashboard, network_defense, reports, scan, threats
 
 api_router = APIRouter()
 
@@ -18,3 +18,9 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 
 # Reports routes
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+
+# Advanced Reports routes
+api_router.include_router(advanced_reports.router, prefix="/advanced-reports", tags=["advanced-reports"])
+
+# Network Defense routes
+api_router.include_router(network_defense.router, prefix="/network", tags=["network-defense"])

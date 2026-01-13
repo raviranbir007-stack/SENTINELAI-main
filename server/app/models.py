@@ -134,3 +134,171 @@ class APICache(Base):
     data = Column(JSON, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScanHistory(Base):
+    """Stores all scan results for historical reporting"""
+    __tablename__ = "scan_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(String(100), unique=True, index=True, nullable=False)
+    target = Column(String(500), nullable=False, index=True)
+    target_type = Column(String(50), nullable=False)  # ip, url, domain, file, hash
+    target_name = Column(String(255))  # filename or display name
+    
+    # Scan results
+    threat_level = Column(String(50))  # safe, suspicious, malicious, unknown
+    confidence = Column(Float, default=0.0)
+    threats_detected = Column(Integer, default=0)
+    analysis_data = Column(JSON)  # Full analysis result
+    
+    # Metadata
+    scan_timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    client_id = Column(Integer, ForeignKey("client_installations.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Report reference
+    report_generated = Column(Boolean, default=False)
+    report_path = Column(String(500))
+    
+    # Relationships
+    client = relationship("ClientInstallation", back_populates="scans")
+    user = relationship("User")
+
+
+class ClientInstallation(Base):
+    """Tracks client installations across the network"""
+    __tablename__ = "client_installations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(String(100), unique=True, index=True, nullable=False)
+    
+    # Client information
+    hostname = Column(String(255), nullable=False)
+    ip_address = Column(String(45), nullable=False, index=True)
+    mac_address = Column(String(17))
+    os_type = Column(String(50))  # Windows, Linux, macOS
+    os_version = Column(String(100))
+    
+    # Network information
+    network_segment = Column(String(50))  # e.g., 192.168.1.0/24
+    gateway = Column(String(45))
+    dns_servers = Column(JSON)
+    
+    # Installation details
+    version = Column(String(50))
+    installation_date = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen = Column(DateTime(timezone=True), onupdate=func.now())
+    is_active = Column(Boolean, default=True)
+    
+    # Security posture
+    protection_enabled = Column(Boolean, default=True)
+    blocked_ips = Column(JSON)  # List of IPs blocked by this client
+    blocked_domains = Column(JSON)  # List of domains blocked
+    
+    # Relationships
+    scans = relationship("ScanHistory", back_populates="client")
+    attacks = relationship("AttackEvent", back_populates="target_client")
+
+
+class AttackEvent(Base):
+    """Records detected attacks and suspicious activities"""
+    __tablename__ = "attack_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String(100), unique=True, index=True, nullable=False)
+    
+    # Attack details
+    attack_type = Column(String(100), nullable=False)  # DDoS, malware, phishing, intrusion, etc.
+    source_ip = Column(String(45), index=True)
+    source_domain = Column(String(255))
+    destination_ip = Column(String(45))
+    destination_port = Column(Integer)
+    
+    # Detection information
+    severity = Column(Enum(ThreatSeverity), default=ThreatSeverity.MEDIUM)
+    confidence = Column(Float, default=0.0)
+    description = Column(Text)
+    indicators = Column(JSON)  # List of threat indicators
+    
+    # Response status
+    status = Column(String(50), default="detected")  # detected, analyzing, blocked, mitigated
+    blocked = Column(Boolean, default=False)
+    blocked_at = Column(DateTime(timezone=True))
+    
+    # Timestamps
+    detected_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    last_updated = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Foreign keys
+    target_client_id = Column(Integer, ForeignKey("client_installations.id"))
+    detected_by_user_id = Column(Integer, ForeignKey("users.id"))
+    
+    # Relationships
+    target_client = relationship("ClientInstallation", back_populates="attacks")
+    detected_by_user = relationship("User")
+    responses = relationship("DefenseAction", back_populates="attack_event")
+
+
+class DefenseAction(Base):
+    """Tracks defense actions taken against threats"""
+    __tablename__ = "defense_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action_id = Column(String(100), unique=True, index=True, nullable=False)
+    
+    # Action details
+    action_type = Column(String(50), nullable=False)  # block_ip, block_domain, quarantine, alert, etc.
+    target = Column(String(500), nullable=False)  # IP, domain, or file being acted upon
+    details = Column(JSON)  # Additional action details
+    
+    # Execution status
+    status = Column(String(20), default="pending")  # pending, executed, failed, reverted
+    executed_at = Column(DateTime(timezone=True))
+    reverted_at = Column(DateTime(timezone=True))
+    
+    # Effectiveness
+    successful = Column(Boolean, default=True)
+    error_message = Column(Text)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Foreign keys
+    attack_event_id = Column(Integer, ForeignKey("attack_events.id"))
+    client_id = Column(Integer, ForeignKey("client_installations.id"))
+    
+    # Relationships
+    attack_event = relationship("AttackEvent", back_populates="responses")
+    client = relationship("ClientInstallation")
+
+
+class NetworkAlert(Base):
+    """Network-wide security alerts"""
+    __tablename__ = "network_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_id = Column(String(100), unique=True, index=True, nullable=False)
+    
+    # Alert information
+    alert_type = Column(String(100), nullable=False)  # attack_pattern, multiple_infections, etc.
+    severity = Column(Enum(ThreatSeverity), default=ThreatSeverity.MEDIUM)
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    
+    # Affected systems
+    affected_clients = Column(JSON)  # List of client IDs affected
+    affected_count = Column(Integer, default=0)
+    
+    # Alert status
+    status = Column(String(50), default="active")  # active, investigating, resolved
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by_id = Column(Integer, ForeignKey("users.id"))
+    acknowledged_at = Column(DateTime(timezone=True))
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    resolved_at = Column(DateTime(timezone=True))
+    
+    # Relationship
+    acknowledged_by = relationship("User")
