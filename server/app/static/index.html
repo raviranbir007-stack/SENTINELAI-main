@@ -2199,7 +2199,7 @@
             showToast(`Generating ${btnText} report...`, 'info');
             
             try {
-                const res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${interval}?format=pdf`, {
+                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/interval/${interval}?format=pdf`, {
                     method: 'GET'
                 });
                 
@@ -2250,7 +2250,7 @@
             try {
                 // Generate comprehensive report for all intervals
                 showToast('Generating comprehensive report for all intervals...', 'info');
-                const res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
+                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/generate-comprehensive`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
