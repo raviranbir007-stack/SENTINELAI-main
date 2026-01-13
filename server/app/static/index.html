@@ -2207,12 +2207,11 @@
                     let detail = '';
                     try {
                         const j = await res.json();
-                        detail = j.detail || j.error || JSON.stringify(j);
+                        detail = j.detail || j.error || '';
                     } catch (e) {
-                        detail = `HTTP ${res.status}`;
+                        detail = `Server returned ${res.status}`;
                     }
-                    showToast(`Failed to generate ${btnText} report: ` + detail, 'error');
-                    return;
+                    throw new Error(detail || `HTTP ${res.status}`);
                 }
                 
                 // Download the PDF
@@ -2234,7 +2233,6 @@
                 renderRecentReports();
             } catch (error) {
                 showToast(`Failed to generate ${btnText} report: ` + error.message, 'error');
-                addNotification('Report Generation Error', error.message);
             }
         }
 
@@ -2266,19 +2264,11 @@
                     let detail = '';
                     try {
                         const j = await res.json();
-                        detail = j.detail || j.error || JSON.stringify(j);
+                        detail = j.detail || j.error || '';
                     } catch (e) {
-                        detail = `HTTP ${res.status}`;
+                        detail = `Server returned ${res.status}`;
                     }
-
-                    if (detail && detail.toLowerCase().includes('gemini')) {
-                        showToast('Unable to generate report: Gemini API key is not configured', 'error');
-                        addNotification('Report Generation Failed', 'Gemini API key not configured');
-                    } else {
-                        showToast('Report generation failed: ' + detail, 'error');
-                        addNotification('Report Generation Failed', detail);
-                    }
-                    return;
+                    throw new Error(detail || `HTTP ${res.status}`);
                 }
 
                 const contentType = res.headers.get('content-type') || '';
@@ -2311,11 +2301,10 @@
                     }
                 }
             } catch (error) {
-                showToast('Report generation failed: ' + error.message, 'error');
-                addNotification('Report Generation Error', error.message);
+                showToast('Failed to generate comprehensive report: ' + error.message, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '✨ GENERATE REPORT';
+                btn.innerHTML = '✨ GENERATE COMPREHENSIVE REPORT (ALL)';
             }
         }
 
