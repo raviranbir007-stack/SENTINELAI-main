@@ -1236,16 +1236,15 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label>Time Range</label>
+                            <label>Generate Report by Time Range</label>
                             <div class="time-buttons">
-                                <button class="btn btn-secondary btn-sm time-range-btn" data-interval="24h">24h</button>
-                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="7d">7 days</button>
-                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="30d">30 days</button>
-                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="all">All Intervals</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 24h Report</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 7 Days Report</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 30 Days Report</button>
                             </div>
                         </div>
                         <button class="btn btn-cyber" style="width: 100%;" id="generateReportBtn">
-                            ✨ GENERATE REPORT
+                            ✨ GENERATE COMPREHENSIVE REPORT (ALL)
                         </button>
                     </div>
                     
@@ -2195,42 +2194,73 @@
             renderThreats('allThreatsTableBody');
         }
 
+        async function generateReportForInterval(interval) {
+            const btnText = interval === '24h' ? '24h' : interval === '7d' ? '7 Days' : '30 Days';
+            showToast(`Generating ${btnText} report...`, 'info');
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${interval}?format=pdf`, {
+                    method: 'GET'
+                });
+                
+                if (!res.ok) {
+                    let detail = '';
+                    try {
+                        const j = await res.json();
+                        detail = j.detail || j.error || JSON.stringify(j);
+                    } catch (e) {
+                        detail = `HTTP ${res.status}`;
+                    }
+                    showToast(`Failed to generate ${btnText} report: ` + detail, 'error');
+                    return;
+                }
+                
+                // Download the PDF
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                
+                showToast(`${btnText} report downloaded successfully!`, 'success');
+                addNotification('Report Generated', `${btnText} security report has been downloaded`);
+                
+                // Refresh reports list
+                await fetchAllReports();
+                renderRecentReports();
+            } catch (error) {
+                showToast(`Failed to generate ${btnText} report: ` + error.message, 'error');
+                addNotification('Report Generation Error', error.message);
+            }
+        }
+
         async function generateReport() {
             const btn = document.getElementById('generateReportBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Generating...';
 
             try {
-                // Get selected time interval
-                const selectedInterval = document.querySelector('.time-range-btn.btn-secondary')?.dataset.interval || '24h';
-                
-                let res;
-                
-                if (selectedInterval === 'all') {
-                    // Generate comprehensive report for all intervals
-                    showToast('Generating comprehensive report for all intervals...', 'info');
-                    res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            intervals: ['24h', '7d', '30d'],
-                            include_files: true,
-                            include_urls: true,
-                            include_ips: true,
-                            include_domains: true,
-                            include_hashes: true,
-                            include_attacks: true,
-                            include_defense_actions: true,
-                            format: 'pdf'
-                        })
-                    });
-                } else {
-                    // Generate report for specific interval
-                    showToast(`Generating ${selectedInterval} report...`, 'info');
-                    res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${selectedInterval}?format=pdf`, {
-                        method: 'GET'
-                    });
-                }
+                // Generate comprehensive report for all intervals
+                showToast('Generating comprehensive report for all intervals...', 'info');
+                const res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        intervals: ['24h', '7d', '30d'],
+                        include_files: true,
+                        include_urls: true,
+                        include_ips: true,
+                        include_domains: true,
+                        include_hashes: true,
+                        include_attacks: true,
+                        include_defense_actions: true,
+                        format: 'pdf'
+                    })
+                });
 
                 if (!res.ok) {
                     let detail = '';
@@ -2262,9 +2292,8 @@
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(url);
-                    const intervalLabel = selectedInterval === 'all' ? 'Comprehensive (24h/7d/30d)' : selectedInterval;
-                    showToast(`${intervalLabel} report downloaded successfully!`, 'success');
-                    addNotification('Report Generated', `${intervalLabel} security report has been downloaded`);
+                    showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
+                    addNotification('Report Generated', 'Comprehensive security report (24h/7d/30d) has been downloaded');
                     
                     // Refresh reports list
                     await fetchAllReports();
@@ -2531,20 +2560,6 @@
             if (e.key === 'Enter') performScan();
         });
         document.getElementById('generateReportBtn').addEventListener('click', generateReport);
-
-        // Time range button handlers
-        document.querySelectorAll('.time-range-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                // Remove active state from all buttons
-                document.querySelectorAll('.time-range-btn').forEach(b => {
-                    b.classList.remove('btn-secondary');
-                    b.classList.add('btn-outline');
-                });
-                // Add active state to clicked button
-                this.classList.remove('btn-outline');
-                this.classList.add('btn-secondary');
-            });
-        });
 
         // Notification icon handler
         document.querySelectorAll('.icon-btn').forEach(btn => {
