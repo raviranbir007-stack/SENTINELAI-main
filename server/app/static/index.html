@@ -2228,11 +2228,17 @@
                 showToast(`${btnText} report downloaded successfully!`, 'success');
                 addNotification('Report Generated', `${btnText} security report has been downloaded`);
                 
-                // Refresh reports list
-                await fetchAllReports();
-                renderRecentReports();
+                // Refresh reports list (ignore errors)
+                try {
+                    await fetchAllReports();
+                    renderRecentReports();
+                } catch (refreshError) {
+                    console.log('Note: Could not refresh reports list:', refreshError);
+                }
             } catch (error) {
+                console.error('Report generation error:', error);
                 showToast(`Failed to generate ${btnText} report: ` + error.message, 'error');
+                addNotification('Report Generation Failed', error.message);
             }
         }
 
@@ -2285,23 +2291,33 @@
                     showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
                     addNotification('Report Generated', 'Comprehensive security report (24h/7d/30d) has been downloaded');
                     
-                    // Refresh reports list
-                    await fetchAllReports();
-                    renderRecentReports();
+                    // Refresh reports list (ignore errors)
+                    try {
+                        await fetchAllReports();
+                        renderRecentReports();
+                    } catch (refreshError) {
+                        console.log('Note: Could not refresh reports list:', refreshError);
+                    }
                 } else {
                     // fallback: try to parse JSON
                     try {
                         const data = await res.json();
                         showToast('Report generated successfully!', 'success');
                         addNotification('Report Generated', 'New security report is ready');
-                        await fetchAllReports();
-                        renderRecentReports();
+                        try {
+                            await fetchAllReports();
+                            renderRecentReports();
+                        } catch (refreshError) {
+                            console.log('Note: Could not refresh reports list:', refreshError);
+                        }
                     } catch (e) {
                         showToast('Report generated (unknown response)', 'success');
                     }
                 }
             } catch (error) {
+                console.error('Comprehensive report generation error:', error);
                 showToast('Failed to generate comprehensive report: ' + error.message, 'error');
+                addNotification('Report Generation Failed', error.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '✨ GENERATE COMPREHENSIVE REPORT (ALL)';

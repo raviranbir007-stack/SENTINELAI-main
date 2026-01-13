@@ -755,7 +755,7 @@
                 
                 if (!res.ok) {
                     const errorData = await res.json().catch(() => ({}));
-                    throw new Error(errorData.detail || `HTTP ${res.status}`);
+                    throw new Error(errorData.detail || `Server returned ${res.status}`);
                 }
                 
                 // Download the PDF
@@ -771,6 +771,7 @@
                 
                 showToast(`${btnText} report downloaded successfully!`, 'success');
             } catch (error) {
+                console.error('Report generation error:', error);
                 showToast(`Failed to generate ${btnText} report: ${error.message}`, 'error');
             }
         }
@@ -825,6 +826,7 @@
                 
                 showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
             } catch (error) {
+                console.error('Comprehensive report generation error:', error);
                 showToast(`Failed to generate comprehensive report: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
