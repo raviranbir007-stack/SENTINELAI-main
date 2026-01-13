@@ -16,7 +16,7 @@ from sqlalchemy.future import select
 
 from ....database import get_db
 from ....models import ScanHistory, AttackEvent, ThreatSeverity
-from ....gemini_integration import analyze_with_gemini
+from ....gemini_integration import get_gemini_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,6 +52,8 @@ class AIThreatEngine:
             "urlscan": {"weight": 0.15, "priority": 4},
             "hybrid_analysis": {"weight": 0.10, "priority": 5}
         }
+        # Simplified api_weights for compatibility
+        self.api_weights = {k: v["weight"] for k, v in self.api_configs.items()}
     
     async def multi_api_threat_analysis(self, scan_results: Dict) -> Dict:
         """Analyze threat using weighted multi-API approach"""
@@ -212,7 +214,8 @@ Provide analysis in JSON format with these exact keys:
             """
             
             # Get AI prediction
-            ai_response = await analyze_with_gemini(prompt, context)
+            gemini = get_gemini_client()
+            ai_response = await gemini.analyze_with_gemini(prompt, context)
             
             # Parse AI response
             try:
@@ -272,7 +275,8 @@ Response in JSON format:
 }}
             """
             
-            ai_response = await analyze_with_gemini(prompt, threat_analysis)
+            gemini = get_gemini_client()
+            ai_response = await gemini.analyze_with_gemini(prompt, threat_analysis)
             
             try:
                 strategy = json.loads(ai_response)
@@ -425,7 +429,8 @@ Response in JSON format:
 }}
         """
         
-        ai_analysis = await analyze_with_gemini(prompt, {"attacks": attack_data})
+        gemini = get_gemini_client()
+        ai_analysis = await gemini.analyze_with_gemini(prompt, {"attacks": attack_data})
         
         try:
             analysis = json.loads(ai_analysis)
@@ -468,7 +473,8 @@ Provide:
 Response in JSON format with actionable recommendations.
         """
         
-        ai_response = await analyze_with_gemini(prompt, {"client_id": request.client_id})
+        gemini = get_gemini_client()
+        ai_response = await gemini.analyze_with_gemini(prompt, {"client_id": request.client_id})
         
         return {
             "client_id": request.client_id,

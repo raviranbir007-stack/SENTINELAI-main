@@ -744,6 +744,129 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
     
     elements.append(Spacer(1, 0.2 * inch))
     
+    # Add Threat Taxonomy Section
+    if malicious_scans or suspicious_scans:
+        elements.append(PageBreak())
+        elements.append(Paragraph("🔬 THREAT TAXONOMY & CLASSIFICATION", heading_style))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        # Categorize threats by type
+        threat_categories = {}
+        all_threats = malicious_scans + suspicious_scans
+        
+        for threat in all_threats:
+            analysis = threat.get("analysis", {})
+            target_type = threat.get("target_type", "unknown").upper()
+            
+            if target_type not in threat_categories:
+                threat_categories[target_type] = {
+                    "count": 0,
+                    "malware_families": set(),
+                    "attack_types": set(),
+                    "threat_names": []
+                }
+            
+            threat_categories[target_type]["count"] += 1
+            
+            # Extract threat details
+            if "malware_families" in analysis:
+                threat_categories[target_type]["malware_families"].update(analysis["malware_families"])
+            if "attack_type" in analysis:
+                threat_categories[target_type]["attack_types"].add(analysis["attack_type"])
+            if "threats_detected" in threat and threat["threats_detected"]:
+                threat_categories[target_type]["threat_names"].append(threat.get("target_name", "Unknown"))
+        
+        # Create taxonomy table
+        taxonomy_data = [["Category", "Count", "Malware Families", "Attack Types"]]
+        
+        for cat, details in sorted(threat_categories.items()):
+            malware = ", ".join(list(details["malware_families"])[:5]) if details["malware_families"] else "N/A"
+            attacks = ", ".join(list(details["attack_types"])[:3]) if details["attack_types"] else "N/A"
+            taxonomy_data.append([
+                cat,
+                str(details["count"]),
+                malware[:50] + "..." if len(malware) > 50 else malware,
+                attacks[:50] + "..." if len(attacks) > 50 else attacks
+            ])
+        
+        taxonomy_table = Table(taxonomy_data, colWidths=[1.2*inch, 0.8*inch, 2.2*inch, 2.3*inch])
+        taxonomy_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#311b92")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#512da8")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ede7f6")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(taxonomy_table)
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Add Attack Vector Analysis
+        elements.append(Paragraph("🎯 ATTACK VECTOR ANALYSIS", heading_style))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        vector_info = f"""
+        <para>
+        <b>Primary Attack Vectors Identified:</b><br/>
+        • Network-based attacks: {len([t for t in all_threats if t.get('target_type') in ['ip', 'domain']])} incidents<br/>
+        • Web-based attacks: {len([t for t in all_threats if t.get('target_type') == 'url'])} incidents<br/>
+        • File-based attacks: {len([t for t in all_threats if t.get('target_type') in ['file', 'hash']])} incidents<br/>
+        <br/>
+        <b>Common Attack Patterns:</b><br/>
+        • Port scanning and reconnaissance attempts<br/>
+        • SQL injection and web application exploitation<br/>
+        • Malware delivery through file downloads<br/>
+        • Phishing and social engineering attempts<br/>
+        </para>
+        """
+        elements.append(Paragraph(vector_info, styles["Normal"]))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Add Mitigation Strategies
+        elements.append(Paragraph("🛡️ DETAILED MITIGATION STRATEGIES", heading_style))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        mitigation_data = [
+            ["Threat Type", "Priority", "Mitigation Actions"],
+            [
+                "Malicious Files",
+                "CRITICAL",
+                "• Quarantine immediately\n• Update antivirus signatures\n• Scan all connected systems\n• Review download policies"
+            ],
+            [
+                "Suspicious URLs",
+                "HIGH",
+                "• Block at firewall/proxy level\n• Update DNS blacklists\n• Educate users on phishing\n• Implement URL filtering"
+            ],
+            [
+                "Malicious IPs",
+                "CRITICAL",
+                "• Block at firewall immediately\n• Update IPS/IDS rules\n• Monitor for lateral movement\n• Review access logs"
+            ],
+            [
+                "Suspicious Network Activity",
+                "HIGH",
+                "• Enable enhanced monitoring\n• Review firewall rules\n• Implement rate limiting\n• Deploy honeypots if needed"
+            ]
+        ]
+        
+        mitigation_table = Table(mitigation_data, colWidths=[1.5*inch, 1*inch, 4*inch])
+        mitigation_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1b5e20")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#388e3c")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 1), (1, -1), "CENTER"),
+        ]))
+        elements.append(mitigation_table)
+        elements.append(Spacer(1, 0.2 * inch))
+    
     # Footer
     footer_style = ParagraphStyle(
         "Footer",
@@ -757,7 +880,5 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
     elements.append(Paragraph(f"Report Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | Confidential", footer_style))
 
     doc.build(elements)
-    buffer.seek(0)
-    return buffer.read()
     buffer.seek(0)
     return buffer.read()
