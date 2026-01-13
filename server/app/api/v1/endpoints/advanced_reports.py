@@ -293,7 +293,9 @@ async def get_interval_report(
 
 # Helper functions
 def _scan_to_dict(scan: ScanHistory) -> dict:
-    """Convert ScanHistory object to dictionary"""
+    """Convert ScanHistory object to dictionary with full details"""
+    analysis_data = scan.analysis_data or {}
+    
     return {
         "scan_id": scan.scan_id,
         "target": scan.target,
@@ -303,6 +305,7 @@ def _scan_to_dict(scan: ScanHistory) -> dict:
         "confidence": scan.confidence,
         "threats_detected": scan.threats_detected,
         "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
+        "analysis": analysis_data,  # Full analysis data
     }
 
 
@@ -475,34 +478,286 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
 
 
 def _generate_simple_pdf(report: dict, interval: str) -> bytes:
-    """Generate simple PDF for single interval"""
+    """Generate comprehensive PDF for single interval with detailed cybersecurity analysis"""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter,
+        topMargin=0.5 * inch,
+        bottomMargin=0.5 * inch,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch
+    )
 
     styles = getSampleStyleSheet()
     elements = []
-
-    # Title
-    elements.append(Paragraph(f"Security Report - {report['interval']}", styles["Title"]))
-    elements.append(Paragraph(f"Period: {report['since']} to {report['until']}", styles["Normal"]))
-    elements.append(Spacer(1, 0.2 * inch))
-
-    # Statistics
-    stats = report["statistics"]
-    elements.append(Paragraph("Statistics:", styles["Heading2"]))
-
-    stats_data = [
-        ["Total Scans", str(stats["total_scans"])],
-        ["Safe", str(stats["safe"])],
-        ["Suspicious", str(stats["suspicious"])],
-        ["Malicious", str(stats["malicious"])],
-        ["Unknown", str(stats["unknown"])],
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        "CustomTitle",
+        parent=styles["Heading1"],
+        fontSize=24,
+        textColor=colors.HexColor("#1a237e"),
+        spaceAfter=6,
+        alignment=TA_CENTER,
+        fontName="Helvetica-Bold",
+    )
+    
+    subtitle_style = ParagraphStyle(
+        "CustomSubtitle",
+        parent=styles["Normal"],
+        fontSize=11,
+        textColor=colors.HexColor("#424242"),
+        spaceAfter=12,
+        alignment=TA_CENTER,
+    )
+    
+    heading_style = ParagraphStyle(
+        "CustomHeading",
+        parent=styles["Heading2"],
+        fontSize=14,
+        textColor=colors.HexColor("#1565c0"),
+        spaceAfter=8,
+        spaceBefore=12,
+        fontName="Helvetica-Bold",
+    )
+    
+    # Header
+    elements.append(Paragraph("🛡️ SENTINELAI SECURITY REPORT", title_style))
+    elements.append(Paragraph(f"Threat Analysis Report - {report['interval']}", subtitle_style))
+    
+    # Report metadata
+    since_dt = datetime.fromisoformat(report['since'].replace('Z', '+00:00'))
+    until_dt = datetime.fromisoformat(report['until'].replace('Z', '+00:00'))
+    
+    metadata_data = [
+        ["Report Generated:", until_dt.strftime("%B %d, %Y at %H:%M:%S UTC")],
+        ["Analysis Period:", f"{since_dt.strftime('%B %d, %Y %H:%M')} - {until_dt.strftime('%B %d, %Y %H:%M')}"],
+        ["Time Range:", report['interval']],
+        ["Report ID:", f"RPT-{interval.upper()}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"],
     ]
-
-    stats_table = Table(stats_data)
-    stats_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 1, colors.black)]))
+    
+    metadata_table = Table(metadata_data, colWidths=[2*inch, 4.5*inch])
+    metadata_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e3f2fd")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#212121")),
+        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#90caf9")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(metadata_table)
+    elements.append(Spacer(1, 0.3 * inch))
+    
+    # Executive Summary
+    stats = report["statistics"]
+    elements.append(Paragraph("📊 EXECUTIVE SUMMARY", heading_style))
+    
+    total_scans = stats["total_scans"]
+    threat_percentage = (stats["malicious"] + stats["suspicious"]) / total_scans * 100 if total_scans > 0 else 0
+    
+    summary_text = f"""
+    <para>
+    This report provides a comprehensive analysis of {total_scans} security scans performed during the specified period.
+    The analysis identified <b>{stats["malicious"]} malicious threats</b> and <b>{stats["suspicious"]} suspicious activities</b>,
+    representing a <b>{threat_percentage:.1f}% threat detection rate</b>. 
+    All threats have been categorized, analyzed, and documented below for your review and action.
+    </para>
+    """
+    elements.append(Paragraph(summary_text, styles["Normal"]))
+    elements.append(Spacer(1, 0.2 * inch))
+    
+    # Statistics Overview
+    elements.append(Paragraph("📈 SCAN STATISTICS", heading_style))
+    
+    stats_data = [
+        ["METRIC", "COUNT", "PERCENTAGE"],
+        ["Total Scans Performed", str(total_scans), "100%"],
+        ["✅ Safe (No Threats)", str(stats["safe"]), f"{stats['safe']/total_scans*100:.1f}%" if total_scans > 0 else "0%"],
+        ["⚠️  Suspicious Activity", str(stats["suspicious"]), f"{stats['suspicious']/total_scans*100:.1f}%" if total_scans > 0 else "0%"],
+        ["🚨 Malicious Threats", str(stats["malicious"]), f"{stats['malicious']/total_scans*100:.1f}%" if total_scans > 0 else "0%"],
+        ["❓ Unknown/Unclassified", str(stats["unknown"]), f"{stats['unknown']/total_scans*100:.1f}%" if total_scans > 0 else "0%"],
+    ]
+    
+    stats_table = Table(stats_data, colWidths=[3*inch, 1.5*inch, 2*inch])
+    stats_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565c0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 11),
+        ("FONTSIZE", (0, 1), (-1, -1), 10),
+        ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#1976d2")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
     elements.append(stats_table)
+    elements.append(Spacer(1, 0.3 * inch))
+    
+    # Threat Classification by Scan Type
+    scans = report["scans"]
+    if scans:
+        elements.append(Paragraph("🔍 DETAILED SCAN ANALYSIS", heading_style))
+        
+        # Group scans by type
+        scans_by_type = {}
+        for scan in scans:
+            scan_type = scan.get("target_type", "unknown").upper()
+            if scan_type not in scans_by_type:
+                scans_by_type[scan_type] = []
+            scans_by_type[scan_type].append(scan)
+        
+        # Scan type summary
+        type_summary_data = [["SCAN TYPE", "COUNT", "THREATS", "SAFE"]]
+        for scan_type, type_scans in scans_by_type.items():
+            threats = sum(1 for s in type_scans if s.get("threat_level") in ["suspicious", "malicious"])
+            safe = sum(1 for s in type_scans if s.get("threat_level") == "safe")
+            type_summary_data.append([
+                scan_type,
+                str(len(type_scans)),
+                str(threats),
+                str(safe)
+            ])
+        
+        type_summary_table = Table(type_summary_data, colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+        type_summary_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ff6f00")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#ff8f00")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff3e0")]),
+        ]))
+        elements.append(type_summary_table)
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Detailed threat analysis
+        elements.append(Paragraph("🚨 THREAT DETAILS & CLASSIFICATION", heading_style))
+        
+        # Show malicious threats first
+        malicious_scans = [s for s in scans if s.get("threat_level") == "malicious"]
+        suspicious_scans = [s for s in scans if s.get("threat_level") == "suspicious"]
+        
+        if malicious_scans:
+            elements.append(Paragraph("<b>CRITICAL MALICIOUS THREATS:</b>", ParagraphStyle("RedBold", parent=styles["Normal"], textColor=colors.red, fontName="Helvetica-Bold")))
+            elements.append(Spacer(1, 0.1 * inch))
+            
+            for i, scan in enumerate(malicious_scans[:20], 1):  # Limit to 20
+                threat_data = [
+                    ["Threat #", str(i)],
+                    ["Target", scan.get("target", "Unknown")[:80]],
+                    ["Type", scan.get("target_type", "Unknown").upper()],
+                    ["Threat Level", "🚨 MALICIOUS"],
+                    ["Confidence", f"{scan.get('confidence', 0)*100:.1f}%"],
+                    ["Threats Found", str(scan.get("threats_detected", 0))],
+                    ["Detected At", scan.get("timestamp", "Unknown")[:19]],
+                ]
+                
+                # Add analysis details if available
+                analysis = scan.get("analysis", {})
+                if analysis:
+                    if "malware_families" in analysis:
+                        threat_data.append(["Malware Type", ", ".join(analysis["malware_families"][:3])])
+                    if "attack_type" in analysis:
+                        threat_data.append(["Attack Type", analysis["attack_type"]])
+                    if "risk_score" in analysis:
+                        threat_data.append(["Risk Score", f"{analysis['risk_score']}/100"])
+                
+                threat_table = Table(threat_data, colWidths=[1.5*inch, 5*inch])
+                threat_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#ffebee")),
+                    ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#ffcdd2")),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#212121")),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.red),
+                    ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]))
+                elements.append(threat_table)
+                elements.append(Spacer(1, 0.15 * inch))
+        
+        if suspicious_scans:
+            elements.append(Paragraph("<b>SUSPICIOUS ACTIVITIES:</b>", ParagraphStyle("OrangeBold", parent=styles["Normal"], textColor=colors.HexColor("#ff6f00"), fontName="Helvetica-Bold")))
+            elements.append(Spacer(1, 0.1 * inch))
+            
+            for i, scan in enumerate(suspicious_scans[:15], 1):  # Limit to 15
+                susp_data = [
+                    ["Activity #", str(i)],
+                    ["Target", scan.get("target", "Unknown")[:80]],
+                    ["Type", scan.get("target_type", "Unknown").upper()],
+                    ["Threat Level", "⚠️  SUSPICIOUS"],
+                    ["Confidence", f"{scan.get('confidence', 0)*100:.1f}%"],
+                    ["Detected At", scan.get("timestamp", "Unknown")[:19]],
+                ]
+                
+                susp_table = Table(susp_data, colWidths=[1.5*inch, 5*inch])
+                susp_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#fff8e1")),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#ff8f00")),
+                    ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                ]))
+                elements.append(susp_table)
+                elements.append(Spacer(1, 0.1 * inch))
+        
+        # Safe scans summary
+        safe_scans = [s for s in scans if s.get("threat_level") == "safe"]
+        if safe_scans:
+            elements.append(Paragraph(f"<b>✅ SAFE SCANS:</b> {len(safe_scans)} targets were scanned and found to be safe with no threats detected.", styles["Normal"]))
+            elements.append(Spacer(1, 0.2 * inch))
+    
+    # Recommendations
+    elements.append(Paragraph("💡 SECURITY RECOMMENDATIONS", heading_style))
+    
+    recommendations = []
+    if stats["malicious"] > 0:
+        recommendations.append("• <b>IMMEDIATE ACTION REQUIRED:</b> Quarantine and remove all malicious threats identified in this report.")
+        recommendations.append("• Conduct a full system audit on affected machines.")
+    if stats["suspicious"] > 0:
+        recommendations.append("• Investigate all suspicious activities for potential false positives.")
+        recommendations.append("• Implement additional monitoring on flagged resources.")
+    if stats["malicious"] == 0 and stats["suspicious"] == 0:
+        recommendations.append("• No immediate threats detected. Continue regular security monitoring.")
+    
+    recommendations.append("• Keep all security software and definitions up to date.")
+    recommendations.append("• Schedule regular security scans based on the interval analyzed.")
+    recommendations.append("• Review and update security policies based on findings.")
+    
+    for rec in recommendations:
+        elements.append(Paragraph(rec, styles["Normal"]))
+        elements.append(Spacer(1, 0.05 * inch))
+    
+    elements.append(Spacer(1, 0.2 * inch))
+    
+    # Footer
+    footer_style = ParagraphStyle(
+        "Footer",
+        parent=styles["Normal"],
+        fontSize=8,
+        textColor=colors.HexColor("#757575"),
+        alignment=TA_CENTER,
+    )
+    elements.append(Paragraph("=" * 80, footer_style))
+    elements.append(Paragraph("SentinelAI - Advanced Threat Detection & Analysis System", footer_style))
+    elements.append(Paragraph(f"Report Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | Confidential", footer_style))
 
     doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
     buffer.seek(0)
     return buffer.read()
