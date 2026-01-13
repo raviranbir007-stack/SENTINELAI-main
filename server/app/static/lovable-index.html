@@ -504,10 +504,11 @@
             <div class="scanner-section">
                 <h2 class="section-title">📝 Generate Report</h2>
                 <div class="scan-input-group">
-                    <select class="scan-input" id="reportType">
-                        <option value="daily">Daily Summary</option>
-                        <option value="weekly">Weekly Analysis</option>
-                        <option value="threat">Threat Report</option>
+                    <select class="scan-input" id="reportInterval">
+                        <option value="24h">24 Hours Report</option>
+                        <option value="7d">7 Days Report</option>
+                        <option value="30d">30 Days Report</option>
+                        <option value="all">Comprehensive Report (All Intervals)</option>
                     </select>
                     <button class="scan-btn" id="generateReportBtn">📄 Generate</button>
                 </div>
@@ -749,12 +750,63 @@
         });
 
         document.getElementById('generateReportBtn').addEventListener('click', async () => {
-            const type = document.getElementById('reportType').value;
+            const interval = document.getElementById('reportInterval').value;
+            const btn = document.getElementById('generateReportBtn');
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating...';
+            
             try {
-                showToast('Generating report...', 'info');
-                showToast('Report generated successfully', 'success');
+                showToast(`Generating ${interval} report...`, 'info');
+                
+                let res;
+                if (interval === 'all') {
+                    // Generate comprehensive report
+                    res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            intervals: ['24h', '7d', '30d'],
+                            include_files: true,
+                            include_urls: true,
+                            include_ips: true,
+                            include_domains: true,
+                            include_hashes: true,
+                            include_attacks: true,
+                            include_defense_actions: true,
+                            format: 'pdf'
+                        })
+                    });
+                } else {
+                    // Generate specific interval report
+                    res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${interval}?format=pdf`, {
+                        method: 'GET'
+                    });
+                }
+                
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `HTTP ${res.status}`);
+                }
+                
+                // Download the PDF
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                
+                const intervalLabel = interval === 'all' ? 'Comprehensive (24h/7d/30d)' : interval;
+                showToast(`${intervalLabel} report downloaded successfully!`, 'success');
             } catch (error) {
-                showToast('Failed to generate report', 'error');
+                showToast(`Failed to generate report: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📄 Generate';
             }
         });
 

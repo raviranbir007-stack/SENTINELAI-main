@@ -1238,10 +1238,10 @@
                         <div class="form-group">
                             <label>Time Range</label>
                             <div class="time-buttons">
-                                <button class="btn btn-secondary btn-sm">24h</button>
-                                <button class="btn btn-outline btn-sm">7 days</button>
-                                <button class="btn btn-outline btn-sm">30 days</button>
-                                <button class="btn btn-outline btn-sm">Custom</button>
+                                <button class="btn btn-secondary btn-sm time-range-btn" data-interval="24h">24h</button>
+                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="7d">7 days</button>
+                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="30d">30 days</button>
+                                <button class="btn btn-outline btn-sm time-range-btn" data-interval="all">All Intervals</button>
                             </div>
                         </div>
                         <button class="btn btn-cyber" style="width: 100%;" id="generateReportBtn">
@@ -2201,33 +2201,36 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
 
             try {
-                // Use the latest scan from recent scans or get from input
-                let target = document.getElementById('scanInput').value.trim();
+                // Get selected time interval
+                const selectedInterval = document.querySelector('.time-range-btn.btn-secondary')?.dataset.interval || '24h';
                 
-                // If no target in input, use the most recent scan
-                if (!target && recentScans && recentScans.length > 0) {
-                    const latestScan = recentScans[0];
-                    target = latestScan.target;
-                    showToast(`Generating report for latest scan: ${target}`, 'info');
-                }
+                let res;
                 
-                if (!target) {
-                    showToast('Please perform a scan first or enter a target', 'warning');
-                    return;
+                if (selectedInterval === 'all') {
+                    // Generate comprehensive report for all intervals
+                    showToast('Generating comprehensive report for all intervals...', 'info');
+                    res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            intervals: ['24h', '7d', '30d'],
+                            include_files: true,
+                            include_urls: true,
+                            include_ips: true,
+                            include_domains: true,
+                            include_hashes: true,
+                            include_attacks: true,
+                            include_defense_actions: true,
+                            format: 'pdf'
+                        })
+                    });
+                } else {
+                    // Generate report for specific interval
+                    showToast(`Generating ${selectedInterval} report...`, 'info');
+                    res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${selectedInterval}?format=pdf`, {
+                        method: 'GET'
+                    });
                 }
-
-                const reportType = 'executive';
-                const timeRange = '24h';
-
-                const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        type: reportType, 
-                        timeRange: timeRange,
-                        target: target
-                    })
-                });
 
                 if (!res.ok) {
                     let detail = '';
@@ -2259,8 +2262,9 @@
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(url);
-                    showToast('Report downloaded successfully!', 'success');
-                    addNotification('Report Generated', `Report for ${target} has been downloaded`);
+                    const intervalLabel = selectedInterval === 'all' ? 'Comprehensive (24h/7d/30d)' : selectedInterval;
+                    showToast(`${intervalLabel} report downloaded successfully!`, 'success');
+                    addNotification('Report Generated', `${intervalLabel} security report has been downloaded`);
                     
                     // Refresh reports list
                     await fetchAllReports();
@@ -2527,6 +2531,20 @@
             if (e.key === 'Enter') performScan();
         });
         document.getElementById('generateReportBtn').addEventListener('click', generateReport);
+
+        // Time range button handlers
+        document.querySelectorAll('.time-range-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                // Remove active state from all buttons
+                document.querySelectorAll('.time-range-btn').forEach(b => {
+                    b.classList.remove('btn-secondary');
+                    b.classList.add('btn-outline');
+                });
+                // Add active state to clicked button
+                this.classList.remove('btn-outline');
+                this.classList.add('btn-secondary');
+            });
+        });
 
         // Notification icon handler
         document.querySelectorAll('.icon-btn').forEach(btn => {
