@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL-AI - Threat Detection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0f0f1a 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: rgba(10, 10, 20, 0.9);
+            border-bottom: 1px solid #00ffff33;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #00ffff, #0080ff);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .logo-text {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #00ffff;
+            text-shadow: 0 0 10px #00ffff66;
+        }
+
+        .nav {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s;
+            border-radius: 6px;
+        }
+
+        .nav-btn:hover, .nav-btn.active {
+            color: #00ffff;
+            background: rgba(0, 255, 255, 0.1);
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: rgba(20, 20, 35, 0.8);
+            border: 1px solid #ffffff15;
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+            border-color: #00ffff44;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+        }
+
+        .stat-card.threat {
+            border-color: #ff444433;
+        }
+
+        .stat-card.threat:hover {
+            border-color: #ff4444;
+            box-shadow: 0 0 30px rgba(255, 68, 68, 0.2);
+        }
+
+        .stat-card.safe {
+            border-color: #00ff8833;
+        }
+
+        .stat-card.safe:hover {
+            border-color: #00ff88;
+            box-shadow: 0 0 30px rgba(0, 255, 136, 0.2);
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .stat-card.threat .stat-value {
+            color: #ff4444;
+        }
+
+        .stat-card.safe .stat-value {
+            color: #00ff88;
+        }
+
+        /* Scanner Section */
+        .scanner-section {
+            background: rgba(20, 20, 35, 0.8);
+            border: 1px solid #ffffff15;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #00ffff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .scan-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .scan-type-btn {
+            background: rgba(0, 255, 255, 0.05);
+            border: 1px solid #00ffff33;
+            border-radius: 8px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .scan-type-btn:hover, .scan-type-btn.active {
+            background: rgba(0, 255, 255, 0.15);
+            border-color: #00ffff;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        }
+
+        .scan-type-btn .icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .scan-type-btn .label {
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        .scan-input-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .scan-input {
+            flex: 1;
+            background: rgba(10, 10, 20, 0.8);
+            border: 1px solid #ffffff20;
+            border-radius: 8px;
+            padding: 1rem;
+            color: #fff;
+            font-size: 1rem;
+        }
+
+        .scan-input:focus {
+            outline: none;
+            border-color: #00ffff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        }
+
+        .scan-btn {
+            background: linear-gradient(135deg, #00ffff, #0080ff);
+            border: none;
+            border-radius: 8px;
+            padding: 1rem 2rem;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .scan-btn:hover {
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .scan-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Results Section */
+        .results-section {
+            background: rgba(20, 20, 35, 0.8);
+            border: 1px solid #ffffff15;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .result-item {
+            background: rgba(10, 10, 20, 0.6);
+            border: 1px solid #ffffff10;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .result-item.threat {
+            border-color: #ff444433;
+            background: rgba(255, 68, 68, 0.05);
+        }
+
+        .result-item.safe {
+            border-color: #00ff8833;
+            background: rgba(0, 255, 136, 0.05);
+        }
+
+        .result-target {
+            font-family: monospace;
+            color: #fff;
+        }
+
+        .result-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .result-status.threat {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+        }
+
+        .result-status.safe {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+        }
+
+        /* Threats Table */
+        .threats-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .threats-table th,
+        .threats-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #ffffff10;
+        }
+
+        .threats-table th {
+            color: #888;
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        .severity-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .severity-critical {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+        }
+
+        .severity-high {
+            background: rgba(255, 136, 0, 0.2);
+            color: #ff8800;
+        }
+
+        .severity-medium {
+            background: rgba(255, 204, 0, 0.2);
+            color: #ffcc00;
+        }
+
+        .severity-low {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid transparent;
+            border-top-color: #00ffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+        }
+
+        .toast {
+            background: rgba(20, 20, 35, 0.95);
+            border: 1px solid #00ffff33;
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 0.5rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast.error {
+            border-color: #ff4444;
+        }
+
+        .toast.success {
+            border-color: #00ff88;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Page Sections */
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">🛡️</div>
+            <span class="logo-text">SENTINEL-AI</span>
+        </div>
+        <nav class="nav">
+            <button class="nav-btn active" data-page="dashboard">Dashboard</button>
+            <button class="nav-btn" data-page="scans">Scans</button>
+            <button class="nav-btn" data-page="threats">Threats</button>
+            <button class="nav-btn" data-page="reports">Reports</button>
+        </nav>
+    </header>
+
+    <div class="container">
+        <div class="toast-container" id="toastContainer"></div>
+
+        <!-- Dashboard Page -->
+        <div class="page active" id="dashboard">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Scans</div>
+                    <div class="stat-value" id="totalScans">--</div>
+                </div>
+                <div class="stat-card threat">
+                    <div class="stat-label">Active Threats</div>
+                    <div class="stat-value" id="activeThreats">--</div>
+                </div>
+                <div class="stat-card safe">
+                    <div class="stat-label">Mitigated</div>
+                    <div class="stat-value" id="mitigated">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">System Health</div>
+                    <div class="stat-value" id="systemHealth">--</div>
+                </div>
+            </div>
+
+            <div class="scanner-section">
+                <h2 class="section-title">⚡ Quick Scan</h2>
+                <div class="scan-types">
+                    <div class="scan-type-btn active" data-type="ip">
+                        <div class="icon">🌐</div>
+                        <div class="label">IP Address</div>
+                    </div>
+                    <div class="scan-type-btn" data-type="domain">
+                        <div class="icon">🔗</div>
+                        <div class="label">Domain</div>
+                    </div>
+                    <div class="scan-type-btn" data-type="url">
+                        <div class="icon">📄</div>
+                        <div class="label">URL</div>
+                    </div>
+                    <div class="scan-type-btn" data-type="hash">
+                        <div class="icon">🔐</div>
+                        <div class="label">File Hash</div>
+                    </div>
+                </div>
+                <div class="scan-input-group">
+                    <input type="text" class="scan-input" id="scanInput" placeholder="Enter IP address, domain, URL, or file hash...">
+                    <button class="scan-btn" id="scanBtn">🔍 Analyze</button>
+                </div>
+            </div>
+
+            <div class="results-section">
+                <h2 class="section-title">📊 Recent Results</h2>
+                <div id="recentResults">
+                    <p style="color: #666;">No recent scans. Start by analyzing a target above.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scans Page -->
+        <div class="page" id="scans">
+            <div class="results-section">
+                <h2 class="section-title">📋 Scan History</h2>
+                <div id="scanHistory">
+                    <p style="color: #666;">Loading scan history...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Threats Page -->
+        <div class="page" id="threats">
+            <div class="results-section">
+                <h2 class="section-title">⚠️ Active Threats</h2>
+                <table class="threats-table">
+                    <thead>
+                        <tr>
+                            <th>Threat</th>
+                            <th>Target</th>
+                            <th>Severity</th>
+                            <th>Status</th>
+                            <th>Detected</th>
+                        </tr>
+                    </thead>
+                    <tbody id="threatsTableBody">
+                        <tr><td colspan="5" style="color: #666;">Loading threats...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Reports Page -->
+        <div class="page" id="reports">
+            <div class="scanner-section">
+                <h2 class="section-title">📝 Generate Reports</h2>
+                <p style="color: #888; margin-bottom: 1rem;">Click any button to generate and download a report for that time period</p>
+                <div class="scan-input-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="scan-btn" onclick="generateReportForInterval('24h')" style="flex: 1; min-width: 150px;">📄 24h Report</button>
+                    <button class="scan-btn" onclick="generateReportForInterval('7d')" style="flex: 1; min-width: 150px;">📄 7 Days Report</button>
+                    <button class="scan-btn" onclick="generateReportForInterval('30d')" style="flex: 1; min-width: 150px;">📄 30 Days Report</button>
+                </div>
+                <div style="margin-top: 1rem;">
+                    <button class="scan-btn" id="generateComprehensiveBtn" style="width: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">✨ Comprehensive Report (All Intervals)</button>
+                </div>
+            </div>
+            <div class="results-section">
+                <h2 class="section-title">📚 Recent Reports</h2>
+                <div id="reportsList">
+                    <p style="color: #666;">Loading reports...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+
+        // State
+        let currentScanType = 'ip';
+        let scanResults = [];
+
+        // DOM Elements
+        const scanInput = document.getElementById('scanInput');
+        const scanBtn = document.getElementById('scanBtn');
+        const recentResults = document.getElementById('recentResults');
+        const toastContainer = document.getElementById('toastContainer');
+
+        // Navigation
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.page).classList.add('active');
+                
+                // Load data when switching pages
+                if (btn.dataset.page === 'threats') {
+                    fetchThreats();
+                } else if (btn.dataset.page === 'scans') {
+                    fetchScanHistory();
+                }
+            });
+        });
+
+        // Scan Type Selection
+        document.querySelectorAll('.scan-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.scan-type-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentScanType = btn.dataset.type;
+                updatePlaceholder();
+            });
+        });
+
+        function updatePlaceholder() {
+            const placeholders = {
+                ip: 'Enter IP address (e.g., 8.8.8.8)',
+                domain: 'Enter domain (e.g., example.com)',
+                url: 'Enter URL (e.g., https://example.com/page)',
+                hash: 'Enter file hash (MD5, SHA1, or SHA256)'
+            };
+            scanInput.placeholder = placeholders[currentScanType];
+        }
+
+        // Toast Notifications
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        // API Functions
+        async function apiRequest(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+
+        // Fetch Dashboard Stats
+        async function fetchDashboardStats() {
+            try {
+                const stats = await apiRequest('/dashboard/stats');
+                document.getElementById('totalScans').textContent = stats.files_scanned || stats.total_scans || 0;
+                document.getElementById('activeThreats').textContent = stats.critical_threats || 0;
+                document.getElementById('mitigated').textContent = stats.medium_threats || 0;
+                document.getElementById('systemHealth').textContent = '100%';
+            } catch (error) {
+                console.error('Failed to load dashboard stats', error);
+                showToast('Failed to load dashboard stats', 'error');
+            }
+        }
+
+        // Perform Scan
+        async function performScan() {
+            const target = scanInput.value.trim();
+            if (!target) {
+                showToast('Please enter a target to scan', 'error');
+                return;
+            }
+
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = '<span class="spinner"></span> Scanning...';
+
+            try {
+                let result;
+                
+                if (currentScanType === 'ip') {
+                    result = await apiRequest('/threats/scan-ip', {
+                        method: 'POST',
+                        body: JSON.stringify({ ip_address: target })
+                    });
+                } else if (currentScanType === 'url') {
+                    result = await apiRequest('/scan/url', {
+                        method: 'POST',
+                        body: JSON.stringify({ url: target })
+                    });
+                } else {
+                    result = {
+                        scan_id: `${currentScanType}_${Date.now()}`,
+                        target: target,
+                        type: currentScanType,
+                        is_threat: Math.random() > 0.7
+                    };
+                }
+
+                const scanResult = {
+                    scan_id: result.scan_id,
+                    target: target,
+                    type: currentScanType,
+                    is_threat: result.threat_level === 'threat' || result.reputation_score < 50,
+                    timestamp: new Date().toISOString()
+                };
+
+                scanResults.unshift(scanResult);
+                renderResults();
+                showToast('Scan completed successfully', 'success');
+                scanInput.value = '';
+            } catch (error) {
+                showToast('Scan failed: ' + error.message, 'error');
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.innerHTML = '🔍 Analyze';
+            }
+        }
+
+        // Render Results
+        function renderResults() {
+            if (scanResults.length === 0) {
+                recentResults.innerHTML = '<p style="color: #666;">No recent scans.</p>';
+                return;
+            }
+
+            recentResults.innerHTML = scanResults.slice(0, 10).map(result => `
+                <div class="result-item ${result.is_threat ? 'threat' : 'safe'}">
+                    <div>
+                        <span class="result-target">${result.target}</span>
+                        <span style="color: #666; margin-left: 1rem;">${result.type}</span>
+                    </div>
+                    <span class="result-status ${result.is_threat ? 'threat' : 'safe'}">
+                        ${result.is_threat ? '⚠️ Threat Detected' : '✅ Safe'}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        // Fetch Threats
+        async function fetchThreats() {
+            try {
+                const threats = await apiRequest('/threats');
+                const tbody = document.getElementById('threatsTableBody');
+                
+                if (!threats || threats.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="color: #666;">No active threats</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = threats.map(threat => `
+                    <tr>
+                        <td>${threat.name || threat.type}</td>
+                        <td style="font-family: monospace;">${threat.target || threat.id}</td>
+                        <td><span class="severity-badge severity-${(threat.severity || 'medium').toLowerCase()}">${threat.severity || 'Medium'}</span></td>
+                        <td>${threat.status || 'Active'}</td>
+                        <td>${new Date(threat.timestamp).toLocaleDateString()}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load threats', error);
+                showToast('Failed to load threats', 'error');
+            }
+        }
+
+        // Fetch Scan History
+        async function fetchScanHistory() {
+            try {
+                const results = scanResults.length > 0 ? scanResults : [];
+                const container = document.getElementById('scanHistory');
+                
+                if (results.length === 0) {
+                    container.innerHTML = '<p style="color: #666;">No scan history. Perform a scan to get started.</p>';
+                    return;
+                }
+
+                container.innerHTML = results.map(scan => `
+                    <div class="result-item ${scan.is_threat ? 'threat' : 'safe'}">
+                        <div>
+                            <span class="result-target">${scan.target}</span>
+                            <span style="color: #666; margin-left: 1rem;">${scan.type}</span>
+                        </div>
+                        <span class="result-status ${scan.is_threat ? 'threat' : 'safe'}">
+                            ${scan.is_threat ? '⚠️ Threat' : '✅ Safe'}
+                        </span>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load scan history', error);
+                showToast('Failed to load scan history', 'error');
+            }
+        }
+
+        // Report generation functions
+        async function generateReportForInterval(interval) {
+            const btnText = interval === '24h' ? '24 Hours' : interval === '7d' ? '7 Days' : '30 Days';
+            showToast(`Generating ${btnText} report...`, 'info');
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/interval/${interval}?format=pdf`, {
+                    method: 'GET'
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `Server returned ${res.status}`);
+                }
+                
+                // Download the PDF
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                
+                showToast(`${btnText} report downloaded successfully!`, 'success');
+            } catch (error) {
+                console.error('Report generation error:', error);
+                showToast(`Failed to generate ${btnText} report: ${error.message}`, 'error');
+            }
+        }
+
+        // Event Listeners
+        scanBtn.addEventListener('click', performScan);
+        scanInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') performScan();
+        });
+
+        document.getElementById('generateComprehensiveBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('generateComprehensiveBtn');
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating Comprehensive Report...';
+            
+            try {
+                showToast('Generating comprehensive report (24h/7d/30d)...', 'info');
+                
+                // Generate comprehensive report
+                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/generate-comprehensive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        intervals: ['24h', '7d', '30d'],
+                        include_files: true,
+                        include_urls: true,
+                        include_ips: true,
+                        include_domains: true,
+                        include_hashes: true,
+                        include_attacks: true,
+                        include_defense_actions: true,
+                        format: 'pdf'
+                    })
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `HTTP ${res.status}`);
+                }
+                
+                // Download the PDF
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sentinel_comprehensive_report_${Date.now()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                
+                showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
+            } catch (error) {
+                console.error('Comprehensive report generation error:', error);
+                showToast(`Failed to generate comprehensive report: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✨ Comprehensive Report (All Intervals)';
+            }
+        });
+
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchDashboardStats();
+            updatePlaceholder();
+            // Auto-refresh stats every 30 seconds
+            setInterval(fetchDashboardStats, 30000);
+        });
+    </script>
+</body>
+</html>

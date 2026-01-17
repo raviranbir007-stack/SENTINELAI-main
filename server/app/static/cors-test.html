@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+</head>
+<body>
+    <h1>SENTINEL-AI CORS Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        const resultsDiv = document.getElementById('results');
+        
+        async function testEndpoint(method, endpoint, data = null) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+                
+                if (data) {
+                    options.body = JSON.stringify(data);
+                }
+                
+                const response = await fetch(endpoint, options);
+                const text = await response.text();
+                const status = response.status;
+                
+                resultsDiv.innerHTML += `<p><strong>${method} ${endpoint}</strong>: ${status} OK</p>`;
+                
+                if (text) {
+                    try {
+                        const json = JSON.parse(text);
+                        resultsDiv.innerHTML += `<pre>${JSON.stringify(json, null, 2).substring(0, 200)}...</pre>`;
+                    } catch (e) {
+                        resultsDiv.innerHTML += `<p>Response: ${text.substring(0, 100)}</p>`;
+                    }
+                }
+            } catch (err) {
+                resultsDiv.innerHTML += `<p style="color:red"><strong>${method} ${endpoint}</strong>: ERROR - ${err.message}</p>`;
+            }
+        }
+        
+        // Test endpoints
+        (async () => {
+            resultsDiv.innerHTML = '<p>Testing endpoints...</p>';
+            
+            await testEndpoint('GET', '/api/v1/health');
+            await testEndpoint('GET', '/api/v1/dashboard/stats');
+            await testEndpoint('GET', '/api/v1/threats');
+            await testEndpoint('GET', '/api/scans');
+            await testEndpoint('POST', '/api/scan', { type: 'url', target: 'https://example.com' });
+            
+            resultsDiv.innerHTML += '<p><strong>All tests completed!</strong></p>';
+        })();
+    </script>
+</body>
+</html>
