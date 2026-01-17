@@ -471,6 +471,30 @@ Hybrid Analysis:
 
         api_results_str = "\n".join(api_details) if api_details else "No detailed API data available"
 
+        # Format forensic metadata
+        forensic_metadata = threat_data.get("forensic_metadata", {})
+        forensic_str = ""
+        if forensic_metadata and forensic_metadata.get("corroboration_count") is not None:
+            corroboration_count = forensic_metadata.get("corroboration_count", 0)
+            corroboration_met = forensic_metadata.get("corroboration_threshold_met", False)
+            unique_sources = forensic_metadata.get("unique_sources", [])
+            total_indicators = forensic_metadata.get("total_indicators", 0)
+            critical_indicators = forensic_metadata.get("critical_indicators", 0)
+            medium_indicators = forensic_metadata.get("medium_indicators", 0)
+            low_indicators = forensic_metadata.get("low_indicators", 0)
+            
+            forensic_str = f"""
+FORENSIC RELIABILITY ANALYSIS:
+- Evidence Sources: {', '.join(unique_sources) if unique_sources else 'None'}
+- Corroboration Count: {corroboration_count} sources
+- Forensic Threshold Met: {'YES (≥2 sources)' if corroboration_met else 'NO (single source - manual review recommended)'}
+- Total Threat Indicators: {total_indicators}
+  * Critical: {critical_indicators}
+  * Medium: {medium_indicators}
+  * Low: {low_indicators}
+- Reliability Rating: {'HIGH - Multi-source corroboration' if corroboration_met else 'MODERATE - Single source detection'}
+"""
+
         prompt = f"""
 You are a senior cybersecurity threat analyst. Analyze this security scan and provide a professional report.
 
@@ -482,7 +506,7 @@ TARGET INFORMATION:
 INITIAL VERDICT:
 - Assessment: {verdict.upper()}
 - Confidence: {confidence * 100:.1f}%
-
+{forensic_str}
 THREAT INDICATORS:
 {threats_str}
 
@@ -494,24 +518,29 @@ APIs Used: {', '.join(apis_called) if apis_called else 'None'}
 Provide a professional security analysis with these sections:
 
 1. EXECUTIVE SUMMARY (2-3 sentences)
-   Overall risk and key findings
+   Overall risk and key findings, including forensic reliability status
 
-2. DETAILED ANALYSIS (4-5 paragraphs)
+2. FORENSIC RELIABILITY ASSESSMENT (1-2 paragraphs)
+   - Discuss the corroboration status and what it means for confidence
+   - Explain the significance of multi-source vs single-source detection
+   - Address any concerns about reliability based on source count
+
+3. DETAILED ANALYSIS (4-5 paragraphs)
    - Analyze each API's findings
    - Explain threat implications
    - Correlate findings across APIs
    - Real-world risk assessment
 
-3. TECHNICAL FINDINGS (bulleted)
+4. TECHNICAL FINDINGS (bulleted)
    Key technical details from each API
 
-4. RISK ASSESSMENT
-   Risk level, impact, likelihood
+5. RISK ASSESSMENT
+   Risk level, impact, likelihood, and reliability confidence
 
-5. RECOMMENDATIONS (prioritized)
+6. RECOMMENDATIONS (prioritized)
    Immediate actions, remediation, prevention
 
-6. CONCLUSION
+7. CONCLUSION
    Final assessment and next steps
 
 Keep professional, cite specific data, 800-1200 words total.
@@ -528,6 +557,7 @@ Keep professional, cite specific data, 800-1200 words total.
         api_results = threat_data.get("api_results", {})
         input_val = threat_data.get("input", "Unknown")
         input_type = threat_data.get("input_type", "Unknown")
+        forensic_metadata = threat_data.get("forensic_metadata", {})
 
         analysis = f"""## EXECUTIVE SUMMARY
 
@@ -538,9 +568,41 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
 
 The target has been assessed as {verdict} with {confidence:.1f}% confidence based on analysis from multiple security APIs including VirusTotal, Shodan, URLScan, AbuseIPDB, and Hybrid Analysis.
 
-## DETAILED ANALYSIS
+## FORENSIC RELIABILITY ASSESSMENT
 
 """
+
+        # Add forensic metadata
+        if forensic_metadata and forensic_metadata.get("corroboration_count") is not None:
+            corroboration_count = forensic_metadata.get("corroboration_count", 0)
+            corroboration_met = forensic_metadata.get("corroboration_threshold_met", False)
+            unique_sources = forensic_metadata.get("unique_sources", [])
+            
+            if corroboration_met:
+                analysis += f"**FORENSIC STATUS: HIGH RELIABILITY**\n\n"
+                analysis += f"This threat assessment has been corroborated by {corroboration_count} independent security intelligence sources: {', '.join(unique_sources)}.\n\n"
+                analysis += "Multi-source corroboration (≥2 sources) significantly increases the reliability and confidence of this assessment. "
+                analysis += "The independent confirmation from multiple threat intelligence providers provides strong forensic evidence "
+                analysis += "for the detected threats, making this assessment suitable for security incident documentation and compliance reporting.\n\n"
+            else:
+                analysis += f"**FORENSIC STATUS: MODERATE RELIABILITY**\n\n"
+                analysis += f"This threat assessment is based on detection by {corroboration_count} source: {', '.join(unique_sources) if unique_sources else 'N/A'}.\n\n"
+                analysis += "⚠️ FORENSIC CAUTION: Single-source detection provides moderate reliability. For higher forensic confidence, "
+                analysis += "multi-source corroboration (≥2 independent sources) is recommended. Consider manual review and additional "
+                analysis += "verification before taking critical security actions based on this assessment.\n\n"
+            
+            # Add indicator breakdown
+            total_indicators = forensic_metadata.get("total_indicators", 0)
+            if total_indicators > 0:
+                analysis += f"**Evidence Breakdown:**\n"
+                analysis += f"- Total Threat Indicators: {total_indicators}\n"
+                analysis += f"- Critical Severity: {forensic_metadata.get('critical_indicators', 0)}\n"
+                analysis += f"- Medium Severity: {forensic_metadata.get('medium_indicators', 0)}\n"
+                analysis += f"- Low Severity: {forensic_metadata.get('low_indicators', 0)}\n\n"
+        else:
+            analysis += "Forensic metadata not available for this scan.\n\n"
+
+        analysis += "## DETAILED ANALYSIS\n\n"
 
         # Add API-specific findings
         apis_called = api_results.get("apis_called", [])

@@ -3,13 +3,16 @@ import hashlib
 from datetime import datetime, timedelta
 from io import BytesIO
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..core.report_generator import report_generator
 from ..core.threat_analyzer import threat_analyzer
+from ..database import get_db
+from ..models import ScanHistory
 
 router = APIRouter()
 
@@ -21,6 +24,52 @@ MAX_STORE = 100
 REPORTS_STORE: list[dict] = []
 # Report PDF cache (report_id -> pdf_bytes)
 REPORTS_PDF_CACHE: dict[str, bytes] = {}
+
+
+async def _save_scan_to_db(scan_data: dict, db: AsyncSession):
+    """Save scan result to database for historical reporting"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Extract forensic metadata
+        forensic = scan_data.get("forensic_metadata", {})
+        evidence_sources = forensic.get("evidence_sources", [])
+        corroboration_count = forensic.get("corroboration_count", 0)
+        
+        logger.info(f"Saving scan {scan_data.get('scan_id')} - Forensic: count={corroboration_count}, sources={evidence_sources}")
+        logger.info(f"Scan type: {scan_data.get('type')}, confidence: {scan_data.get('confidence')}, threats: {scan_data.get('threats_detected')}")
+        
+        # Create database record
+        scan_record = ScanHistory(
+            scan_id=scan_data.get("scan_id"),
+            target=scan_data.get("target"),
+            target_type=scan_data.get("type", "unknown"),
+            target_name=scan_data.get("target", ""),
+            threat_level=scan_data.get("threat_level"),
+            confidence=scan_data.get("confidence", 0.0),
+            threats_detected=scan_data.get("threats_detected", 0),
+            analysis_data={
+                "verdict": scan_data.get("verdict"),
+                "summary": scan_data.get("summary"),
+                "api_results": scan_data.get("api_results", {}),
+                "threat_indicators": scan_data.get("threat_indicators", []),
+                "forensic_metadata": forensic,
+            },
+            evidence_sources=evidence_sources,
+            corroboration_count=corroboration_count,
+        )
+        
+        db.add(scan_record)
+        await db.commit()
+        await db.refresh(scan_record)
+        
+        logger.info(f"Scan {scan_data.get('scan_id')} saved to database successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to save scan to database: {e}")
+        logger.exception(e)  # Full traceback
+        await db.rollback()
 
 
 class GenericScanRequest(BaseModel):
@@ -94,17 +143,22 @@ async def options_report_download():
     return {}
 
 @router.post("/scan")
-async def generic_scan(req: GenericScanRequest):
+async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_db)):
     """Compatibility endpoint: accepts {type, target} and returns a scan result.
 
     Uses real threat analyzer with VirusTotal, Shodan, URLScan, AbuseIPDB, 
     and Hybrid Analysis to provide actual threat detection.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
+    logger.info(f"Starting scan: {scan_id} - type: {req.type}, target: {req.target}")
     
     try:
         # Perform real threat analysis using all 5 APIs
         analysis_result = await threat_analyzer.analyze(req.target)
+        logger.info(f"Analysis complete for {scan_id}: verdict={analysis_result.get('verdict')}")
         
         # Map analyzer verdict to threat_level
         verdict = analysis_result.get("verdict", "unknown")
@@ -133,9 +187,16 @@ async def generic_scan(req: GenericScanRequest):
             # Include API results for detailed view
             "api_results": analysis_result.get("api_results", {}),
             "threat_indicators": analysis_result.get("threat_indicators", []),
+            # Include forensic reliability metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
+            # Include AI-enhanced analysis
+            "ai_analysis": analysis_result.get("ai_analysis", {}),
+            "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
+        logger.info(f"Scan result created: {scan_id} - {threat_level}")
     except Exception as e:
         # Fallback if analysis fails
+        logger.error(f"Scan {scan_id} failed: {str(e)}")
         result = {
             "scan_id": scan_id,
             "target": req.target,
@@ -152,15 +213,19 @@ async def generic_scan(req: GenericScanRequest):
 
     # prepend to store (most recent first)
     SCANS_STORE.insert(0, result)
+    logger.info(f"Scan {scan_id} stored. Total scans in store: {len(SCANS_STORE)}")
     # trim store
     if len(SCANS_STORE) > MAX_STORE:
         SCANS_STORE.pop()
+    
+    # Save to database for time-range reports
+    await _save_scan_to_db(result, db)
 
     return result
 
 
 @router.post("/scan/file")
-async def scan_file(file: UploadFile = File(...)):
+async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     """File upload scan endpoint. Computes hash and analyzes with real threat APIs."""
     scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
     filename = file.filename or "unknown"
@@ -204,6 +269,8 @@ async def scan_file(file: UploadFile = File(...)):
             # Include API results
             "api_results": analysis_result.get("api_results", {}),
             "threat_indicators": analysis_result.get("threat_indicators", []),
+            # Include forensic reliability metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
     except Exception as e:
         result = {
@@ -225,6 +292,9 @@ async def scan_file(file: UploadFile = File(...)):
     # trim store
     if len(SCANS_STORE) > MAX_STORE:
         SCANS_STORE.pop()
+    
+    # Save to database for time-range reports
+    await _save_scan_to_db(result, db)
 
     return result
 
@@ -232,6 +302,9 @@ async def scan_file(file: UploadFile = File(...)):
 @router.get("/scans")
 async def list_scans():
     """Return recent scans from in-memory store."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"GET /scans - returning {len(SCANS_STORE)} scans")
     return SCANS_STORE
 
 
@@ -355,6 +428,10 @@ async def generate_report(req: ReportRequest):
                 "report_id": report_id,
                 "summary": latest_scan.get("summary", ""),
                 "threats_detected": latest_scan.get("threats_detected", 0),
+                "forensic_metadata": latest_scan.get("forensic_metadata", {}),
+                "scan_id": latest_scan.get("scan_id", ""),
+                "threat_level": latest_scan.get("threat_level", "unknown"),
+                "status": latest_scan.get("status", "complete"),
             }
         else:
             # Fallback: perform fresh analysis

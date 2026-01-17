@@ -464,6 +464,9 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "client_id": request.client_id,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
+            # Include AI analysis if available
+            "ai_analysis": analysis_result.get("ai_analysis", {}),
+            "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
         
         # Store in scan history and database

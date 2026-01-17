@@ -1236,12 +1236,15 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label>Generate Report by Time Range</label>
+                            <label>Generate Report by Time Range (All Scans)</label>
                             <div class="time-buttons">
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 24h Report</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 7 Days Report</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 30 Days Report</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 Last 24 Hours (All Scans)</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 Last 7 Days (All Scans)</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 Last 30 Days (All Scans)</button>
                             </div>
+                            <small style="color: var(--muted-foreground); font-size: 0.75rem; display: block; margin-top: 0.5rem;">
+                                Each report includes ALL scans performed in the selected time period with detailed threat analysis and forensic reliability tracking.
+                            </small>
                         </div>
                         <button class="btn btn-cyber" style="width: 100%;" id="generateReportBtn">
                             ✨ GENERATE COMPREHENSIVE REPORT (ALL)
@@ -1837,6 +1840,51 @@
                         `;
                     }
                     
+                    // Build forensic reliability section
+                    let forensicHTML = '';
+                    if (scan.forensic_metadata && scan.forensic_metadata.corroboration_count !== undefined) {
+                        const forensic = scan.forensic_metadata;
+                        const corroborationColor = forensic.corroboration_threshold_met ? 'var(--success)' : 'var(--warning)';
+                        
+                        forensicHTML = `
+                            <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px; border-left: 3px solid ${corroborationColor};">
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔬 Forensic Reliability Analysis</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.75rem;">
+                                    <div>
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">Corroboration Count</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: ${corroborationColor};">${forensic.corroboration_count}</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">Threshold Met (≥2)</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: ${corroborationColor};">${forensic.corroboration_threshold_met ? '✓ YES' : '✗ NO'}</div>
+                                    </div>
+                                </div>
+                                ${forensic.unique_sources && forensic.unique_sources.length > 0 ? `
+                                    <div style="margin-bottom: 0.75rem;">
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Evidence Sources (${forensic.unique_sources.length})</div>
+                                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                            ${forensic.unique_sources.map(source => `<span class="badge" style="background: rgba(45, 212, 191, 0.2); font-size: 0.75rem;">${source}</span>`).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; font-size: 0.75rem;">
+                                    <div>
+                                        <span style="color: var(--muted-foreground);">Total Indicators:</span>
+                                        <strong>${forensic.total_indicators || 0}</strong>
+                                    </div>
+                                    <div>
+                                        <span style="color: var(--destructive);">Critical:</span>
+                                        <strong>${forensic.critical_indicators || 0}</strong>
+                                    </div>
+                                    <div>
+                                        <span style="color: var(--warning);">Medium:</span>
+                                        <strong>${forensic.medium_indicators || 0}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
                     // Build verdict/confidence section
                     let verdictHTML = '';
                     if (scan.verdict || scan.confidence !== undefined) {
@@ -1899,6 +1947,7 @@
                             </div>
                         ` : ''}
                         ${apiResultsHTML}
+                        ${forensicHTML}
                         ${threatIndicatorsHTML}
                         ${scan.file_size ? `
                             <div style="margin-bottom: 1.5rem;">
@@ -2195,8 +2244,8 @@
         }
 
         async function generateReportForInterval(interval) {
-            const btnText = interval === '24h' ? '24h' : interval === '7d' ? '7 Days' : '30 Days';
-            showToast(`Generating ${btnText} report...`, 'info');
+            const btnText = interval === '24h' ? 'Last 24 Hours' : interval === '7d' ? 'Last 7 Days' : 'Last 30 Days';
+            showToast(`Generating comprehensive report for ${btnText}...`, 'info');
             
             try {
                 const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/interval/${interval}?format=pdf`, {
@@ -2219,13 +2268,13 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
+                a.download = `sentinelai_all_scans_${interval}_${Date.now()}.pdf`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 URL.revokeObjectURL(url);
                 
-                showToast(`${btnText} report downloaded successfully!`, 'success');
+                showToast(`Report downloaded: All scans from ${btnText}`, 'success');
                 
                 // Refresh reports list (ignore errors silently)
                 try {
@@ -2287,7 +2336,6 @@
                     a.remove();
                     URL.revokeObjectURL(url);
                     showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
-                    addNotification('Report Generated', 'Comprehensive security report (24h/7d/30d) has been downloaded');
                     
                     // Refresh reports list (ignore errors)
                     try {
@@ -2301,7 +2349,6 @@
                     try {
                         const data = await res.json();
                         showToast('Report generated successfully!', 'success');
-                        addNotification('Report Generated', 'New security report is ready');
                         try {
                             await fetchAllReports();
                             renderRecentReports();
@@ -2315,7 +2362,6 @@
             } catch (error) {
                 console.error('Comprehensive report generation error:', error);
                 showToast('Failed to generate comprehensive report: ' + error.message, 'error');
-                addNotification('Report Generation Failed', error.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '✨ GENERATE COMPREHENSIVE REPORT (ALL)';
@@ -2328,14 +2374,57 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
             
             try {
+                // First, fetch the full scan details
+                const scanDetails = await apiRequest(API_ENDPOINTS.scanResult(scanId));
+                
+                // Prepare comprehensive report data including forensic reliability features
+                const forensicData = scanDetails.forensic_metadata || {};
+                let forensicSummary = '';
+                
+                if (forensicData.corroboration_count !== undefined) {
+                    forensicSummary = `\n\n=== FORENSIC RELIABILITY ANALYSIS ===\n` +
+                                    `Evidence Sources: ${forensicData.evidence_sources ? forensicData.evidence_sources.join(', ') : 'N/A'}\n` +
+                                    `Corroboration Count: ${forensicData.corroboration_count}\n` +
+                                    `Corroboration Threshold Met: ${forensicData.corroboration_threshold_met ? 'YES' : 'NO'}\n` +
+                                    `Unique Sources: ${forensicData.unique_sources ? forensicData.unique_sources.join(', ') : 'N/A'}\n` +
+                                    `Total Indicators: ${forensicData.total_indicators || 0}\n` +
+                                    `Critical Indicators: ${forensicData.critical_indicators || 0}\n` +
+                                    `Medium Indicators: ${forensicData.medium_indicators || 0}\n` +
+                                    `Low Indicators: ${forensicData.low_indicators || 0}`;
+                    
+                    if (forensicData.source_details && forensicData.source_details.length > 0) {
+                        forensicSummary += `\n\nDetailed Evidence:\n`;
+                        forensicData.source_details.forEach((detail, idx) => {
+                            forensicSummary += `\n[${idx + 1}] Source: ${detail.source}\n` +
+                                             `    Severity: ${detail.severity}\n` +
+                                             `    Indicator: ${detail.indicator}\n` +
+                                             (detail.detection_count ? `    Detection Count: ${detail.detection_count}\n` : '') +
+                                             (detail.score ? `    Score: ${detail.score}\n` : '');
+                        });
+                    }
+                }
+                
+                const reportData = {
+                    target: scanDetails.target,
+                    risk_score: scanDetails.confidence || 0.0,
+                    threats: scanDetails.threat_indicators ? scanDetails.threat_indicators.map(t => t.indicator) : [],
+                    scan_summary: `Scan Type: ${scanDetails.type || 'unknown'}\n` +
+                                `Threat Level: ${scanDetails.threat_level || 'unknown'}\n` +
+                                `Status: ${scanDetails.status || 'complete'}\n` +
+                                `Timestamp: ${new Date(scanDetails.timestamp).toLocaleString()}\n` +
+                                `Scan ID: ${scanDetails.scan_id}\n` +
+                                (scanDetails.verdict ? `Verdict: ${scanDetails.verdict}\n` : '') +
+                                (scanDetails.confidence !== undefined ? `Confidence: ${(scanDetails.confidence * 100).toFixed(0)}%\n` : '') +
+                                (scanDetails.threats_detected !== undefined ? `Threats Detected: ${scanDetails.threats_detected}\n` : '') +
+                                (scanDetails.api_results && scanDetails.api_results.apis_called ? `\nAPIs Consulted: ${scanDetails.api_results.apis_called.join(', ')}\n` : '') +
+                                (scanDetails.summary ? `\nSummary: ${scanDetails.summary}` : '') +
+                                forensicSummary
+                };
+
                 const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        type: 'scan_analysis', 
-                        timeRange: '24h',
-                        target: target
-                    })
+                    body: JSON.stringify(reportData)
                 });
 
                 if (!res.ok) {
@@ -2353,7 +2442,6 @@
                 URL.revokeObjectURL(url);
                 
                 showToast('Report generated and downloaded!', 'success');
-                addNotification('Scan Report Ready', `Report for scan ${scanId} downloaded`);
                 
                 await fetchAllReports();
                 renderRecentReports();
@@ -2421,11 +2509,13 @@
                     type = 'hash';
                 }
 
+                console.log(`Initiating scan: type=${type}, target=${target}`);
                 const result = await apiRequest(API_ENDPOINTS.scan, {
                     method: 'POST',
                     body: JSON.stringify({ type, target })
                 });
 
+                console.log('Scan completed:', result);
                 const isThreat = result.threat_level !== 'safe';
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
                 addNotification('New Scan Completed', `${target} - ${result.threat_level}`);
@@ -2433,8 +2523,11 @@
                 statusDiv.textContent = `Scan ID: ${result.scan_id} - ${result.status}`;
                 
                 // Refresh scan history
+                console.log('Refreshing scan history...');
                 await fetchScanHistory();
+                console.log('Scan history refreshed');
             } catch (error) {
+                console.error('Scan error:', error);
                 showToast('Scan failed: ' + error.message, 'error');
                 addNotification('Scan Failed', error.message);
                 statusDiv.textContent = 'Scan failed';
@@ -2496,21 +2589,28 @@
 
         async function fetchScanHistory() {
             try {
+                console.log('Fetching scan history from:', API_BASE_URL + API_ENDPOINTS.scans);
                 const scans = await apiRequest(API_ENDPOINTS.scans);
+                console.log('Scan history received:', scans.length, 'scans');
                 renderScanHistory(scans);
             } catch (error) {
-                console.log('Using placeholder scan history');
+                console.error('Error fetching scan history:', error);
+                showToast('Could not load scan history: ' + error.message, 'error');
                 renderScanHistory([]);
             }
         }
 
         function renderScanHistory(scans) {
             const tbody = document.getElementById('scanHistoryBody');
+            console.log('Rendering scan history:', scans);
+            
             if (!scans || scans.length === 0) {
+                console.log('No scans to display');
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No scans yet. Start a new scan to see results here.</td></tr>';
                 return;
             }
 
+            console.log(`Rendering ${scans.length} scans`);
             tbody.innerHTML = scans.map(scan => {
                 const threatLevel = scan.threat_level || 'unknown';
                 const threatColor = threatLevel === 'safe' ? 'var(--success)' : threatLevel === 'suspicious' ? 'var(--warning)' : 'var(--destructive)';

@@ -125,19 +125,67 @@ class InputDetector:
         return bool(InputDetector.DOMAIN_PATTERN.match(value))
 
     @staticmethod
+    def defang_to_normal(value: str) -> str:
+        """
+        Convert defanged indicators back to normal format for analysis
+        
+        Defanged formats:
+        - hxxp:// or hXXp:// -> http://
+        - hxxps:// -> https://
+        - [.] or (.) -> .
+        - [dot] -> .
+        - [@] or (@) -> @
+        
+        Args:
+            value: Potentially defanged indicator
+            
+        Returns:
+            Normal format indicator
+        """
+        # Convert to lowercase for pattern matching
+        normalized = value
+        
+        # Replace hxxp/hXXp variants with http
+        normalized = re.sub(r'hxxps?://', 'https://', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'hxxp://', 'http://', normalized, flags=re.IGNORECASE)
+        
+        # Replace bracket/parenthesis notation for dots
+        normalized = re.sub(r'\[\.\]', '.', normalized)
+        normalized = re.sub(r'\(\.\)', '.', normalized)
+        normalized = re.sub(r'\[dot\]', '.', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'\(dot\)', '.', normalized, flags=re.IGNORECASE)
+        
+        # Replace bracket notation for @
+        normalized = re.sub(r'\[@\]', '@', normalized)
+        normalized = re.sub(r'\(@\)', '@', normalized)
+        
+        return normalized
+    
+    @staticmethod
     def detect(value: str) -> Tuple[InputType, dict]:
         """
         Detect input type and return metadata
+        Automatically defangs indicators before detection
 
         Returns:
             Tuple of (InputType, metadata_dict)
         """
         value = value.strip()
+        
+        # Store original value for reference
+        original_value = value
+        
+        # Defang the value for proper detection
+        value = InputDetector.defang_to_normal(value)
 
         # Check IP (IPv4 or IPv6)
         if InputDetector.is_ip(value):
             ip_version = "IPv6" if InputDetector.is_ipv6(value) else "IPv4"
-            return InputType.IP, {"ip_version": ip_version, "value": value}
+            return InputType.IP, {
+                "ip_version": ip_version, 
+                "value": value,
+                "original_value": original_value if original_value != value else None
+            }
 
         # Check URL
         if InputDetector.is_url(value):
@@ -147,19 +195,30 @@ class InputDetector:
                 "netloc": parsed.netloc,
                 "path": parsed.path,
                 "value": value,
+                "original_value": original_value if original_value != value else None
             }
 
         # Check file hash
         if InputDetector.is_hash(value):
             hash_type = InputDetector.get_hash_type(value)
-            return InputType.FILE_HASH, {"hash_type": hash_type, "value": value}
+            return InputType.FILE_HASH, {
+                "hash_type": hash_type, 
+                "value": value,
+                "original_value": original_value if original_value != value else None
+            }
 
         # Check domain
         if InputDetector.is_domain(value):
-            return InputType.DOMAIN, {"value": value}
+            return InputType.DOMAIN, {
+                "value": value,
+                "original_value": original_value if original_value != value else None
+            }
 
         # Unknown type
-        return InputType.UNKNOWN, {"value": value}
+        return InputType.UNKNOWN, {
+            "value": value,
+            "original_value": original_value if original_value != value else None
+        }
 
     @staticmethod
     def extract_domain_from_url(url: str) -> str:
