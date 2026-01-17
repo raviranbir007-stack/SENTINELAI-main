@@ -77,6 +77,16 @@ class Threat(Base):
     ai_confidence = Column(Float)
     ai_analysis = Column(JSON)
 
+    # Forensic Reliability Fields
+    evidence_sources = Column(JSON)  # List of sources that confirmed threat with IDs/links
+    corroboration_count = Column(Integer, default=0)  # Number of sources confirming threat
+    corroboration_threshold_met = Column(Boolean, default=False)  # True if ≥2 sources confirm
+    analyst_override = Column(Boolean, default=False)  # True if analyst manually overrode verdict
+    analyst_override_notes = Column(Text)  # Analyst's notes for override
+    analyst_override_by_id = Column(Integer, ForeignKey("users.id"))  # Who overrode
+    analyst_override_at = Column(DateTime(timezone=True))  # When overrode
+    original_verdict = Column(String(50))  # Original verdict before override
+
     # Detection metadata
     detection_time = Column(DateTime(timezone=True), server_default=func.now())
     last_updated = Column(DateTime(timezone=True), onupdate=func.now())
@@ -85,7 +95,8 @@ class Threat(Base):
     detected_by_id = Column(Integer, ForeignKey("users.id"))
 
     # Relationships
-    detected_by = relationship("User", back_populates="threats")
+    detected_by = relationship("User", back_populates="threats", foreign_keys=[detected_by_id])
+    analyst_override_by = relationship("User", foreign_keys=[analyst_override_by_id])
     responses = relationship("ResponseAction", back_populates="threat")
 
 
@@ -151,6 +162,12 @@ class ScanHistory(Base):
     confidence = Column(Float, default=0.0)
     threats_detected = Column(Integer, default=0)
     analysis_data = Column(JSON)  # Full analysis result
+    
+    # Forensic Reliability for Scan History
+    evidence_sources = Column(JSON)  # Source evidence for this scan
+    corroboration_count = Column(Integer, default=0)
+    analyst_notes = Column(Text)  # Optional analyst comments
+    analyst_verified = Column(Boolean, default=False)
     
     # Metadata
     scan_timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -220,6 +237,12 @@ class AttackEvent(Base):
     confidence = Column(Float, default=0.0)
     description = Column(Text)
     indicators = Column(JSON)  # List of threat indicators
+    
+    # Forensic Reliability for Attack Events
+    evidence_sources = Column(JSON)  # Multi-source evidence tracking
+    corroboration_count = Column(Integer, default=0)
+    analyst_verified = Column(Boolean, default=False)
+    analyst_notes = Column(Text)
     
     # Response status
     status = Column(String(50), default="detected")  # detected, analyzing, blocked, mitigated

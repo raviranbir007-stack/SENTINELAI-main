@@ -739,6 +739,11 @@ The target has been assessed as {verdict} with {confidence:.1f}% confidence base
         input_type = threat_analysis.get("input_type", "Unknown")
         verdict = threat_analysis.get("verdict", "unknown")
         confidence = threat_analysis.get("confidence", 0.0)
+        
+        # Forensic metadata
+        forensic_metadata = threat_analysis.get("forensic_metadata", {})
+        corroboration_count = forensic_metadata.get("corroboration_count", 0)
+        corroboration_met = forensic_metadata.get("corroboration_threshold_met", False)
 
         info_data = [
             ["Report Generated:", timestamp],
@@ -746,6 +751,8 @@ The target has been assessed as {verdict} with {confidence:.1f}% confidence base
             ["Target Type:", input_type.upper()],
             ["Verdict:", verdict.upper()],
             ["Confidence:", f"{confidence * 100:.1f}%"],
+            ["Sources Corroborating:", str(corroboration_count)],
+            ["Forensic Threshold Met:", "YES" if corroboration_met else "NO (single source)"],
         ]
 
         info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
@@ -766,6 +773,59 @@ The target has been assessed as {verdict} with {confidence:.1f}% confidence base
 
         elements.append(info_table)
         elements.append(Spacer(1, 0.3 * inch))
+
+        # Forensic Evidence Section
+        if forensic_metadata and forensic_metadata.get("source_details"):
+            elements.append(Paragraph("FORENSIC EVIDENCE TRACKING", heading_style))
+            
+            source_details = forensic_metadata.get("source_details", [])
+            if source_details:
+                evidence_data = [["Source", "Severity", "Detection Details", "Timestamp"]]
+                
+                for detail in source_details:
+                    evidence_data.append([
+                        detail.get("source", "Unknown"),
+                        detail.get("severity", "unknown").upper(),
+                        detail.get("indicator", "")[:50],  # Truncate
+                        detail.get("timestamp", "")[:19],  # Show only date/time
+                    ])
+                
+                evidence_table = Table(
+                    evidence_data, colWidths=[1.2 * inch, 0.9 * inch, 2.5 * inch, 1.4 * inch]
+                )
+                evidence_table.setStyle(
+                    TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#006633")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f8f0")]),
+                    ])
+                )
+                elements.append(evidence_table)
+                
+                # Add corroboration note
+                if corroboration_met:
+                    corroboration_note = (
+                        f"<b>FORENSIC NOTE:</b> This threat has been corroborated by "
+                        f"{corroboration_count} independent sources, meeting the forensic "
+                        f"reliability threshold (≥2 sources). This significantly increases "
+                        f"confidence in the verdict."
+                    )
+                else:
+                    corroboration_note = (
+                        f"<b>FORENSIC CAUTION:</b> This threat has been detected by only "
+                        f"{corroboration_count} source. Multi-source corroboration (≥2 sources) "
+                        f"is recommended for higher forensic reliability. Consider manual review."
+                    )
+                
+                elements.append(Spacer(1, 0.1 * inch))
+                elements.append(Paragraph(corroboration_note, normal_style))
+                elements.append(Spacer(1, 0.2 * inch))
 
         # Threat Summary
         elements.append(Paragraph("THREAT SUMMARY", heading_style))

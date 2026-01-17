@@ -105,6 +105,9 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
             analysis_data=scan_data.get("analysis", {}),
             client_id=client_id_fk,
             report_generated=scan_data.get("report_url") is not None,
+            # Forensic Reliability Fields
+            evidence_sources=scan_data.get("forensic_metadata", {}).get("evidence_sources", []),
+            corroboration_count=scan_data.get("forensic_metadata", {}).get("corroboration_count", 0),
         )
         
         db.add(scan_record)
@@ -197,6 +200,8 @@ async def scan_file(
             "target_type": "file",
             "target_name": file.filename,
             "client_id": client_id,
+            # Include forensic metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database
@@ -264,6 +269,8 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "target_type": "url",
             "target_name": url,
             "client_id": request.client_id,
+            # Include forensic metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database
@@ -325,6 +332,8 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "target_type": "ip",
             "target_name": ip,
             "client_id": request.client_id,
+            # Include forensic metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database
@@ -385,6 +394,8 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "target_type": "hash",
             "target_name": file_hash,
             "client_id": request.client_id,
+            # Include forensic metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database
@@ -451,6 +462,8 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "target_type": input_type.value,
             "target_name": target,
             "client_id": request.client_id,
+            # Include forensic metadata
+            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database

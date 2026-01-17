@@ -188,6 +188,20 @@ class BatchAnalysisRequest(BaseModel):
     prompts: List[str]
     context: Optional[Dict[str, Any]] = None
 
+# Pydantic models for analyst override
+class AnalystOverrideRequest(BaseModel):
+    threat_id: str
+    override_verdict: str  # "clean", "suspicious", "malicious"
+    override_notes: str
+    analyst_username: Optional[str] = None
+    override_severity: Optional[str] = None  # "low", "medium", "high", "critical"
+
+class AnalystNotesRequest(BaseModel):
+    scan_id: str
+    analyst_notes: str
+    verified: bool = False
+    analyst_username: Optional[str] = None
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -445,6 +459,222 @@ async def cors_test_page():
     if os.path.exists(test_path):
         return FileResponse(test_path, media_type="text/html")
     return {"error": "Test page not found"}
+
+# Forensic Reliability: Analyst Override Endpoints
+@app.post("/api/v1/analyst/override")
+async def analyst_override_threat(request: AnalystOverrideRequest):
+    """
+    Allow security analysts to override threat verdicts with forensic notes.
+    
+    This endpoint enables manual intervention when automated detection needs 
+    correction or additional context.
+    """
+    from .database import SessionLocal
+    from .models import Threat, User, ThreatStatus, ThreatSeverity
+    from sqlalchemy.orm import Session
+    
+    db: Session = SessionLocal()
+    
+    try:
+        # Find the threat
+        threat = db.query(Threat).filter(Threat.threat_id == request.threat_id).first()
+        
+        if not threat:
+            raise HTTPException(status_code=404, detail=f"Threat {request.threat_id} not found")
+        
+        # Find analyst user (if username provided)
+        analyst_user = None
+        if request.analyst_username:
+            analyst_user = db.query(User).filter(User.username == request.analyst_username).first()
+        
+        # Store original verdict before override
+        original_verdict = threat.status.value if threat.status else "unknown"
+        
+        # Apply analyst override
+        threat.analyst_override = True
+        threat.analyst_override_notes = request.override_notes
+        threat.analyst_override_at = datetime.utcnow()
+        threat.original_verdict = original_verdict
+        
+        if analyst_user:
+            threat.analyst_override_by_id = analyst_user.id
+        
+        # Update threat status based on override verdict
+        verdict_mapping = {
+            "clean": ThreatStatus.FALSE_POSITIVE,
+            "suspicious": ThreatStatus.ANALYZING,
+            "malicious": ThreatStatus.DETECTED
+        }
+        
+        if request.override_verdict.lower() in verdict_mapping:
+            threat.status = verdict_mapping[request.override_verdict.lower()]
+        
+        # Update severity if provided
+        if request.override_severity:
+            severity_mapping = {
+                "low": ThreatSeverity.LOW,
+                "medium": ThreatSeverity.MEDIUM,
+                "high": ThreatSeverity.HIGH,
+                "critical": ThreatSeverity.CRITICAL
+            }
+            if request.override_severity.lower() in severity_mapping:
+                threat.severity = severity_mapping[request.override_severity.lower()]
+        
+        threat.last_updated = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(threat)
+        
+        logger.info(f"Analyst override applied to threat {request.threat_id} by {request.analyst_username or 'unknown'}")
+        
+        return {
+            "status": "success",
+            "message": "Analyst override applied successfully",
+            "threat_id": request.threat_id,
+            "original_verdict": original_verdict,
+            "new_verdict": request.override_verdict,
+            "override_notes": request.override_notes,
+            "timestamp": datetime.utcnow().isoformat(),
+            "forensic_tracking": {
+                "override_applied": True,
+                "analyst": request.analyst_username or "unknown",
+                "override_time": threat.analyst_override_at.isoformat()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying analyst override: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to apply override: {str(e)}")
+    finally:
+        db.close()
+
+@app.post("/api/v1/analyst/notes")
+async def add_analyst_notes(request: AnalystNotesRequest):
+    """
+    Add analyst notes to scan history for forensic documentation.
+    
+    Allows analysts to document their review and verification of scan results.
+    """
+    from .database import SessionLocal
+    from .models import ScanHistory, User
+    from sqlalchemy.orm import Session
+    
+    db: Session = SessionLocal()
+    
+    try:
+        # Find the scan
+        scan = db.query(ScanHistory).filter(ScanHistory.scan_id == request.scan_id).first()
+        
+        if not scan:
+            raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
+        
+        # Update analyst notes
+        scan.analyst_notes = request.analyst_notes
+        scan.analyst_verified = request.verified
+        
+        db.commit()
+        db.refresh(scan)
+        
+        logger.info(f"Analyst notes added to scan {request.scan_id} by {request.analyst_username or 'unknown'}")
+        
+        return {
+            "status": "success",
+            "message": "Analyst notes added successfully",
+            "scan_id": request.scan_id,
+            "verified": request.verified,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding analyst notes: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add notes: {str(e)}")
+    finally:
+        db.close()
+
+@app.get("/api/v1/forensics/threat/{threat_id}")
+async def get_threat_forensics(threat_id: str):
+    """
+    Retrieve complete forensic information for a threat including:
+    - Evidence sources with IDs/links
+    - Corroboration details
+    - Analyst overrides and notes
+    """
+    from .database import SessionLocal
+    from .models import Threat, User
+    from sqlalchemy.orm import Session
+    
+    db: Session = SessionLocal()
+    
+    try:
+        threat = db.query(Threat).filter(Threat.threat_id == threat_id).first()
+        
+        if not threat:
+            raise HTTPException(status_code=404, detail=f"Threat {threat_id} not found")
+        
+        # Build forensic report
+        forensic_data = {
+            "threat_id": threat.threat_id,
+            "threat_type": threat.threat_type,
+            "severity": threat.severity.value if threat.severity else None,
+            "status": threat.status.value if threat.status else None,
+            
+            # Evidence and Corroboration
+            "evidence_sources": threat.evidence_sources or [],
+            "corroboration_count": threat.corroboration_count or 0,
+            "corroboration_threshold_met": threat.corroboration_threshold_met or False,
+            
+            # API Results (full evidence)
+            "api_results": {
+                "virus_total": threat.virus_total_result,
+                "abuseipdb": threat.abuseipdb_result,
+                "shodan": threat.shodan_result,
+                "hybrid_analysis": threat.hybrid_analysis_result,
+                "urlscan": threat.urlscan_result
+            },
+            
+            # AI Analysis
+            "ai_confidence": threat.ai_confidence,
+            "ai_analysis": threat.ai_analysis,
+            
+            # Analyst Override Information
+            "analyst_override": {
+                "overridden": threat.analyst_override or False,
+                "override_notes": threat.analyst_override_notes,
+                "original_verdict": threat.original_verdict,
+                "override_timestamp": threat.analyst_override_at.isoformat() if threat.analyst_override_at else None,
+                "overridden_by": None
+            },
+            
+            # Timestamps
+            "detection_time": threat.detection_time.isoformat() if threat.detection_time else None,
+            "last_updated": threat.last_updated.isoformat() if threat.last_updated else None
+        }
+        
+        # Get analyst who made the override
+        if threat.analyst_override_by_id:
+            analyst = db.query(User).filter(User.id == threat.analyst_override_by_id).first()
+            if analyst:
+                forensic_data["analyst_override"]["overridden_by"] = {
+                    "username": analyst.username,
+                    "full_name": analyst.full_name,
+                    "email": analyst.email
+                }
+        
+        return forensic_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving forensic data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve forensics: {str(e)}")
+    finally:
+        db.close()
 
 # Helper Functions
 

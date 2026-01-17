@@ -428,7 +428,12 @@ class ThreatAnalyzer:
 
     def _calculate_verdict(self, result: Dict) -> Dict:
         """
-        Calculate final threat verdict based on indicators
+        Calculate final threat verdict based on indicators with forensic corroboration
+
+        Implements multi-source corroboration:
+        - Malicious if ≥2 sources confirm threat
+        - Tracks evidence sources with links/IDs
+        - Confidence increases with more corroboration
 
         Returns ThreatLevel and confidence score
         """
@@ -438,41 +443,130 @@ class ThreatAnalyzer:
             result["verdict"] = ThreatLevel.CLEAN
             result["confidence"] = 1.0
             result["summary"] = "No threats detected by any API."
+            result["forensic_metadata"] = {
+                "evidence_sources": [],
+                "corroboration_count": 0,
+                "corroboration_threshold_met": False,
+                "source_details": []
+            }
             return result
 
-        # Analyze threat severity
+        # Extract unique sources that detected threats
+        unique_sources = set()
+        evidence_sources = []
+        source_details = []
+        
+        for threat in threats:
+            source = threat.get("source")
+            if source:
+                unique_sources.add(source)
+                
+                # Build evidence record with source details
+                evidence_record = {
+                    "source": source,
+                    "severity": threat.get("severity"),
+                    "indicator": threat.get("indicator"),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Add source-specific IDs/links for forensic traceability
+                if "count" in threat:
+                    evidence_record["detection_count"] = threat["count"]
+                if "score" in threat:
+                    evidence_record["score"] = threat["score"]
+                if "details" in threat:
+                    evidence_record["details"] = threat["details"]
+                
+                # Add API result reference for full traceability
+                api_results = result.get("api_results", {})
+                source_key = source.lower().replace(" ", "_").replace(".", "_")
+                if source_key in api_results:
+                    evidence_record["api_result_ref"] = source_key
+                
+                evidence_sources.append(source)
+                source_details.append(evidence_record)
+
+        # Count sources confirming threats
+        corroboration_count = len(unique_sources)
+        corroboration_threshold_met = corroboration_count >= 2
+        
+        # Analyze threat severity with corroboration
         critical_count = sum(1 for t in threats if t.get("severity") == "critical")
         medium_count = sum(1 for t in threats if t.get("severity") == "medium")
         low_count = sum(1 for t in threats if t.get("severity") == "low")
 
-        if critical_count > 0:
-            result["verdict"] = ThreatLevel.MALICIOUS
-            result["confidence"] = min(1.0, 0.7 + (critical_count * 0.1))
-            result["summary"] = (
-                f"MALICIOUS - {critical_count} critical threat(s) detected."
-            )
-
-        elif medium_count >= 2 or (medium_count > 0 and low_count > 0):
-            result["verdict"] = ThreatLevel.SUSPICIOUS
-            result["confidence"] = min(1.0, 0.5 + (medium_count * 0.15))
-            result["summary"] = (
-                f"SUSPICIOUS - {medium_count} medium threat(s) detected."
-            )
-
-        elif medium_count > 0:
-            result["verdict"] = ThreatLevel.SUSPICIOUS
-            result["confidence"] = 0.6
-            result["summary"] = "SUSPICIOUS - Potential threats detected."
-
-        elif low_count > 0:
-            result["verdict"] = ThreatLevel.SUSPICIOUS
-            result["confidence"] = 0.4
-            result["summary"] = "SUSPICIOUS - Minor threat indicators present."
-
+        # Multi-source corroboration logic
+        if corroboration_threshold_met:
+            # At least 2 sources confirm - higher confidence
+            if critical_count > 0:
+                result["verdict"] = ThreatLevel.MALICIOUS
+                result["confidence"] = min(1.0, 0.85 + (corroboration_count * 0.05))
+                result["summary"] = (
+                    f"MALICIOUS (CORROBORATED) - {critical_count} critical threat(s) "
+                    f"confirmed by {corroboration_count} independent sources."
+                )
+            elif medium_count >= 2:
+                result["verdict"] = ThreatLevel.MALICIOUS
+                result["confidence"] = min(1.0, 0.75 + (corroboration_count * 0.05))
+                result["summary"] = (
+                    f"MALICIOUS (CORROBORATED) - Multiple medium threats "
+                    f"confirmed by {corroboration_count} independent sources."
+                )
+            elif medium_count > 0:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = min(1.0, 0.65 + (corroboration_count * 0.05))
+                result["summary"] = (
+                    f"SUSPICIOUS (CORROBORATED) - Threats detected by "
+                    f"{corroboration_count} independent sources."
+                )
+            else:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = 0.60
+                result["summary"] = (
+                    f"SUSPICIOUS - Low-level threats confirmed by "
+                    f"{corroboration_count} sources."
+                )
         else:
-            result["verdict"] = ThreatLevel.CLEAN
-            result["confidence"] = 0.9
-            result["summary"] = "No significant threats detected."
+            # Single source only - lower confidence, more conservative verdict
+            if critical_count > 0:
+                result["verdict"] = ThreatLevel.MALICIOUS
+                result["confidence"] = 0.70  # Lower confidence without corroboration
+                result["summary"] = (
+                    f"MALICIOUS - {critical_count} critical threat(s) detected "
+                    f"(single source - corroboration recommended)."
+                )
+            elif medium_count >= 2:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = 0.55
+                result["summary"] = (
+                    f"SUSPICIOUS - {medium_count} medium threat(s) detected "
+                    f"(single source - manual review recommended)."
+                )
+            elif medium_count > 0:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = 0.50
+                result["summary"] = "SUSPICIOUS - Potential threats detected (single source)."
+            elif low_count > 0:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = 0.35
+                result["summary"] = "SUSPICIOUS - Minor threat indicators (single source)."
+            else:
+                result["verdict"] = ThreatLevel.CLEAN
+                result["confidence"] = 0.9
+                result["summary"] = "No significant threats detected."
+
+        # Add forensic metadata for reliability tracking
+        result["forensic_metadata"] = {
+            "evidence_sources": evidence_sources,
+            "corroboration_count": corroboration_count,
+            "corroboration_threshold_met": corroboration_threshold_met,
+            "source_details": source_details,
+            "unique_sources": list(unique_sources),
+            "total_indicators": len(threats),
+            "critical_indicators": critical_count,
+            "medium_indicators": medium_count,
+            "low_indicators": low_count
+        }
 
         return result
 
