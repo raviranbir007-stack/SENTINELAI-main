@@ -351,7 +351,7 @@ CRITICAL GUIDELINES:
         return prompt
     
     def _generate_content(self, prompt: str) -> Optional[str]:
-        """Generate content using Gemini"""
+        """Generate content using Gemini with quota handling"""
         if not self.is_available():
             return None
         
@@ -378,6 +378,12 @@ CRITICAL GUIDELINES:
                         return response.text
                         
                 except Exception as e:
+                    error_msg = str(e)
+                    # Check if it's a quota error
+                    if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                        logger.warning(f"⚠️ Gemini API quota exceeded for {model_name}. Skipping AI analysis.")
+                        # Don't try other models if quota is exhausted
+                        return None
                     logger.warning(f"Model {model_name} failed: {e}")
                     continue
             
