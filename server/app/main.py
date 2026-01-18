@@ -249,11 +249,27 @@ async def startup_event():
     
     logger.info("✅ Application startup complete")
     logger.info(f"📊 System Status: {get_system_status()}")
+    
+    # Start activity monitoring
+    try:
+        from app.activity_monitor import activity_monitor
+        import asyncio
+        asyncio.create_task(activity_monitor.start())
+        logger.info("🔍 Activity monitor started")
+    except Exception as e:
+        logger.error(f"Failed to start activity monitor: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on application shutdown"""
     logger.info("🛑 Shutting down SENTINEL-AI Application...")
+    
+    # Stop activity monitoring
+    try:
+        from app.activity_monitor import activity_monitor
+        await activity_monitor.stop()
+    except Exception as e:
+        logger.error(f"Failed to stop activity monitor: {e}")
 
 # New Gemini-Enhanced API Endpoints
 
