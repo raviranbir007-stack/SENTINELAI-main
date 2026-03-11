@@ -66,13 +66,16 @@ Scan Summary:
         )
 
     try:
-        model = genai.GenerativeModel("gemini-pro")
-        response = model.generate_content(
-            f"Create a professional cybersecurity vulnerability report:\n{base_text}"
-        )
-        return response.text
+        if hasattr(genai, "GenerativeModel"):
+            model = genai.GenerativeModel("gemini-pro")
+            response = model.generate_content(
+                f"Create a professional cybersecurity vulnerability report:\n{base_text}"
+            )
+            return response.text
+        logger.warning("Gemini client does not expose GenerativeModel; using fallback report text")
+        return base_text + "\n\nNote: AI enhancement unavailable with current Gemini client."
     except Exception as e:
-        logger.error(f"Gemini AI failed: {e}")
+        logger.warning(f"Gemini AI unavailable, using fallback text: {e}")
         return base_text + "\n\nNote: AI enhancement failed."
 
 
@@ -106,7 +109,7 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
 @router.post("/generate")
 async def generate_report(data: ReportRequest):
     try:
-        logger.info(f"Generating report for target: {data.target}")
+        logger.debug(f"REPORT started | target={data.target}")
 
         report_text = generate_ai_report(data)
         # If ReportLab is not available, return the generated report text as JSON
@@ -121,6 +124,7 @@ async def generate_report(data: ReportRequest):
 
         filename = f"{data.target}_security_report.pdf"
 
+        logger.info(f"REPORT complete | target={data.target} | format=pdf")
         return StreamingResponse(
             pdf_file,
             media_type="application/pdf",
@@ -145,10 +149,10 @@ async def download_report(report_id: str):
         
         # Check cache first
         if hasattr(report_generator, '_reports_cache') and report_id in report_generator._reports_cache:
-            logger.info(f"Returning cached report for {report_id}")
+            logger.info(f"REPORT download | target={report_id} | source=cache")
             pdf_bytes = report_generator._reports_cache[report_id]
         else:
-            logger.info(f"Generating new report for {report_id}")
+            logger.info(f"REPORT download | target={report_id} | source=generated")
             # Build a minimal threat_analysis payload for the report
             threat_analysis = {
                 "input": report_id,

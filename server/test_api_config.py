@@ -4,6 +4,9 @@ API Configuration Setup and Test Script
 This script helps you test if your API keys are working correctly
 """
 
+# Utility script (not a pytest test module)
+__test__ = False
+
 import asyncio
 import os
 import sys

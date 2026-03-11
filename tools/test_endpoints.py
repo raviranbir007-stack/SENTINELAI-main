@@ -8,7 +8,17 @@ This is more resilient across dependency versions of `starlette`/`fastapi`.
 import json
 import sys
 
-from server.app.main import app
+"""The repo uses a flat `server/` directory rather than a package.  Import
+directly from the `app` module so that this script can run from the workspace
+root without requiring an `__init__.py`."""
+try:
+	# local import relative to workspace root
+	from app.main import app
+except ImportError:
+	# if the PYTHONPATH isn't configured, try adding the server directory
+	import sys, os
+	sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "server")))
+	from app.main import app
 
 try:
 	# Prefer the public ASGITransport if available

@@ -7,7 +7,7 @@ import json
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Import the Gemini integration
 try:
@@ -42,11 +42,11 @@ class ThreatAnalyzer:
             Dictionary with threat analysis results
         """
         try:
-            logger.info(f"Starting AI threat analysis for threat ID: {threat_data.get('id', 'unknown')}")
+            logger.debug(f"Starting AI threat analysis for threat ID: {threat_data.get('id', 'unknown')}")
             
             # Enhanced analysis with Gemini if available
             if self.gemini and self.gemini.is_available():
-                logger.info("Using Gemini AI for threat analysis")
+                logger.debug("Using Gemini AI for threat analysis")
                 
                 # Determine scan type from threat data
                 scan_type = self._determine_scan_type(threat_data)
@@ -67,7 +67,7 @@ class ThreatAnalyzer:
                             "gemini_analysis": gemini_result,
                             "threat_report": report,
                             "analysis_method": "gemini_ai",
-                            "timestamp": datetime.utcnow().isoformat()
+                            "timestamp": datetime.now(timezone.utc).isoformat()
                         },
                         "threat_types": gemini_result.get("threat_analysis", {}).get("primary_threats", ["unknown"]),
                         "indicators": gemini_result.get("threat_analysis", {}).get("threat_indicators", []),
@@ -75,7 +75,7 @@ class ThreatAnalyzer:
                     }
             
             # Fallback to rule-based analysis
-            logger.info("Using rule-based analysis")
+            logger.debug("Using rule-based analysis")
             result = self.rule_based_analyzer.enhanced_analysis(threat_data)
             
             return {
@@ -113,7 +113,7 @@ class ThreatAnalyzer:
             Predicted threat type
         """
         try:
-            logger.info(f"Predicting threat type from {len(indicators)} indicators")
+            logger.debug(f"Predicting threat type from {len(indicators)} indicators")
             
             # Use Gemini for prediction if available
             if self.gemini and self.gemini.is_available():
@@ -298,7 +298,7 @@ Provide only the threat type name, no explanations."""
             "recommendations": ["Check system logs", "Review input data"],
             "detailed_analysis": {
                 "error": True,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         }
 
@@ -319,7 +319,7 @@ class RuleBasedAnalyzer:
     
     def enhanced_analysis(self, combined_data: Dict[str, Any]) -> Dict[str, Any]:
         """Rule-based enhanced analysis"""
-        logger.info("Performing rule-based analysis")
+        logger.debug("Performing rule-based analysis")
         
         risk_score = 0.0
         indicators = []
@@ -377,7 +377,7 @@ class RuleBasedAnalyzer:
             "detailed_analysis": {
                 "service_results": service_results,
                 "analysis_method": "rule_based",
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         }
     

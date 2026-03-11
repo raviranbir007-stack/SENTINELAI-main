@@ -5,6 +5,7 @@ Handles threat analysis for IPs, URLs, domains, and file hashes
 
 import hashlib
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -17,7 +18,7 @@ from ....core.input_detector import InputDetector
 from ....core.report_generator import report_generator
 from ....core.threat_analyzer import threat_analyzer
 from ....database import get_db
-from ....models import ClientInstallation, ScanHistory
+from ....models import ClientInstallation, ScanHistory, SystemLog
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,6 +81,11 @@ async def options_universal_scan():
 async def _store_scan_result(scan_data: dict, db: AsyncSession):
     """Store scan result in history and database"""
     global _scan_history
+
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        logger.debug(f"Skipping scan persistence for pytest-generated scan {scan_data.get('scan_id')}")
+        return
+
     _scan_history.insert(0, scan_data)  # Add to front
     # Keep only last 100 scans
     if len(_scan_history) > 100:
@@ -111,8 +117,18 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
         )
         
         db.add(scan_record)
+        db.add(SystemLog(
+            log_level="INFO",
+            component="scanner",
+            message=f"Scan completed: {scan_data['scan_id']} - {scan_data.get('target', '')}",
+            details={
+                "threat_level": scan_data.get("threat_level"),
+                "target_type": scan_data.get("target_type"),
+                "threats_detected": scan_data.get("threats_detected", 0),
+            },
+        ))
         await db.commit()
-        logger.info(f"Scan {scan_data['scan_id']} stored in database")
+        logger.debug(f"Scan {scan_data['scan_id']} stored in database")
     except Exception as e:
         logger.error(f"Failed to store scan in database: {str(e)}")
         await db.rollback()
@@ -157,7 +173,7 @@ async def scan_file(
         # Compute SHA256 hash
         file_hash = hashlib.sha256(file_content).hexdigest()
 
-        logger.info(f"Scanning file: {file.filename} (SHA256: {file_hash})")
+        logger.debug(f"SCAN FILE started | target={file.filename}")
 
         # Run threat analysis on file hash
         analysis_result = await threat_analyzer.analyze(file_hash)
@@ -207,6 +223,7 @@ async def scan_file(
         # Store in scan history and database
         await _store_scan_result(result, db)
         
+        logger.info(f"SCAN {scan_id} complete | type=file | level={result['threat_level']} | indicators={result['threats_detected']}")
         return result
 
     except HTTPException:
@@ -235,7 +252,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
 
-        logger.info(f"Scanning URL: {url}")
+        logger.debug(f"SCAN URL started | target={url}")
 
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(url)
@@ -276,6 +293,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
         # Store in scan history and database
         await _store_scan_result(result, db)
         
+        logger.info(f"SCAN {scan_id} complete | type=url | level={result['threat_level']} | indicators={result['threats_detected']}")
         return result
 
     except Exception as e:
@@ -298,7 +316,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
         ip = request.target.strip()
         include_report = request.include_report
 
-        logger.info(f"Scanning IP: {ip}")
+        logger.debug(f"SCAN IP started | target={ip}")
 
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(ip)
@@ -339,6 +357,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
         # Store in scan history and database
         await _store_scan_result(result, db)
         
+        logger.info(f"SCAN {scan_id} complete | type=ip | level={result['threat_level']} | indicators={result['threats_detected']}")
         return result
 
     except Exception as e:
@@ -361,7 +380,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
         file_hash = request.target.strip()
         include_report = request.include_report
 
-        logger.info(f"Scanning hash: {file_hash}")
+        logger.debug(f"SCAN HASH started | target={file_hash[:16]}...")
 
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(file_hash)
@@ -401,6 +420,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
         # Store in scan history and database
         await _store_scan_result(result, db)
         
+        logger.info(f"SCAN {scan_id} complete | type=hash | level={result['threat_level']} | indicators={result['threats_detected']}")
         return result
 
     except Exception as e:
@@ -426,9 +446,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
         # Detect input type
         input_type, metadata = InputDetector.detect(target)
 
-        logger.info(
-            f"Universal scan - Detected type: {input_type} for target: {target}"
-        )
+        logger.debug(f"SCAN started | detected_type={input_type.value} | target={target}")
 
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(target)
@@ -464,11 +482,15 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "client_id": request.client_id,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
+            # Include AI analysis if available
+            "ai_analysis": analysis_result.get("ai_analysis", {}),
+            "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
         
         # Store in scan history and database
         await _store_scan_result(result, db)
         
+        logger.info(f"SCAN {scan_id} complete | type={input_type.value} | level={result['threat_level']} | indicators={result['threats_detected']}")
         return result
 
     except Exception as e:

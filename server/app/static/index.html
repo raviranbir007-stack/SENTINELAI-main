@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SENTINEL-AI - Threat Intelligence Command Center</title>
+    <title>SENTINEL-AI - Threat Detection, Prevention & Response System</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -809,6 +809,12 @@
             height: auto;
         }
 
+        .btn-card.active {
+            border: 1px solid rgba(45, 212, 191, 0.6);
+            background: rgba(45, 212, 191, 0.12);
+            box-shadow: 0 0 20px rgba(45, 212, 191, 0.2);
+        }
+
         .btn-card-content h4 {
             font-size: 0.875rem;
             font-weight: 500;
@@ -1058,12 +1064,13 @@
                 </nav>
             </div>
             <div class="header-actions">
-                <input type="text" class="search-input" placeholder="Search threats, IPs, domains...">
-                <button class="icon-btn">
+                <input type="text" class="search-input" id="dashboardSearchInput" placeholder="Search threats, scans, reports..." title="Search threats, scans, reports">
+                <span id="syncStatusBadge" class="badge badge-safe" style="font-size:10px;">SYNCED</span>
+                <button class="icon-btn" id="notificationBtn" title="Notifications" aria-label="Notifications">
                     🔔
-                    <span class="notification-badge">3</span>
+                    <span class="notification-badge" style="display: none;">0</span>
                 </button>
-                <button class="icon-btn">⚙️</button>
+                <button class="icon-btn" id="settingsBtn" title="Dashboard Settings" aria-label="Dashboard Settings">⚙️</button>
             </div>
         </div>
     </header>
@@ -1080,7 +1087,7 @@
                         <span class="badge">⚡ SYSTEM ACTIVE</span>
                         <h1>
                             Threat Intelligence<br>
-                            <span class="glow-text">Command Center</span>
+                            <span class="glow-text">Detection, Prevention & Response System</span>
                         </h1>
                         <p>Real-time vulnerability detection powered by VirusTotal, Shodan, URLScan, AbuseIPDB, and Hybrid Analysis. AI-generated threat reports at your fingertips.</p>
                         
@@ -1099,7 +1106,7 @@
                                 <div class="stat-label">Threats Found</div>
                             </div>
                             <div class="stat">
-                                <div class="stat-value success font-mono">99.2%</div>
+                                <div class="stat-value success font-mono" id="detectionRate">0%</div>
                                 <div class="stat-label">Detection Rate</div>
                             </div>
                         </div>
@@ -1120,32 +1127,32 @@
                                 </div>
                             </div>
                             <div class="status-item">
-                                <div class="status-item-icon" style="color: var(--primary);">�</div>
+                                <div class="status-item-icon" style="color: var(--primary);">🤖</div>
                                 <div>
                                     <div class="status-item-label">Monitor</div>
-                                    <div class="status-item-value" style="color: var(--primary);">Running</div>
+                                    <div class="status-item-value" style="color: var(--primary);" id="statusMonitorValue">Running</div>
                                 </div>
                             </div>
                             <div class="status-item">
                                 <div class="status-item-icon" style="color: var(--warning);">🔔</div>
                                 <div>
                                     <div class="status-item-label">Alerts</div>
-                                    <div class="status-item-value" style="color: var(--warning);">3 New</div>
+                                    <div class="status-item-value" style="color: var(--warning);" id="statusAlertsValue">0 New</div>
                                 </div>
                             </div>
                             <div class="status-item">
                                 <div class="status-item-icon" style="color: var(--success);">🌐</div>
                                 <div>
                                     <div class="status-item-label">APIs</div>
-                                    <div class="status-item-value" style="color: var(--success);">5/5 Online</div>
+                                    <div class="status-item-value" style="color: var(--success);" id="statusApisValue">0/0 Online</div>
                                 </div>
                             </div>
                         </div>
                         <div class="status-footer">
                             <div class="status-footer-label">LAST SCAN</div>
                             <div class="status-footer-row">
-                                <code>192.168.1.105</code>
-                                <span>2 min ago</span>
+                                <code id="statusLastScanTarget">N/A</code>
+                                <span id="statusLastScanTime">No scans yet</span>
                             </div>
                         </div>
                     </div>
@@ -1163,7 +1170,7 @@
                     </div>
                     <div class="section-header-right">
                         <span class="dot"></span>
-                        <span>5/5 APIs Connected</span>
+                        <span id="apiConnectionSummary">Checking API status...</span>
                     </div>
                 </div>
                 <div class="api-grid" id="apiGrid">
@@ -1180,9 +1187,12 @@
                         <h2>Recent Threats Detected</h2>
                         <p>Live feed from all connected intelligence sources</p>
                     </div>
-                    <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <button id="toggleRecentThreatsBtn" class="btn btn-outline" title="Minimize/Maximize Recent Threats">− Minimize</button>
+                        <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
+                    </div>
                 </div>
-                <div class="card card-glass">
+                <div class="card card-glass" id="recentThreatsCard">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -1204,6 +1214,22 @@
             </div>
         </section>
 
+        <!-- Recent System Logs Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>Recent System Logs</h2>
+                        <p>Live operational events from scanners, APIs, and defenses</p>
+                    </div>
+                    <button id="toggleRecentLogsBtn" class="btn btn-outline" title="Minimize/Maximize Recent Logs">− Minimize</button>
+                </div>
+                <div class="card card-glass" id="recentLogsCard" style="padding: 1rem;">
+                    <div id="logsList"></div>
+                </div>
+            </div>
+        </section>
+
         <!-- AI Report Section -->
         <section class="section">
             <div class="container">
@@ -1219,29 +1245,35 @@
                         <div class="form-group">
                             <label>Report Type</label>
                             <div class="btn-group">
-                                <button class="btn btn-secondary btn-card">
+                                <button class="btn btn-secondary btn-card report-type-btn active" data-report-type="executive_summary" aria-pressed="true">
                                     📄
                                     <div class="btn-card-content">
                                         <h4>Executive Summary</h4>
-                                        <p>High-level overview</p>
+                                        <p>High-level overview for leadership</p>
                                     </div>
                                 </button>
-                                <button class="btn btn-outline btn-card">
+                                <button class="btn btn-outline btn-card report-type-btn" data-report-type="technical_analysis" aria-pressed="false">
                                     🤖
                                     <div class="btn-card-content">
                                         <h4>Technical Analysis</h4>
-                                        <p>Detailed breakdown</p>
+                                        <p>Detailed technical breakdown</p>
                                     </div>
                                 </button>
                             </div>
+                            <small id="reportTypeHint" style="color: var(--muted-foreground); font-size: 0.75rem; display: block; margin-top: 0.5rem;">
+                                Selected: Executive Summary — high-level risk overview.
+                            </small>
                         </div>
                         <div class="form-group">
-                            <label>Generate Report by Time Range</label>
+                            <label>Generate Report by Time Range (All Scans)</label>
                             <div class="time-buttons">
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 24h Report</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 7 Days Report</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 30 Days Report</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 Last 24 Hours (All Scans)</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 Last 7 Days (All Scans)</button>
+                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 Last 30 Days (All Scans)</button>
                             </div>
+                            <small style="color: var(--muted-foreground); font-size: 0.75rem; display: block; margin-top: 0.5rem;">
+                                Each report includes ALL scans performed in the selected time period with detailed threat analysis and forensic reliability tracking.
+                            </small>
                         </div>
                         <button class="btn btn-cyber" style="width: 100%;" id="generateReportBtn">
                             ✨ GENERATE COMPREHENSIVE REPORT (ALL)
@@ -1377,7 +1409,7 @@
                                 <th>Time</th>
                             </tr>
                         </thead>
-                        <tbody id="allThreatsTableBody">
+                        <tbody id="allThreatsPageTableBody">
                             <!-- All threats will be inserted here -->
                         </tbody>
                     </table>
@@ -1486,7 +1518,7 @@
                             <th style="text-align: right;">Action</th>
                         </tr>
                     </thead>
-                    <tbody id="allThreatsTableBody">
+                    <tbody id="allThreatsModalTableBody">
                         <!-- All threats will be inserted here -->
                     </tbody>
                 </table>
@@ -1512,10 +1544,66 @@
         <div class="card card-cyber" style="padding: 0; max-height: 400px; overflow-y: auto;">
             <div style="padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
                 <h3 style="margin: 0; font-size: 1rem;">Notifications</h3>
-                <button onclick="closeNotifications()" class="icon-btn" style="padding: 0.25rem;">✖️</button>
+                <div style="display:flex; gap:0.35rem; align-items:center;">
+                    <button onclick="markAllNotificationsRead()" class="btn btn-outline btn-sm" style="padding: 0.2rem 0.5rem;">Mark all read</button>
+                    <button onclick="clearNotifications()" class="btn btn-outline btn-sm" style="padding: 0.2rem 0.5rem;">Clear</button>
+                    <button onclick="closeNotifications()" class="icon-btn" style="padding: 0.25rem;">✖️</button>
+                </div>
             </div>
             <div id="notificationList">
                 <!-- Notifications will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Dropdown -->
+    <div id="settingsDropdown" style="display: none; position: fixed; top: 4rem; right: 2rem; z-index: 99; width: 420px; max-width: calc(100vw - 4rem);">
+        <div class="card card-cyber" style="padding: 0; max-height: 520px; overflow-y: auto;">
+            <div style="padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 1rem;">Dashboard Settings</h3>
+                <button onclick="closeSettings()" class="icon-btn" style="padding: 0.25rem;">✖️</button>
+            </div>
+            <div style="padding: 1rem; display:grid; gap:0.9rem;">
+                <label style="display:grid; gap:0.35rem;">
+                    <span style="font-size:0.8rem; color:var(--muted-foreground);">API Base URL</span>
+                    <input id="settingsApiBaseUrl" class="search-input" style="max-width:100%;" placeholder="http://localhost:8000" />
+                </label>
+
+                <label style="display:grid; gap:0.35rem;">
+                    <span style="font-size:0.8rem; color:var(--muted-foreground);">Auto-refresh interval</span>
+                    <select id="settingsRefreshInterval" class="search-input" style="max-width:100%;">
+                        <option value="15000">15 seconds</option>
+                        <option value="30000">30 seconds</option>
+                        <option value="60000">60 seconds</option>
+                        <option value="120000">2 minutes</option>
+                        <option value="0">Disabled</option>
+                    </select>
+                </label>
+
+                <label style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="checkbox" id="settingsDesktopNotifications" />
+                    <span style="font-size:0.85rem;">Enable desktop notifications</span>
+                </label>
+
+                <label style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="checkbox" id="settingsThreatOnly" />
+                    <span style="font-size:0.85rem;">Notify only for suspicious/malicious events</span>
+                </label>
+
+                <label style="display:grid; gap:0.35rem;">
+                    <span style="font-size:0.8rem; color:var(--muted-foreground);">Max notifications retained</span>
+                    <select id="settingsMaxNotifications" class="search-input" style="max-width:100%;">
+                        <option value="20">20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </label>
+
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                    <button class="btn btn-cyber btn-sm" onclick="saveSettings()">Save settings</button>
+                    <button class="btn btn-outline btn-sm" onclick="resetSettings()">Reset defaults</button>
+                    <button class="btn btn-outline btn-sm" onclick="testNotification()">Test notification</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1569,18 +1657,47 @@
         }
     </style>
 
-    <!-- Toast Container -->
-    <div id="toastContainer"></div>
-
     <script>
         // =============================================
         // API Configuration - UPDATE THESE FOR YOUR BACKEND
         // =============================================
-        const API_BASE_URL = 'http://localhost:8000';
+        const DASHBOARD_SETTINGS_KEY = 'sentinel_dashboard_settings_v1';
+        const DASHBOARD_NOTIFICATIONS_KEY = 'sentinel_dashboard_notifications_v1';
+        const DASHBOARD_PANEL_STATE_KEY = 'sentinel_dashboard_panel_state_v1';
+        const DASHBOARD_UI_STATE_KEY = 'sentinel_dashboard_ui_state_v1';
+
+        const DEFAULT_DASHBOARD_SETTINGS = {
+            apiBaseUrl: 'http://localhost:8000',
+            refreshIntervalMs: 30000,
+            desktopNotifications: false,
+            threatOnlyNotifications: true,
+            maxNotifications: 50,
+        };
+
+        let dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
+        let API_BASE_URL = DEFAULT_DASHBOARD_SETTINGS.apiBaseUrl;
+        let refreshTimer = null;
+        let notifications = [];
+        let previousThreatCount = null;
+        let previousConfiguredApis = null;
+        let currentSearchQuery = '';
+        let lastScanMeta = { target: 'N/A', time: null };
+        let uiState = {
+            activePage: 'dashboard',
+            selectedReportType: 'executive_summary',
+            searchQuery: '',
+        };
+        let isPageVisible = true;
+        let panelState = {
+            recentThreatsCollapsed: false,
+            recentLogsCollapsed: false,
+        };
 
         const API_ENDPOINTS = {
             // Dashboard
             dashboardStats: '/api/dashboard/stats',
+            dashboardLogs: '/api/logs',
+            dashboardApiStatus: '/api/dashboard/api-status',
             
             // Scans
             scan: '/api/scan',
@@ -1626,10 +1743,35 @@
             { title: "Monthly Security Overview", date: "Dec 20, 2024", threats: 156 }
         ];
 
+        let recentLogs = [];
+        let selectedReportType = 'executive_summary';
+        let lastToastSignature = null;
+        let lastToastTimestamp = 0;
+        let notificationSignals = {};
+
+        const REPORT_TYPE_DETAILS = {
+            executive_summary: {
+                label: 'Executive Summary',
+                description: 'High-level risk overview.'
+            },
+            technical_analysis: {
+                label: 'Technical Analysis',
+                description: 'Technical findings and evidence.'
+            }
+        };
+
         // =============================================
         // Utility Functions
         // =============================================
         function showToast(message, type = 'info') {
+            const signature = `${type}:${message}`;
+            const now = Date.now();
+            if (signature === lastToastSignature && (now - lastToastTimestamp) < 1500) {
+                return;
+            }
+            lastToastSignature = signature;
+            lastToastTimestamp = now;
+
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
@@ -1638,15 +1780,37 @@
             setTimeout(() => toast.remove(), 5000);
         }
 
+        function setSyncStatus(mode = 'ok', text = 'SYNCED') {
+            const badge = document.getElementById('syncStatusBadge');
+            if (!badge) return;
+            badge.textContent = text;
+            badge.classList.remove('badge-safe', 'badge-warning', 'badge-threat');
+            if (mode === 'ok') badge.classList.add('badge-safe');
+            else if (mode === 'warn') badge.classList.add('badge-warning');
+            else badge.classList.add('badge-threat');
+        }
+
         async function apiRequest(endpoint, options = {}) {
+            const controller = new AbortController();
+            const timeoutMs = Number(options.timeoutMs || 15000);
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             try {
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                     headers: { 'Content-Type': 'application/json', ...options.headers },
+                    signal: controller.signal,
                     ...options
                 });
+                clearTimeout(timeoutId);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                setSyncStatus('ok', 'SYNCED');
                 return await response.json();
             } catch (error) {
+                clearTimeout(timeoutId);
+                if (error?.name === 'AbortError') {
+                    setSyncStatus('warn', 'TIMEOUT');
+                    throw new Error('Request timed out');
+                }
+                setSyncStatus('warn', 'DEGRADED');
                 console.error('API Error:', error);
                 throw error;
             }
@@ -1660,6 +1824,71 @@
                 low: 'badge-safe'
             };
             return `<span class="badge ${classes[severity] || 'badge'}">${severity}</span>`;
+        }
+
+        function getThreatTone(levelOrVerdict) {
+            const value = String(levelOrVerdict || 'unknown').toLowerCase();
+            if (['safe', 'clean', 'trusted', 'low'].includes(value)) return 'safe';
+            if (['suspicious', 'warning', 'medium', 'high'].includes(value)) return 'suspicious';
+            if (['malicious', 'critical', 'threat'].includes(value)) return 'malicious';
+            return 'unknown';
+        }
+
+        function normalizeThreatLevel(level, verdict = null) {
+            const tone = getThreatTone(level || verdict);
+            if (tone === 'safe') return 'safe';
+            if (tone === 'suspicious') return 'suspicious';
+            if (tone === 'malicious') return 'malicious';
+            return String(level || verdict || 'unknown').toLowerCase();
+        }
+
+        function getThreatBadgeClass(level, verdict = null) {
+            const tone = getThreatTone(level || verdict);
+            if (tone === 'safe') return 'badge-safe';
+            if (tone === 'suspicious') return 'badge-threat';
+            if (tone === 'malicious') return 'badge-warning';
+            return 'badge';
+        }
+
+        function getThreatColor(level, verdict = null) {
+            const tone = getThreatTone(level || verdict);
+            if (tone === 'safe') return 'var(--success)';
+            if (tone === 'suspicious') return 'var(--destructive)';
+            if (tone === 'malicious') return 'var(--warning)';
+            return 'var(--muted-foreground)';
+        }
+
+        function isThreatResult(scanResult) {
+            return ['suspicious', 'malicious'].includes(
+                normalizeThreatLevel(scanResult?.threat_level, scanResult?.verdict)
+            );
+        }
+
+        function setReportType(type) {
+            if (!REPORT_TYPE_DETAILS[type]) return;
+            selectedReportType = type;
+            uiState.selectedReportType = type;
+            persistUIState();
+
+            const buttons = document.querySelectorAll('.report-type-btn');
+            buttons.forEach(btn => {
+                const isActive = btn.getAttribute('data-report-type') === type;
+                btn.classList.toggle('active', isActive);
+                btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                btn.classList.toggle('btn-secondary', isActive);
+                btn.classList.toggle('btn-outline', !isActive);
+            });
+
+            const hint = document.getElementById('reportTypeHint');
+            if (hint) {
+                const info = REPORT_TYPE_DETAILS[type];
+                hint.textContent = `Selected: ${info.label} — ${info.description}`;
+            }
+
+            const btn = document.getElementById('generateReportBtn');
+            if (btn) {
+                btn.innerHTML = `✨ GENERATE ${REPORT_TYPE_DETAILS[type].label.toUpperCase()} (ALL)`;
+            }
         }
 
         // =============================================
@@ -1698,6 +1927,52 @@
             }).join('');
         }
 
+        async function fetchApiStatus() {
+            try {
+                const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus);
+                let configuredCount = 0;
+                status.forEach(s => {
+                    const item = apis.find(a => a.name === s.name);
+                    if (item) {
+                        item.status = s.key_configured ? 'online' : 'offline';
+                        item.lastCheck = 'Just now';
+                        if (s.key_configured) configuredCount += 1;
+                    }
+                });
+                const summary = document.getElementById('apiConnectionSummary');
+                if (summary) {
+                    summary.textContent = `${configuredCount}/${status.length} APIs Configured`;
+                }
+
+                if (previousConfiguredApis !== null && configuredCount !== previousConfiguredApis) {
+                    const delta = configuredCount - previousConfiguredApis;
+                    if (delta < 0) {
+                        addNotification(
+                            'API Coverage Degraded',
+                            `${Math.abs(delta)} API configuration(s) became unavailable.`,
+                            'warning',
+                            'api_coverage_degraded',
+                            120000
+                        );
+                    } else {
+                        addNotification(
+                            'API Coverage Improved',
+                            `${delta} API configuration(s) restored.`,
+                            'info',
+                            'api_coverage_improved',
+                            120000
+                        );
+                    }
+                }
+                previousConfiguredApis = configuredCount;
+                renderAPIs();
+                updateSystemStatusPanel();
+            } catch (error) {
+                console.log('Using static API status');
+                updateSystemStatusPanel();
+            }
+        }
+
         function renderThreats(tableId = 'threatsTableBody') {
             const tbody = document.getElementById(tableId);
             tbody.innerHTML = threats.map(threat => `
@@ -1728,6 +2003,7 @@
                     </td>
                 </tr>
             `).join('');
+            if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
         }
 
         function renderRecentReports() {
@@ -1795,18 +2071,36 @@
             // Fetch scan detail from API
             apiRequest(API_ENDPOINTS.scanResult(scanId))
                 .then(scan => {
-                    const threatColor = scan.threat_level === 'safe' ? 'var(--success)' : scan.threat_level === 'suspicious' ? 'var(--warning)' : 'var(--destructive)';
+                    const scanAnalysis = scan.analysis || {};
+                    const effectiveForensic = scan.forensic_metadata || scanAnalysis.forensic_metadata || {};
+                    const effectiveThreatIndicators = scan.threat_indicators || scanAnalysis.threat_indicators || [];
+                    const effectiveApiResults = scan.api_results || scanAnalysis.api_results || null;
+                    const normalizedThreatLevel = normalizeThreatLevel(scan.threat_level, scan.verdict);
+                    const threatColor = getThreatColor(normalizedThreatLevel);
+                    const threatBadgeClass = getThreatBadgeClass(normalizedThreatLevel);
+                    const verdictBadgeClass = getThreatBadgeClass(scan.verdict || normalizedThreatLevel);
                     
                     // Build API results section
                     let apiResultsHTML = '';
-                    if (scan.api_results) {
-                        const apis = scan.api_results.apis_called || [];
-                        if (apis.length > 0) {
+                    if (effectiveApiResults) {
+                        const apiStatusEntries = Object.values(effectiveApiResults.api_status || {});
+                        const apis = effectiveApiResults.apis_called || [];
+                        const expectedApis = effectiveApiResults.apis_expected || [];
+                        if (apiStatusEntries.length > 0 || apis.length > 0) {
                             apiResultsHTML = `
                                 <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px;">
-                                    <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔍 APIs Consulted</div>
+                                    <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔍 API Coverage</div>
+                                    ${expectedApis.length > 0 ? `
+                                        <div style="font-size: 0.8rem; color: var(--muted-foreground); margin-bottom: 0.75rem;">
+                                            Relevant APIs: ${expectedApis.length} • Checked: ${apis.length}
+                                        </div>
+                                    ` : ''}
                                     <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
-                                        ${apis.map(api => `<span class="badge" style="background: rgba(45, 212, 191, 0.2);">${api}</span>`).join('')}
+                                        ${(apiStatusEntries.length > 0 ? apiStatusEntries : apis.map(api => ({ name: api, status: 'checked' }))).map(api => {
+                                            const badgeClass = api.status === 'checked' ? 'badge-safe' : api.status === 'not_configured' || api.status === 'rate_limited' ? 'badge-warning' : 'badge-threat';
+                                            const label = api.status === 'checked' ? 'checked' : api.status === 'not_configured' ? 'not configured' : api.status === 'rate_limited' ? 'rate limited' : 'error';
+                                            return `<span class="badge ${badgeClass}" style="text-transform: capitalize;">${api.name} • ${label}</span>`;
+                                        }).join('')}
                                     </div>
                                 </div>
                             `;
@@ -1815,12 +2109,12 @@
                     
                     // Build threat indicators section
                     let threatIndicatorsHTML = '';
-                    if (scan.threat_indicators && scan.threat_indicators.length > 0) {
+                    if (effectiveThreatIndicators && effectiveThreatIndicators.length > 0) {
                         threatIndicatorsHTML = `
                             <div style="margin-bottom: 1.5rem;">
-                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">⚠️ Threat Indicators (${scan.threat_indicators.length})</div>
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">⚠️ Threat Indicators (${effectiveThreatIndicators.length})</div>
                                 <div style="display: grid; gap: 0.5rem; max-height: 300px; overflow-y: auto;">
-                                    ${scan.threat_indicators.map(indicator => {
+                                    ${effectiveThreatIndicators.map(indicator => {
                                         const severityColor = indicator.severity === 'critical' ? 'var(--destructive)' : 
                                                              indicator.severity === 'medium' ? 'var(--warning)' : 'var(--muted-foreground)';
                                         return `
@@ -1837,6 +2131,66 @@
                         `;
                     }
                     
+                    // Build forensic reliability section
+                    let forensicHTML = '';
+                    if (effectiveForensic && effectiveForensic.corroboration_count !== undefined) {
+                        const forensic = effectiveForensic;
+                        const hasThreatIndicators = (forensic.total_indicators || 0) > 0;
+                        const corroborationColor = !hasThreatIndicators
+                            ? 'var(--success)'
+                            : forensic.corroboration_threshold_met
+                                ? 'var(--success)'
+                                : (forensic.corroboration_count || 0) === 1
+                                    ? 'var(--warning)'
+                                    : 'var(--destructive)';
+                        const thresholdLabel = !hasThreatIndicators
+                            ? 'N/A (clean scan)'
+                            : forensic.corroboration_threshold_met
+                                ? '✓ YES'
+                                : (forensic.corroboration_count || 0) === 1
+                                    ? '⚠ Limited'
+                                    : '✗ NO';
+                        
+                        forensicHTML = `
+                            <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px; border-left: 3px solid ${corroborationColor};">
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔬 Forensic Reliability Analysis</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.75rem;">
+                                    <div>
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">Corroboration Count</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: ${corroborationColor};">${forensic.corroboration_count}</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">Threshold Met (≥2)</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: ${corroborationColor};">${thresholdLabel}</div>
+                                    </div>
+                                </div>
+                                ${forensic.unique_sources && forensic.unique_sources.length > 0 ? `
+                                    <div style="margin-bottom: 0.75rem;">
+                                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Evidence Sources (${forensic.unique_sources.length})</div>
+                                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                            ${forensic.unique_sources.map(source => `<span class="badge" style="background: rgba(45, 212, 191, 0.2); font-size: 0.75rem;">${source}</span>`).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; font-size: 0.75rem;">
+                                    <div>
+                                        <span style="color: var(--muted-foreground);">Total Indicators:</span>
+                                        <strong>${forensic.total_indicators || 0}</strong>
+                                    </div>
+                                    <div>
+                                        <span style="color: var(--destructive);">Critical:</span>
+                                        <strong>${forensic.critical_indicators || 0}</strong>
+                                    </div>
+                                    <div>
+                                        <span style="color: var(--warning);">Medium:</span>
+                                        <strong>${forensic.medium_indicators || 0}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    
                     // Build verdict/confidence section
                     let verdictHTML = '';
                     if (scan.verdict || scan.confidence !== undefined) {
@@ -1845,7 +2199,7 @@
                                 ${scan.verdict ? `
                                     <div>
                                         <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Verdict</div>
-                                        <div><span class="badge badge-${scan.verdict === 'clean' ? 'safe' : 'threat'}">${scan.verdict.toUpperCase()}</span></div>
+                                        <div><span class="badge ${verdictBadgeClass}">${normalizeThreatLevel(scan.verdict).toUpperCase()}</span></div>
                                     </div>
                                 ` : ''}
                                 ${scan.confidence !== undefined ? `
@@ -1878,7 +2232,7 @@
                             </div>
                             <div>
                                 <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Threat Level</div>
-                                <div><span class="badge ${scan.threat_level === 'safe' ? 'badge-safe' : scan.threat_level === 'suspicious' ? 'badge-warning' : 'badge-threat'}">${scan.threat_level || 'unknown'}</span></div>
+                                <div><span class="badge ${threatBadgeClass}">${normalizedThreatLevel || 'unknown'}</span></div>
                             </div>
                         </div>
                         ${verdictHTML}
@@ -1899,6 +2253,7 @@
                             </div>
                         ` : ''}
                         ${apiResultsHTML}
+                        ${forensicHTML}
                         ${threatIndicatorsHTML}
                         ${scan.file_size ? `
                             <div style="margin-bottom: 1.5rem;">
@@ -1929,7 +2284,8 @@
             if (!modal) return;
             
             // Render all threats in the modal
-            renderThreats('allThreatsTableBody');
+            renderThreats('allThreatsPageTableBody');
+            renderThreats('allThreatsModalTableBody');
             
             // Show modal
             modal.style.display = 'flex';
@@ -2042,6 +2398,7 @@
                         `).join('')}
                     </div>
                 `;
+                if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
             } catch (error) {
                 container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--destructive);">Failed to load reports: ${error.message}</div>`;
             }
@@ -2050,6 +2407,252 @@
         // =============================================
         // Notification Functions
         // =============================================
+        function relativeTime(date) {
+            const diffSec = Math.max(1, Math.floor((Date.now() - date.getTime()) / 1000));
+            if (diffSec < 60) return `${diffSec}s ago`;
+            const min = Math.floor(diffSec / 60);
+            if (min < 60) return `${min}m ago`;
+            const hr = Math.floor(min / 60);
+            if (hr < 24) return `${hr}h ago`;
+            return `${Math.floor(hr / 24)}d ago`;
+        }
+
+        function updateSystemStatusPanel() {
+            const alertsEl = document.getElementById('statusAlertsValue');
+            const apisEl = document.getElementById('statusApisValue');
+            const monitorEl = document.getElementById('statusMonitorValue');
+            const lastScanTargetEl = document.getElementById('statusLastScanTarget');
+            const lastScanTimeEl = document.getElementById('statusLastScanTime');
+
+            const unreadHighPriority = notifications.filter(n => !n.read && ['warning', 'error'].includes(n.level)).length;
+            const onlineCount = apis.filter(a => a.status === 'online').length;
+
+            if (alertsEl) alertsEl.textContent = `${unreadHighPriority} New`;
+            if (apisEl) apisEl.textContent = `${onlineCount}/${apis.length} Online`;
+            if (monitorEl) monitorEl.textContent = 'Running';
+            if (lastScanTargetEl) lastScanTargetEl.textContent = lastScanMeta.target || 'N/A';
+            if (lastScanTimeEl) lastScanTimeEl.textContent = lastScanMeta.time ? relativeTime(new Date(lastScanMeta.time)) : 'No scans yet';
+        }
+
+        function applyDashboardSearch(query) {
+            const q = String(query || '').trim().toLowerCase();
+            currentSearchQuery = q;
+            uiState.searchQuery = q;
+            persistUIState();
+
+            const filterRows = (tbodyId) => {
+                const tbody = document.getElementById(tbodyId);
+                if (!tbody) return;
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.forEach(row => {
+                    const txt = row.textContent.toLowerCase();
+                    row.style.display = !q || txt.includes(q) ? '' : 'none';
+                });
+            };
+
+            filterRows('threatsTableBody');
+            filterRows('allThreatsPageTableBody');
+            filterRows('allThreatsModalTableBody');
+            filterRows('scanHistoryBody');
+
+            const allReportsPage = document.getElementById('allReportsPage');
+            if (allReportsPage) {
+                Array.from(allReportsPage.querySelectorAll('.report-item')).forEach(item => {
+                    const txt = item.textContent.toLowerCase();
+                    item.style.display = !q || txt.includes(q) ? '' : 'none';
+                });
+            }
+        }
+
+        function loadSettings() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_SETTINGS_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS, ...parsed };
+            } catch (_) {
+                dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
+            }
+            API_BASE_URL = String(dashboardSettings.apiBaseUrl || DEFAULT_DASHBOARD_SETTINGS.apiBaseUrl).replace(/\/$/, '');
+        }
+
+        function persistSettings() {
+            localStorage.setItem(DASHBOARD_SETTINGS_KEY, JSON.stringify(dashboardSettings));
+        }
+
+        function loadNotifications() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_NOTIFICATIONS_KEY);
+                notifications = raw ? JSON.parse(raw) : [];
+            } catch (_) {
+                notifications = [];
+            }
+        }
+
+        function loadPanelState() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_PANEL_STATE_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                panelState = { ...panelState, ...parsed };
+            } catch (_) {
+                // keep defaults
+            }
+        }
+
+        function loadUIState() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_UI_STATE_KEY);
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                uiState = { ...uiState, ...parsed };
+            } catch (_) {
+                // defaults
+            }
+        }
+
+        function persistUIState() {
+            localStorage.setItem(DASHBOARD_UI_STATE_KEY, JSON.stringify(uiState));
+        }
+
+        function switchPage(page) {
+            if (!page) return;
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+            document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === page));
+            uiState.activePage = page;
+            persistUIState();
+
+            if (page === 'scans') {
+                fetchScanHistory();
+            } else if (page === 'reports') {
+                renderAllReportsPage();
+            }
+        }
+
+        function persistPanelState() {
+            localStorage.setItem(DASHBOARD_PANEL_STATE_KEY, JSON.stringify(panelState));
+        }
+
+        function applyPanelState() {
+            const threatsCard = document.getElementById('recentThreatsCard');
+            const logsCard = document.getElementById('recentLogsCard');
+            const threatsBtn = document.getElementById('toggleRecentThreatsBtn');
+            const logsBtn = document.getElementById('toggleRecentLogsBtn');
+
+            if (threatsCard && threatsBtn) {
+                threatsCard.style.display = panelState.recentThreatsCollapsed ? 'none' : 'block';
+                threatsBtn.textContent = panelState.recentThreatsCollapsed ? '+ Maximize' : '− Minimize';
+            }
+
+            if (logsCard && logsBtn) {
+                logsCard.style.display = panelState.recentLogsCollapsed ? 'none' : 'block';
+                logsBtn.textContent = panelState.recentLogsCollapsed ? '+ Maximize' : '− Minimize';
+            }
+        }
+
+        function toggleRecentThreatsPanel() {
+            panelState.recentThreatsCollapsed = !panelState.recentThreatsCollapsed;
+            persistPanelState();
+            applyPanelState();
+        }
+
+        function toggleRecentLogsPanel() {
+            panelState.recentLogsCollapsed = !panelState.recentLogsCollapsed;
+            persistPanelState();
+            applyPanelState();
+        }
+
+        function persistNotifications() {
+            localStorage.setItem(DASHBOARD_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+        }
+
+        function setupRefreshScheduler() {
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+            const interval = Number(dashboardSettings.refreshIntervalMs || 0);
+            if (interval > 0 && isPageVisible) {
+                refreshTimer = setInterval(() => {
+                    fetchDashboardStats();
+                    fetchThreats();
+                    fetchLogs();
+                    fetchApiStatus();
+                }, interval);
+            }
+        }
+
+        function toggleSettings() {
+            const dropdown = document.getElementById('settingsDropdown');
+            const isVisible = dropdown.style.display === 'flex';
+            if (isVisible) {
+                dropdown.style.display = 'none';
+                return;
+            }
+
+            closeNotifications();
+            document.getElementById('settingsApiBaseUrl').value = dashboardSettings.apiBaseUrl;
+            document.getElementById('settingsRefreshInterval').value = String(dashboardSettings.refreshIntervalMs);
+            document.getElementById('settingsDesktopNotifications').checked = !!dashboardSettings.desktopNotifications;
+            document.getElementById('settingsThreatOnly').checked = !!dashboardSettings.threatOnlyNotifications;
+            document.getElementById('settingsMaxNotifications').value = String(dashboardSettings.maxNotifications);
+            dropdown.style.display = 'flex';
+        }
+
+        function closeSettings() {
+            const dropdown = document.getElementById('settingsDropdown');
+            if (dropdown) dropdown.style.display = 'none';
+        }
+
+        function saveSettings() {
+            dashboardSettings.apiBaseUrl = String(document.getElementById('settingsApiBaseUrl').value || DEFAULT_DASHBOARD_SETTINGS.apiBaseUrl).trim().replace(/\/$/, '');
+            dashboardSettings.refreshIntervalMs = Number(document.getElementById('settingsRefreshInterval').value || 30000);
+            dashboardSettings.desktopNotifications = document.getElementById('settingsDesktopNotifications').checked;
+            dashboardSettings.threatOnlyNotifications = document.getElementById('settingsThreatOnly').checked;
+            dashboardSettings.maxNotifications = Number(document.getElementById('settingsMaxNotifications').value || 50);
+
+            API_BASE_URL = dashboardSettings.apiBaseUrl;
+            persistSettings();
+            setupRefreshScheduler();
+
+            if (dashboardSettings.desktopNotifications && 'Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission().catch(() => {});
+            }
+
+            closeSettings();
+            showToast('Settings saved', 'success');
+            addNotification('Settings Updated', `Dashboard settings saved (${API_BASE_URL})`, 'info');
+        }
+
+        function resetSettings() {
+            dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
+            API_BASE_URL = dashboardSettings.apiBaseUrl;
+            persistSettings();
+            setupRefreshScheduler();
+            closeSettings();
+            showToast('Settings reset to defaults', 'info');
+        }
+
+        function maybeDesktopNotify(title, message, level = 'info') {
+            if (!dashboardSettings.desktopNotifications) return;
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            if (dashboardSettings.threatOnlyNotifications && !['warning', 'error'].includes(level)) return;
+            try {
+                new Notification(title, { body: message, silent: true });
+            } catch (_) {
+                // no-op
+            }
+        }
+
+        function shouldNotify(key, cooldownMs = 60000) {
+            if (!key) return true;
+            const now = Date.now();
+            const last = notificationSignals[key] || 0;
+            if (now - last < cooldownMs) return false;
+            notificationSignals[key] = now;
+            return true;
+        }
+
         function toggleNotifications() {
             const dropdown = document.getElementById('notificationDropdown');
             const isVisible = dropdown.style.display === 'flex';
@@ -2057,6 +2660,7 @@
             if (isVisible) {
                 dropdown.style.display = 'none';
             } else {
+                closeSettings();
                 dropdown.style.display = 'flex';
                 renderNotifications();
             }
@@ -2068,59 +2672,95 @@
 
         function renderNotifications() {
             const list = document.getElementById('notificationList');
+            updateNotificationBadge();
+            updateSystemStatusPanel();
             
             if (notifications.length === 0) {
                 list.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--muted-foreground);">No notifications</div>';
                 return;
             }
+
+            notifications.forEach(notif => {
+                if (notif.createdAt) {
+                    notif.time = relativeTime(new Date(notif.createdAt));
+                }
+            });
             
             list.innerHTML = notifications.map(notif => `
                 <div class="notification-item ${notif.read ? '' : 'notification-unread'}" onclick="markNotificationRead(${notif.id})">
-                    <div style="font-weight: 500; margin-bottom: 0.25rem;">${notif.title}</div>
+                    <div style="display:flex; justify-content:space-between; gap:0.5rem; align-items:center; margin-bottom:0.25rem;">
+                        <div style="font-weight: 500;">${notif.title}</div>
+                        <span class="badge ${notif.level === 'error' ? 'badge-threat' : notif.level === 'warning' ? 'badge-warning' : 'badge-safe'}" style="font-size:10px;">${(notif.level || 'info').toUpperCase()}</span>
+                    </div>
                     <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">${notif.message}</div>
                     <div style="font-size: 0.75rem; color: var(--muted-foreground);">${notif.time}</div>
                 </div>
             `).join('');
             
-            // Update badge count
+            updateNotificationBadge();
+        }
+
+        function updateNotificationBadge() {
             const unreadCount = notifications.filter(n => !n.read).length;
             const badge = document.querySelector('.notification-badge');
-            if (badge) {
-                badge.textContent = unreadCount;
-                badge.style.display = unreadCount > 0 ? 'flex' : 'none';
-            }
+            if (!badge) return;
+            badge.textContent = unreadCount;
+            badge.style.display = unreadCount > 0 ? 'flex' : 'none';
+            updateSystemStatusPanel();
         }
 
         function markNotificationRead(notifId) {
             const notif = notifications.find(n => n.id === notifId);
             if (notif) {
                 notif.read = true;
+                persistNotifications();
                 renderNotifications();
                 showToast(notif.title, 'info');
             }
         }
 
-        function addNotification(title, message) {
+        function markAllNotificationsRead() {
+            notifications.forEach(n => n.read = true);
+            persistNotifications();
+            renderNotifications();
+            showToast('All notifications marked as read', 'info');
+        }
+
+        function clearNotifications() {
+            notifications = [];
+            persistNotifications();
+            renderNotifications();
+            showToast('Notifications cleared', 'info');
+        }
+
+        function addNotification(title, message, level = 'info', dedupeKey = null, cooldownMs = 60000) {
+            if (dedupeKey && !shouldNotify(dedupeKey, cooldownMs)) return;
+
             notifications.unshift({
                 id: Date.now(),
                 title,
                 message,
-                time: 'Just now',
-                read: false
+                level,
+                time: relativeTime(new Date()),
+                createdAt: new Date().toISOString(),
+                read: false,
             });
             
-            // Update badge
-            const unreadCount = notifications.filter(n => !n.read).length;
-            const badge = document.querySelector('.notification-badge');
-            if (badge) {
-                badge.textContent = unreadCount;
-                badge.style.display = 'flex';
-            }
+            updateNotificationBadge();
             
-            // Keep only last 20 notifications
-            if (notifications.length > 20) {
-                notifications.length = 20;
+            // Keep only configured notification limit
+            if (notifications.length > dashboardSettings.maxNotifications) {
+                notifications.length = dashboardSettings.maxNotifications;
             }
+
+            persistNotifications();
+            maybeDesktopNotify(title, message, level);
+            updateSystemStatusPanel();
+        }
+
+        function testNotification() {
+            addNotification('Notification Test', 'Dashboard notifications are configured and active.', 'info');
+            showToast('Test notification sent', 'success');
         }
 
         // =============================================
@@ -2153,17 +2793,24 @@
                     body: JSON.stringify({ type, target })
                 });
 
-                const isThreat = result.is_threat || result.threat_level !== 'safe';
+                const isThreat = isThreatResult(result);
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
-                addNotification('Scan Completed', `${target} - ${isThreat ? 'Threat detected' : 'Safe'}`);
+                lastScanMeta = { target, time: new Date().toISOString() };
+                updateSystemStatusPanel();
+                if (isThreat) {
+                    addNotification('Threat Detected', `${target} - ${normalizeThreatLevel(result.threat_level, result.verdict)}`, 'warning');
+                } else if (!dashboardSettings.threatOnlyNotifications) {
+                    addNotification('Scan Completed', `${target} - SAFE`, 'info');
+                }
                 input.value = '';
                 
                 // Refresh data
                 fetchDashboardStats();
                 fetchThreats();
+                fetchLogs();
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
-                addNotification('Scan Failed', error.message);
+                addNotification('Scan Failed', error.message, 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '⚡ SCAN';
@@ -2173,10 +2820,43 @@
         async function fetchDashboardStats() {
             try {
                 const stats = await apiRequest(API_ENDPOINTS.dashboardStats);
-                document.getElementById('scansToday').textContent = stats.total_scans || '12.4K';
-                document.getElementById('threatsFound').textContent = stats.active_threats || '47';
+                const totalScans = Number(stats.total_scans || 0);
+                document.getElementById('scansToday').textContent = totalScans;
+                const activeThreats = Number(stats.active_threats || stats.critical_threats || 0);
+                document.getElementById('threatsFound').textContent = activeThreats;
+                const detectionRate = totalScans > 0 ? Math.min(100, (activeThreats / totalScans) * 100) : 0;
+                const detectionRateEl = document.getElementById('detectionRate');
+                if (detectionRateEl) detectionRateEl.textContent = `${detectionRate.toFixed(1)}%`;
+
+                if (previousThreatCount !== null && activeThreats > previousThreatCount) {
+                    const increase = activeThreats - previousThreatCount;
+                    addNotification(
+                        'Threat Count Increased',
+                        `${increase} new active threat(s) detected on dashboard.`,
+                        'warning',
+                        'threat_count_increase',
+                        45000
+                    );
+                }
+                previousThreatCount = activeThreats;
+                setSyncStatus('ok', 'LIVE');
+                updateSystemStatusPanel();
             } catch (error) {
                 console.log('Using static dashboard stats');
+                setSyncStatus('warn', 'STATIC');
+                updateSystemStatusPanel();
+            }
+        }
+
+        async function fetchLogs() {
+            try {
+                const data = await apiRequest(API_ENDPOINTS.dashboardLogs);
+                recentLogs = data || [];
+                renderLogs(recentLogs);
+            } catch (error) {
+                console.log('Using static logs data');
+                renderLogs([]);
+                setSyncStatus('warn', 'STATIC');
             }
         }
 
@@ -2191,16 +2871,80 @@
                 console.log('Using static threats data');
             }
             renderThreats();
-            renderThreats('allThreatsTableBody');
+            renderThreats('allThreatsPageTableBody');
+            renderThreats('allThreatsModalTableBody');
+            updateSystemStatusPanel();
+        }
+
+        function renderLogs(logs) {
+            const list = document.getElementById('logsList');
+            if (!list) return;
+
+            if (!logs || logs.length === 0) {
+                list.innerHTML = '<div style="padding: 1rem; color: var(--muted-foreground);">No recent logs</div>';
+                return;
+            }
+
+            list.innerHTML = logs.map(log => {
+                const level = (log.level || 'INFO').toLowerCase();
+                const badge = level === 'error' || level === 'critical' ? 'badge-threat' : level === 'warning' ? 'badge-warning' : 'badge-safe';
+                return `
+                    <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:0.75rem 0;border-bottom:1px solid var(--border);">
+                        <div style="flex:1;">
+                            <div style="font-weight:600;">${log.component || 'system'} - ${log.message || ''}</div>
+                            <div style="font-size:0.8rem;color:var(--muted-foreground);">${log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}</div>
+                        </div>
+                        <span class="badge ${badge}" style="height:fit-content;">${level.toUpperCase()}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function initLogStream() {
+            try {
+                if (!('EventSource' in window)) {
+                    return;
+                }
+                const source = new EventSource(`${API_BASE_URL}/api/v1/dashboard/logs/stream`);
+                source.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        recentLogs.unshift(data);
+                        if (recentLogs.length > 100) recentLogs.length = 100;
+                        renderLogs(recentLogs);
+                    } catch (e) {
+                        // ignore parse errors
+                    }
+                };
+                source.onerror = () => {
+                    source.close();
+                };
+            } catch (e) {
+                // ignore
+            }
         }
 
         async function generateReportForInterval(interval) {
-            const btnText = interval === '24h' ? '24h' : interval === '7d' ? '7 Days' : '30 Days';
-            showToast(`Generating ${btnText} report...`, 'info');
+            const btnText = interval === '24h' ? 'Last 24 Hours' : interval === '7d' ? 'Last 7 Days' : 'Last 30 Days';
+            const reportLabel = REPORT_TYPE_DETAILS[selectedReportType]?.label || 'Report';
+            showToast(`${reportLabel} • ${btnText}`, 'info');
             
             try {
-                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/interval/${interval}?format=pdf`, {
-                    method: 'GET'
+                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/generate-comprehensive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        intervals: [interval],
+                        include_files: true,
+                        include_urls: true,
+                        include_ips: true,
+                        include_domains: true,
+                        include_hashes: true,
+                        include_attacks: true,
+                        include_defense_actions: true,
+                        format: 'pdf',
+                        report_type: selectedReportType
+                    })
                 });
                 
                 if (!res.ok) {
@@ -2219,13 +2963,13 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
+                a.download = `sentinelai_${selectedReportType}_${interval}_${Date.now()}.pdf`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 URL.revokeObjectURL(url);
                 
-                showToast(`${btnText} report downloaded successfully!`, 'success');
+                showToast(`${reportLabel} ready`, 'success');
                 
                 // Refresh reports list (ignore errors silently)
                 try {
@@ -2246,8 +2990,9 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
 
             try {
+                const reportLabel = REPORT_TYPE_DETAILS[selectedReportType]?.label || 'Report';
                 // Generate comprehensive report for all intervals
-                showToast('Generating comprehensive report for all intervals...', 'info');
+                showToast(`${reportLabel} • All intervals`, 'info');
                 const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/generate-comprehensive`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2260,7 +3005,8 @@
                         include_hashes: true,
                         include_attacks: true,
                         include_defense_actions: true,
-                        format: 'pdf'
+                        format: 'pdf',
+                        report_type: selectedReportType
                     })
                 });
 
@@ -2281,13 +3027,12 @@
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `sentinel_report_${Date.now()}.pdf`;
+                    a.download = `sentinel_${selectedReportType}_${Date.now()}.pdf`;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(url);
-                    showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
-                    addNotification('Report Generated', 'Comprehensive security report (24h/7d/30d) has been downloaded');
+                    showToast(`${reportLabel} ready`, 'success');
                     
                     // Refresh reports list (ignore errors)
                     try {
@@ -2301,7 +3046,6 @@
                     try {
                         const data = await res.json();
                         showToast('Report generated successfully!', 'success');
-                        addNotification('Report Generated', 'New security report is ready');
                         try {
                             await fetchAllReports();
                             renderRecentReports();
@@ -2314,11 +3058,10 @@
                 }
             } catch (error) {
                 console.error('Comprehensive report generation error:', error);
-                showToast('Failed to generate comprehensive report: ' + error.message, 'error');
-                addNotification('Report Generation Failed', error.message);
+                showToast(`Report failed: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '✨ GENERATE COMPREHENSIVE REPORT (ALL)';
+                btn.innerHTML = `✨ GENERATE ${REPORT_TYPE_DETAILS[selectedReportType]?.label?.toUpperCase() || 'REPORT'} (ALL)`;
             }
         }
 
@@ -2328,14 +3071,61 @@
             btn.innerHTML = '<span class="spinner"></span> Generating...';
             
             try {
+                // First, fetch the full scan details
+                const scanDetails = await apiRequest(API_ENDPOINTS.scanResult(scanId));
+                
+                // Prepare comprehensive report data including forensic reliability features
+                const scanAnalysis = scanDetails.analysis || {};
+                const forensicData = scanDetails.forensic_metadata || scanAnalysis.forensic_metadata || {};
+                let forensicSummary = '';
+                
+                if (forensicData.corroboration_count !== undefined) {
+                    forensicSummary = `\n\n=== FORENSIC RELIABILITY ANALYSIS ===\n` +
+                                    `Evidence Sources: ${forensicData.evidence_sources ? forensicData.evidence_sources.join(', ') : 'N/A'}\n` +
+                                    `Corroboration Count: ${forensicData.corroboration_count}\n` +
+                                    `Corroboration Threshold Met: ${forensicData.corroboration_threshold_met ? 'YES' : 'NO'}\n` +
+                                    `Unique Sources: ${forensicData.unique_sources ? forensicData.unique_sources.join(', ') : 'N/A'}\n` +
+                                    `Total Indicators: ${forensicData.total_indicators || 0}\n` +
+                                    `Critical Indicators: ${forensicData.critical_indicators || 0}\n` +
+                                    `Medium Indicators: ${forensicData.medium_indicators || 0}\n` +
+                                    `Low Indicators: ${forensicData.low_indicators || 0}`;
+                    
+                    if (forensicData.source_details && forensicData.source_details.length > 0) {
+                        forensicSummary += `\n\nDetailed Evidence:\n`;
+                        forensicData.source_details.forEach((detail, idx) => {
+                            forensicSummary += `\n[${idx + 1}] Source: ${detail.source}\n` +
+                                             `    Severity: ${detail.severity}\n` +
+                                             `    Indicator: ${detail.indicator}\n` +
+                                             (detail.detection_count ? `    Detection Count: ${detail.detection_count}\n` : '') +
+                                             (detail.score ? `    Score: ${detail.score}\n` : '');
+                        });
+                    }
+
+                }
+                
+                const reportData = {
+                    target: scanDetails.target,
+                    risk_score: scanDetails.confidence || 0.0,
+                    threats: scanDetails.threat_indicators
+                        ? scanDetails.threat_indicators.map(t => t.indicator)
+                        : (scanAnalysis.threat_indicators || []).map(t => t.indicator),
+                    scan_summary: `Scan Type: ${scanDetails.type || 'unknown'}\n` +
+                                `Threat Level: ${scanDetails.threat_level || 'unknown'}\n` +
+                                `Status: ${scanDetails.status || 'complete'}\n` +
+                                `Timestamp: ${new Date(scanDetails.timestamp).toLocaleString()}\n` +
+                                `Scan ID: ${scanDetails.scan_id}\n` +
+                                (scanDetails.verdict ? `Verdict: ${scanDetails.verdict}\n` : '') +
+                                (scanDetails.confidence !== undefined ? `Confidence: ${(scanDetails.confidence * 100).toFixed(0)}%\n` : '') +
+                                (scanDetails.threats_detected !== undefined ? `Threats Detected: ${scanDetails.threats_detected}\n` : '') +
+                                ((scanDetails.api_results || scanAnalysis.api_results) && (scanDetails.api_results || scanAnalysis.api_results).apis_called ? `\nAPIs Consulted: ${(scanDetails.api_results || scanAnalysis.api_results).apis_called.join(', ')}\n` : '') +
+                                (scanDetails.summary ? `\nSummary: ${scanDetails.summary}` : '') +
+                                forensicSummary
+                };
+
                 const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        type: 'scan_analysis', 
-                        timeRange: '24h',
-                        target: target
-                    })
+                    body: JSON.stringify(reportData)
                 });
 
                 if (!res.ok) {
@@ -2353,7 +3143,6 @@
                 URL.revokeObjectURL(url);
                 
                 showToast('Report generated and downloaded!', 'success');
-                addNotification('Scan Report Ready', `Report for scan ${scanId} downloaded`);
                 
                 await fetchAllReports();
                 renderRecentReports();
@@ -2426,17 +3215,24 @@
                     body: JSON.stringify({ type, target })
                 });
 
-                const isThreat = result.threat_level !== 'safe';
+                const isThreat = isThreatResult(result);
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
-                addNotification('New Scan Completed', `${target} - ${result.threat_level}`);
+                lastScanMeta = { target, time: new Date().toISOString() };
+                updateSystemStatusPanel();
+                if (isThreat) {
+                    addNotification('Threat Detected', `${target} - ${normalizeThreatLevel(result.threat_level, result.verdict)}`, 'warning');
+                } else if (!dashboardSettings.threatOnlyNotifications) {
+                    addNotification('Scan Completed', `${target} - SAFE`, 'info');
+                }
                 input.value = '';
                 statusDiv.textContent = `Scan ID: ${result.scan_id} - ${result.status}`;
                 
                 // Refresh scan history
                 await fetchScanHistory();
+                fetchLogs();
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
-                addNotification('Scan Failed', error.message);
+                addNotification('Scan Failed', error.message, 'error');
                 statusDiv.textContent = 'Scan failed';
             } finally {
                 btn.disabled = false;
@@ -2478,15 +3274,25 @@
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const result = await response.json();
-                
-                showToast(`File scan complete: ${result.threat_level === 'safe' ? '✅ File is safe' : '⚠️ Threat detected!'}`, result.threat_level !== 'safe' ? 'error' : 'success');
+                const isThreat = isThreatResult(result);
+
+                showToast(`File scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ File is safe'}`, isThreat ? 'error' : 'success');
+                lastScanMeta = { target: file.name, time: new Date().toISOString() };
+                updateSystemStatusPanel();
+                if (isThreat) {
+                    addNotification('Threat Detected', `${file.name} - ${normalizeThreatLevel(result.threat_level, result.verdict)}`, 'warning');
+                } else if (!dashboardSettings.threatOnlyNotifications) {
+                    addNotification('File Scan Completed', `${file.name} - SAFE`, 'info');
+                }
                 fileInput.value = '';
                 statusDiv.textContent = `Scan ID: ${result.scan_id} - ${result.status}`;
                 
                 // Refresh scan history
                 await fetchScanHistory();
+                fetchLogs();
             } catch (error) {
                 showToast('File upload failed: ' + error.message, 'error');
+                addNotification('File Scan Failed', error.message, 'error');
                 statusDiv.textContent = 'File upload failed';
             } finally {
                 btn.disabled = false;
@@ -2499,29 +3305,38 @@
                 const scans = await apiRequest(API_ENDPOINTS.scans);
                 renderScanHistory(scans);
             } catch (error) {
-                console.log('Using placeholder scan history');
+                showToast('Could not load scan history: ' + error.message, 'error');
                 renderScanHistory([]);
             }
         }
 
         function renderScanHistory(scans) {
             const tbody = document.getElementById('scanHistoryBody');
+            
             if (!scans || scans.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No scans yet. Start a new scan to see results here.</td></tr>';
+                updateSystemStatusPanel();
                 return;
             }
 
+            const mostRecent = scans[0];
+            if (mostRecent) {
+                const target = mostRecent.target || mostRecent.target_name || mostRecent.url || mostRecent.ip || mostRecent.hash || 'N/A';
+                lastScanMeta = { target, time: mostRecent.timestamp || new Date().toISOString() };
+            }
+
             tbody.innerHTML = scans.map(scan => {
-                const threatLevel = scan.threat_level || 'unknown';
-                const threatColor = threatLevel === 'safe' ? 'var(--success)' : threatLevel === 'suspicious' ? 'var(--warning)' : 'var(--destructive)';
-                const resultBadge = threatLevel === 'safe' ? 'badge-safe' : threatLevel === 'suspicious' ? 'badge-warning' : 'badge-threat';
+                const target = scan.target || scan.target_name || scan.url || scan.ip || scan.hash || 'unknown';
+                const threatLevel = normalizeThreatLevel(scan.threat_level, scan.verdict);
+                const threatColor = getThreatColor(threatLevel);
+                const resultBadge = getThreatBadgeClass(threatLevel);
                 
                 return `
                     <tr>
                         <td><code style="color: var(--primary);">${scan.scan_id}</code></td>
-                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">${scan.target}</td>
+                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">${target}</td>
                         <td><span class="badge" style="font-size: 10px; text-transform: capitalize;">${scan.type || 'unknown'}</span></td>
-                        <td style="color: ${threatColor === 'var(--success)' ? 'var(--success)' : threatColor === 'var(--warning)' ? 'var(--warning)' : 'var(--destructive)'};">✓ ${scan.status || 'unknown'}</td>
+                        <td style="color: ${threatColor};">✓ ${scan.status || 'unknown'}</td>
                         <td><span class="badge ${resultBadge}" style="font-size: 10px; text-transform: capitalize;">${threatLevel}</span></td>
                         <td style="text-align: right;">
                             <button class="btn btn-ghost btn-sm tooltip" 
@@ -2534,6 +3349,9 @@
                     </tr>
                 `;
             }).join('');
+
+            updateSystemStatusPanel();
+            if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
         }
 
         // =============================================
@@ -2541,17 +3359,7 @@
         // =============================================
         document.querySelectorAll('.nav-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                btn.classList.add('active');
-                document.getElementById(btn.dataset.page).classList.add('active');
-                
-                // Load page-specific data
-                if (btn.dataset.page === 'scans') {
-                    fetchScanHistory();
-                } else if (btn.dataset.page === 'reports') {
-                    renderAllReportsPage();
-                }
+                switchPage(btn.dataset.page);
             });
         });
 
@@ -2564,13 +3372,34 @@
         });
         document.getElementById('generateReportBtn').addEventListener('click', generateReport);
 
-        // Notification icon handler
-        document.querySelectorAll('.icon-btn').forEach(btn => {
-            const text = btn.textContent.trim();
-            if (text === '🔔') {
-                btn.addEventListener('click', toggleNotifications);
+        const dashboardSearchInput = document.getElementById('dashboardSearchInput');
+        if (dashboardSearchInput) {
+            let searchDebounce = null;
+            dashboardSearchInput.addEventListener('input', (e) => {
+                clearTimeout(searchDebounce);
+                const value = e.target.value;
+                searchDebounce = setTimeout(() => applyDashboardSearch(value), 120);
+            });
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+                e.preventDefault();
+                dashboardSearchInput?.focus();
+            }
+            if (e.key === 'Escape' && document.activeElement === dashboardSearchInput) {
+                dashboardSearchInput.value = '';
+                applyDashboardSearch('');
+                dashboardSearchInput.blur();
             }
         });
+
+        // Header icon handlers
+        const notificationBtn = document.getElementById('notificationBtn');
+        if (notificationBtn) notificationBtn.addEventListener('click', toggleNotifications);
+
+        const settingsBtn = document.getElementById('settingsBtn');
+        if (settingsBtn) settingsBtn.addEventListener('click', toggleSettings);
 
         // View all reports button
         const viewAllReportsBtn = document.getElementById('viewAllReportsBtn');
@@ -2582,6 +3411,16 @@
         const viewAllThreatsBtn = document.getElementById('viewAllThreatsBtn');
         if (viewAllThreatsBtn) {
             viewAllThreatsBtn.addEventListener('click', viewAllThreats);
+        }
+
+        const toggleRecentThreatsBtn = document.getElementById('toggleRecentThreatsBtn');
+        if (toggleRecentThreatsBtn) {
+            toggleRecentThreatsBtn.addEventListener('click', toggleRecentThreatsPanel);
+        }
+
+        const toggleRecentLogsBtn = document.getElementById('toggleRecentLogsBtn');
+        if (toggleRecentLogsBtn) {
+            toggleRecentLogsBtn.addEventListener('click', toggleRecentLogsPanel);
         }
 
         // Scans page handlers
@@ -2632,10 +3471,25 @@
 
         // Close notification dropdown when clicking outside
         document.addEventListener('click', (e) => {
-            const dropdown = document.getElementById('notificationDropdown');
-            const notifBtn = e.target.closest('.icon-btn');
-            if (dropdown.style.display === 'flex' && !dropdown.contains(e.target) && (!notifBtn || notifBtn.textContent.trim() !== '🔔')) {
+            const notificationDropdown = document.getElementById('notificationDropdown');
+            const settingsDropdown = document.getElementById('settingsDropdown');
+            const notifBtnClicked = e.target.closest('#notificationBtn');
+            const settingsBtnClicked = e.target.closest('#settingsBtn');
+
+            if (
+                notificationDropdown.style.display === 'flex' &&
+                !notificationDropdown.contains(e.target) &&
+                !notifBtnClicked
+            ) {
                 closeNotifications();
+            }
+
+            if (
+                settingsDropdown.style.display === 'flex' &&
+                !settingsDropdown.contains(e.target) &&
+                !settingsBtnClicked
+            ) {
+                closeSettings();
             }
         });
 
@@ -2643,17 +3497,53 @@
         // Initialize
         // =============================================
         document.addEventListener('DOMContentLoaded', async () => {
+            loadSettings();
+            loadNotifications();
+            loadPanelState();
+            loadUIState();
+
             document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
+
+            document.querySelectorAll('.report-type-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const type = btn.getAttribute('data-report-type');
+                    setReportType(type);
+                });
+            });
+            selectedReportType = uiState.selectedReportType || selectedReportType;
+            setReportType(selectedReportType);
+
+            const dashboardSearchInput = document.getElementById('dashboardSearchInput');
+            if (dashboardSearchInput && uiState.searchQuery) {
+                dashboardSearchInput.value = uiState.searchQuery;
+                currentSearchQuery = uiState.searchQuery;
+            }
             
             renderAPIs();
             renderThreats();
-            renderThreats('allThreatsTableBody');
+            renderThreats('allThreatsPageTableBody');
+            renderThreats('allThreatsModalTableBody');
             renderNotifications();
+            updateSystemStatusPanel();
+            applyPanelState();
             
             // Fetch live data
             fetchDashboardStats();
             fetchThreats();
             fetchScanHistory();
+            fetchLogs();
+            fetchApiStatus();
+            initLogStream();
+            setupRefreshScheduler();
+
+            // Keep relative timestamps fresh in notifications/status panel
+            setInterval(() => {
+                if (document.getElementById('notificationDropdown').style.display === 'flex') {
+                    renderNotifications();
+                } else {
+                    updateSystemStatusPanel();
+                }
+            }, 30000);
             
             // Fetch and render reports
             try {
@@ -2662,6 +3552,23 @@
             } catch (error) {
                 console.error('Failed to fetch reports:', error);
             }
+
+            if (currentSearchQuery) {
+                applyDashboardSearch(currentSearchQuery);
+            }
+
+            switchPage(uiState.activePage || 'dashboard');
+
+            document.addEventListener('visibilitychange', () => {
+                isPageVisible = !document.hidden;
+                setupRefreshScheduler();
+                if (isPageVisible) {
+                    fetchDashboardStats();
+                    fetchThreats();
+                    fetchLogs();
+                    fetchApiStatus();
+                }
+            });
         });
     </script>
 </body>

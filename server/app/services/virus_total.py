@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from ..config import settings
+from .cache import get_cached, rate_limit_allow, set_cached
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,18 @@ class VirusTotalService:
         Returns:
             Dict with VirusTotal results
         """
+        logger.debug(f"VirusTotal.scan_file called for {file_hash}")
         if not settings.VIRUSTOTAL_API_KEY:
             logger.warning("VirusTotal API key not configured")
             return {"error": "VirusTotal API key not configured"}
+
+        cache_key = f"virustotal:file:{file_hash}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("virustotal"):
+            return {"error": "VirusTotal rate limit reached"}
 
         try:
             headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
@@ -36,9 +46,12 @@ class VirusTotalService:
                 )
 
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    logger.debug(f"VirusTotal.scan_file success for {file_hash}")
+                    set_cached(cache_key, data)
+                    return data
                 elif response.status_code == 404:
-                    return {
+                    data = {
                         "data": {
                             "attributes": {
                                 "last_analysis_stats": {
@@ -49,6 +62,8 @@ class VirusTotalService:
                             }
                         }
                     }
+                    set_cached(cache_key, data)
+                    return data
                 else:
                     return {"error": f"VirusTotal API error: {response.status_code}"}
 
@@ -70,14 +85,24 @@ class VirusTotalService:
         Returns:
             Dict with VirusTotal results
         """
+        logger.debug(f"VirusTotal.scan_url called for {url}")
         if not settings.VIRUSTOTAL_API_KEY:
             logger.warning("VirusTotal API key not configured")
             return {"error": "VirusTotal API key not configured"}
 
+        cache_key = f"virustotal:url:{url}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("virustotal"):
+            return {"error": "VirusTotal rate limit reached"}
+
         try:
             headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
             
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            # Keep URL scans responsive for live monitoring workflows.
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 # First, submit the URL for scanning
                 data = {"url": url}
                 response = await client.post(
@@ -89,14 +114,15 @@ class VirusTotalService:
 
                 if response.status_code == 200:
                     result = response.json()
+                    logger.debug(f"VirusTotal.scan_url submitted {url}")
                     
                     # Get the analysis ID to retrieve results
                     analysis_id = result.get("data", {}).get("id")
                     
                     if analysis_id:
-                        # Wait a moment for analysis to start
+                        # Minimal delay to let backend register the submission.
                         import asyncio
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(0.5)
                         
                         # Retrieve the analysis results
                         analysis_response = await client.get(
@@ -112,10 +138,12 @@ class VirusTotalService:
                             status = analysis_data.get("data", {}).get("attributes", {}).get("status")
                             
                             if status == "completed":
+                                logger.info(f"VirusTotal.analysis completed for {url}")
+                                set_cached(cache_key, analysis_data)
                                 return analysis_data
                             else:
                                 # If not complete, try to get URL object directly
-                                logger.info(f"Analysis status: {status}, fetching URL object")
+                                logger.debug(f"Analysis status: {status}, fetching URL object")
                         
                         # Try to get URL object for immediate results
                         import base64
@@ -128,8 +156,12 @@ class VirusTotalService:
                         )
                         
                         if url_response.status_code == 200:
-                            return url_response.json()
+                            logger.info(f"VirusTotal.url object retrieved for {url}")
+                            data = url_response.json()
+                            set_cached(cache_key, data)
+                            return data
                     
+                    set_cached(cache_key, result)
                     return result
                 else:
                     logger.warning(f"VirusTotal scan error: {response.status_code} - {response.text}")

@@ -1,9 +1,20 @@
 import os
 import logging
+import time
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 
 # Load environment variables from multiple sources
 load_dotenv()  # Load from .env in project root
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))  # Load server/.env
 load_dotenv(dotenv_path="../.env.example")  # Also load from .env.example
 
 # Configure logging with colored output when available
@@ -13,7 +24,16 @@ try:
 except Exception:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+# Reduce verbosity of HTTP request logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+
+
+def _startup_monitors_enabled() -> bool:
+    """Return whether background monitoring should auto-start with the API server."""
+    return os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "false").lower() in {"1", "true", "yes", "on"}
 
 # Gemini API Configuration with multiple fallback options
 GEMINI_API_KEY = (
@@ -156,16 +176,151 @@ def get_system_status():
             }
         }
 
+
+# Application Lifecycle Events using Lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown"""
+    # suppress verbose SQL logs which clutter output
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.CRITICAL)
+    logging.getLogger('sqlalchemy.pool').setLevel(logging.CRITICAL)
+    logging.getLogger('httpx').setLevel(logging.CRITICAL)
+    logging.getLogger('uvicorn.access').setLevel(logging.CRITICAL)
+
+    # Startup
+    logger.info("🚀 Starting SENTINEL-AI Application...")
+
+    # Initialize database tables
+    try:
+        # Ensure models are imported so metadata is registered
+        from app import models  # noqa: F401
+        from app.database import init_db
+        await init_db()
+        logger.info("✅ Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+    
+    # Initialize Gemini configuration
+    initialize_gemini_configuration()
+    
+    logger.info("✅ Application startup complete")
+    logger.info(f"📊 System Status: {get_system_status()}")
+    
+    if _startup_monitors_enabled():
+        # Start activity monitoring
+        try:
+            from app.activity_monitor import activity_monitor
+            import asyncio
+            asyncio.create_task(activity_monitor.start())
+            logger.info("🔍 Activity monitor started")
+        except Exception as e:
+            logger.error(f"Failed to start activity monitor: {e}")
+        
+        # Initialize and start enhanced monitoring components
+        logger.info("=" * 80)
+        logger.info("🤖 INITIALIZING MONITORING")
+        logger.info("=" * 80)
+        
+        try:
+            # Initialize activity database
+            from app.core.activity_database import activity_db
+            logger.info("✅ Database ready")
+            
+            # Start terminal monitor for real-time display
+            from app.core.terminal_monitor import terminal_monitor
+            terminal_monitor.start()
+            logger.info("✅ Monitor ready")
+            logger.info("=" * 80)
+            
+            # Start automatic activity monitor
+            from app.core.auto_monitor import AutomaticActivityMonitor
+            from app.core.threat_analyzer import threat_analyzer
+            
+            async def scan_artifact(artifact_type: str, value: str):
+                """Callback to scan detected artifacts"""
+                try:
+                    started = time.perf_counter()
+                    scan_timeout = float(os.getenv("SENTINEL_SCAN_TIMEOUT_SECONDS", "20"))
+                    result = await asyncio.wait_for(threat_analyzer.analyze(value), timeout=scan_timeout)
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    
+                    # Log to database
+                    corroboration = result.get('corroboration_analysis', {})
+                    activity_db.log_threat_scan({
+                        'artifact_type': artifact_type,
+                        'artifact_value': value,
+                        'scan_duration_ms': elapsed_ms,
+                        'verdict': result.get('verdict', 'unknown'),
+                        'confidence': result.get('confidence', 0.0),
+                        'threat_level': result.get('verdict', 'unknown'),
+                        'corroboration_level': corroboration.get('corroboration', {}).get('level'),
+                        'source_count': corroboration.get('corroboration', {}).get('source_count', 0),
+                        'sources': corroboration.get('corroboration', {}).get('sources', []),
+                        'api_results': result.get('api_results'),
+                        'threat_indicators': result.get('threat_indicators', []),
+                        'recommendations': result.get('recommendations', []),
+                        'flags': result.get('flags', {}),
+                        'is_automated': True,
+                        'metadata': {'auto_detected': True}
+                    })
+                    
+                    # Update terminal monitor
+                    terminal_monitor.log_scan_activity(artifact_type, value, result.get('verdict', 'unknown'))
+                    
+                    return result
+                except asyncio.TimeoutError:
+                    logger.warning(f"Scan timeout for {artifact_type} {value}")
+                    return {
+                        'verdict': 'unknown',
+                        'confidence': 0.0,
+                        'summary': 'Scan timed out before all APIs returned. Monitoring continued without blocking.',
+                        'warnings': ['Scan timed out'],
+                        'api_results': {
+                            'apis_called': [],
+                            'apis_expected': [],
+                            'api_status': {}
+                        },
+                        'threat_indicators': []
+                    }
+                except Exception as e:
+                    logger.error(f"Error scanning {artifact_type} {value}: {e}")
+                    return {'verdict': 'error', 'error': str(e)}
+            
+            auto_monitor = AutomaticActivityMonitor(scan_callback=scan_artifact)
+            asyncio.create_task(auto_monitor.start())
+            logger.info("✅ Activity monitoring enabled")
+            
+        except Exception as e:
+            logger.error(f"Failed to start enhanced monitoring: {e}")
+            logger.warning("Server will continue without enhanced monitoring")
+    else:
+        logger.info("ℹ️ Startup monitors disabled (set SENTINEL_ENABLE_STARTUP_MONITORS=true to enable background monitoring)")
+    
+    # Yield control to the application
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Shutting down SENTINEL-AI Application...")
+    
+    # Stop activity monitoring
+    try:
+        from app.activity_monitor import activity_monitor
+        await activity_monitor.stop()
+    except Exception as e:
+        logger.error(f"Failed to stop activity monitor: {e}")
+    
+    # Stop enhanced monitoring and print summary
+    try:
+        from app.core.terminal_monitor import terminal_monitor
+        terminal_monitor.stop()
+        terminal_monitor.print_summary()
+        logger.info("✅ Enhanced monitoring stopped")
+    except Exception as e:
+        logger.error(f"Failed to stop enhanced monitoring: {e}")
+
 # FastAPI Application Setup
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
-from datetime import datetime
 
 from .api import compat
 from .api.v1.api import api_router
@@ -202,7 +357,7 @@ class AnalystNotesRequest(BaseModel):
     verified: bool = False
     analyst_username: Optional[str] = None
 
-# Create FastAPI app
+# Create FastAPI app with lifespan
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -210,6 +365,7 @@ app = FastAPI(
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,
     openapi_url="/api/openapi.json" if settings.DEBUG else None,
+    lifespan=lifespan,
 )
 
 # Add CORS middleware with explicit OPTIONS support
@@ -224,9 +380,14 @@ app.add_middleware(
 )
 
 # Add trusted host middleware
+# when not in debug mode we trust the hosts defined in settings; the
+# `allowed_hosts_list` property will split the comma-separated string.
+hosts = ["*"] if settings.DEBUG else getattr(
+    settings, "allowed_hosts_list", ["sentinel-ai.local", "api.sentinel-ai.local"]
+)
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=(["*"] if settings.DEBUG else ["sentinel-ai.local", "api.sentinel-ai.local"]),
+    allowed_hosts=hosts,
 )
 
 # Mount static files (if exists)
@@ -237,23 +398,6 @@ if os.path.exists(static_path):
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(compat.router, prefix="/api")
-
-# Application Lifecycle Events
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup"""
-    logger.info("🚀 Starting SENTINEL-AI Application...")
-    
-    # Initialize Gemini configuration
-    initialize_gemini_configuration()
-    
-    logger.info("✅ Application startup complete")
-    logger.info(f"📊 System Status: {get_system_status()}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on application shutdown"""
-    logger.info("🛑 Shutting down SENTINEL-AI Application...")
 
 # New Gemini-Enhanced API Endpoints
 
@@ -285,7 +429,7 @@ async def health():
         "status": "healthy", 
         "service": "SENTINEL-AI API",
         "gemini": system_status["gemini"],
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 @app.get("/api/v1/system/status")
@@ -313,7 +457,7 @@ async def analyze_with_gemini(request: AnalysisRequest):
         return {
             "success": True,
             "analysis": result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "analysis_source": result.get('source', 'unknown')
         }
         
@@ -334,7 +478,7 @@ async def analyze_traffic(request: TrafficAnalysisRequest):
             "traffic_data": request.traffic_data,
             "source_ip": request.source_ip,
             "endpoint": request.endpoint,
-            "timestamp": request.timestamp or datetime.utcnow().isoformat(),
+            "timestamp": request.timestamp or datetime.now(timezone.utc).isoformat(),
             "analysis_type": "traffic_security"
         }
         
@@ -375,7 +519,7 @@ async def analyze_traffic(request: TrafficAnalysisRequest):
         return {
             "success": True,
             "analysis": combined_result,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -418,7 +562,7 @@ async def batch_analyze(request: BatchAnalysisRequest):
             "results": results,
             "count": len(results),
             "analysis_source": analysis_source,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -442,14 +586,14 @@ async def get_gemini_configuration():
             "config": safe_config,
             "validation": config.validate(),
             "status": get_system_status()["gemini"],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except ImportError:
         return {
             "config": {"enabled": False, "error": "Configuration module not available"},
             "status": get_system_status()["gemini"],
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
 @app.get("/cors-test")
@@ -493,7 +637,7 @@ async def analyst_override_threat(request: AnalystOverrideRequest):
         # Apply analyst override
         threat.analyst_override = True
         threat.analyst_override_notes = request.override_notes
-        threat.analyst_override_at = datetime.utcnow()
+        threat.analyst_override_at = datetime.now(timezone.utc)
         threat.original_verdict = original_verdict
         
         if analyst_user:
@@ -520,7 +664,7 @@ async def analyst_override_threat(request: AnalystOverrideRequest):
             if request.override_severity.lower() in severity_mapping:
                 threat.severity = severity_mapping[request.override_severity.lower()]
         
-        threat.last_updated = datetime.utcnow()
+        threat.last_updated = datetime.now(timezone.utc)
         
         db.commit()
         db.refresh(threat)
@@ -534,7 +678,7 @@ async def analyst_override_threat(request: AnalystOverrideRequest):
             "original_verdict": original_verdict,
             "new_verdict": request.override_verdict,
             "override_notes": request.override_notes,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "forensic_tracking": {
                 "override_applied": True,
                 "analyst": request.analyst_username or "unknown",
@@ -585,7 +729,7 @@ async def add_analyst_notes(request: AnalystNotesRequest):
             "message": "Analyst notes added successfully",
             "scan_id": request.scan_id,
             "verified": request.verified,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except HTTPException:
@@ -686,7 +830,7 @@ def perform_local_traffic_analysis(traffic_data: Dict[str, Any]) -> Dict[str, An
         "vulnerabilities": ["Potential threats detected"],
         "confidence": 70,
         "source": "local_analysis",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 def perform_local_analysis(prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -694,7 +838,7 @@ def perform_local_analysis(prompt: str, context: Dict[str, Any] = None) -> Dict[
     # Your existing local analysis logic here
     return {
         "content": f"Local analysis result for: {prompt[:100]}...",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "local_analysis",
         "success": True
     }
@@ -725,7 +869,7 @@ async def http_exception_handler(request, exc):
         status_code=exc.status_code,
         content={
             "error": exc.detail,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "path": request.url.path
         }
     )
@@ -738,7 +882,7 @@ async def general_exception_handler(request, exc):
         status_code=500,
         content={
             "error": "Internal server error",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "path": request.url.path
         }
     )

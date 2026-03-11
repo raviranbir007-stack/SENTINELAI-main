@@ -3,17 +3,21 @@ from typing import List, Optional
 
 try:
     from pydantic_settings import BaseSettings
+    from pydantic import ConfigDict
 except Exception:
     try:
-        from pydantic import BaseSettings
+        from pydantic import BaseSettings, ConfigDict
     except Exception:
-        BaseSettings = object
+        from pydantic import BaseModel
+        BaseSettings = BaseModel
+        ConfigDict = lambda **kwargs: {"env_file": ".env", "extra": "ignore"}
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env", extra="ignore")
     # Project metadata
     PROJECT_NAME: str = "SENTINEL-AI"
     VERSION: str = "1.0.0"
@@ -41,20 +45,40 @@ class Settings(BaseSettings):
     )
 
     # Application
-    DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
-    ALLOWED_HOSTS: List[str] = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(
-        ","
-    )
-    CORS_ORIGINS: List[str] = os.getenv(
-        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
-    ).split(",")
-    BACKEND_CORS_ORIGINS: List[str] = os.getenv(
-        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
-    ).split(",")
+    DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    # Pydantic will attempt to `json.loads` values for non-str annotation types
+    # when loading from the environment (including .env file).  That behaviour
+    # is convenient when you store JSON in your environment, but most of our
+    # settings are provided as simple comma-separated strings.  If the
+    # variable isn't valid JSON the loader raises a `JSONDecodeError` during
+    # model construction *before* any validators are executed (see test
+    # failures above).  To avoid the problem we keep the raw field a `str`
+    # and expose a helper property that returns the cleaned list.
 
-    # Email
-    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    # fields stored as simple strings so pydantic won't try to JSON-decode them.
+    # the public accessor methods below convert to lists lazily.  This keeps
+    # compatibility with the rest of the codebase which expects lists.
+    ALLOWED_HOSTS: str = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1")
+    CORS_ORIGINS: str = os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+    )
+    BACKEND_CORS_ORIGINS: str = os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+    )
+
+    @property
+    def allowed_hosts_list(self) -> List[str]:
+        # keep old-capitalization names for code that previously referenced
+        # ``settings.ALLOWED_HOSTS``; they will now call this property instead
+        return [h.strip() for h in self.ALLOWED_HOSTS.split(",") if h.strip()]
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        return [h.strip() for h in self.CORS_ORIGINS.split(",") if h.strip()]
+
+    @property
+    def backend_cors_origins_list(self) -> List[str]:
+        return [h.strip() for h in self.BACKEND_CORS_ORIGINS.split(",") if h.strip()]
     SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "alerts@sentinel-ai.com")
@@ -80,9 +104,6 @@ class Settings(BaseSettings):
 
     # AI / Gemini
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()

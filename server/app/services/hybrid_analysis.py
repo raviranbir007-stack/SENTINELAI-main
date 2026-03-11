@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from ..config import settings
+from .cache import get_cached, rate_limit_allow, set_cached
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,18 @@ class HybridAnalysisService:
         Returns:
             Dict with Hybrid Analysis results
         """
+        logger.debug(f"HybridAnalysis.search_hash called for {file_hash}")
         if not settings.HYBRIDANALYSIS_API_KEY:
             logger.warning("Hybrid Analysis API key not configured")
             return {"error": "Hybrid Analysis API key not configured"}
+
+        cache_key = f"hybrid:hash:{file_hash}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("hybrid_analysis"):
+            return {"error": "Hybrid Analysis rate limit reached"}
 
         try:
             headers = {
@@ -42,8 +52,18 @@ class HybridAnalysisService:
                 )
 
                 if response.status_code == 200:
-                    return response.json()
+                    logger.debug(f"HybridAnalysis result returned for {file_hash}")
+                    data = response.json()
+                    # Hybrid Analysis returns a raw JSON array for hash searches;
+                    # normalise to a dict so all callers can safely use .get().
+                    if isinstance(data, list):
+                        data = {"results": data}
+                    set_cached(cache_key, data)
+                    return data
                 else:
+                    logger.warning(
+                        f"Hybrid Analysis API error: {response.status_code} for {file_hash}"
+                    )
                     return {
                         "error": f"Hybrid Analysis API error: {response.status_code}"
                     }

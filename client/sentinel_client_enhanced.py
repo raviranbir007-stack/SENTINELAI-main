@@ -25,17 +25,21 @@ from watchdog.observers import Observer
 CONFIG_FILE = Path("config.ini")
 LOG_FILE = Path("sentinel_client.log")
 
-# Setup logging
+# Setup logging - REDUCED VERBOSITY
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.WARNING,
+    format="%(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout),
     ],
 )
 
 logger = logging.getLogger("SentinelClient")
+# Add stdout handler only for CRITICAL and ERROR
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.ERROR)
+console_handler.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(console_handler)
 
 
 class SentinelClient:
@@ -43,10 +47,11 @@ class SentinelClient:
 
     def __init__(self, config_path: Path = CONFIG_FILE):
         self.config = self._load_config(config_path)
-        self.server_url = self.config.get("server", {}).get("url")
-        self.api_key = self.config.get("server", {}).get("api_key")
-        self.client_id = None
+        self.server_url = self.config.get("server", {}).get("url", "http://localhost:5000")
+        self.api_key = self.config.get("server", {}).get("api_key", "")
+        self.client_id = str(uuid.uuid4())  # Generate unique client ID
         self.running = False
+        self._scanned_ips = set()
 
         # Defense configuration
         self.auto_defense = self.config.get("client", {}).get("enable_auto_defense", True)
@@ -55,8 +60,8 @@ class SentinelClient:
         self.blocked_domains = set()
 
         # Monitoring configuration
-        self.scan_interval = self.config.get("client", {}).get("scan_interval", 300)
-        self.heartbeat_interval = self.config.get("client", {}).get("heartbeat_interval", 60)
+        self.scan_interval = int(self.config.get("client", {}).get("scan_interval", 300))
+        self.heartbeat_interval = int(self.config.get("client", {}).get("heartbeat_interval", 60))
 
     def _load_config(self, config_path: Path) -> Dict:
         """Load configuration from file"""
@@ -85,23 +90,24 @@ class SentinelClient:
         """Register client with the server"""
         try:
             hostname = socket.gethostname()
-            ip_address = socket.gethostbyname(hostname)
+            try:
+                ip_address = socket.gethostbyname(hostname)
+            except socket.gaierror:
+                ip_address = "127.0.0.1"
 
             # Get MAC address
-            mac_address = None
+            mac_address = "00:00:00:00:00:00"
             for interface, addrs in psutil.net_if_addrs().items():
                 for addr in addrs:
                     if addr.family == psutil.AF_LINK:
                         mac_address = addr.address
                         break
-                if mac_address:
+                if mac_address != "00:00:00:00:00:00":
                     break
 
             # Get network info
             gateways = psutil.net_if_stats()
-            gateway = None
-            if gateways:
-                gateway = list(gateways.keys())[0]
+            gateway = list(gateways.keys())[0] if gateways else "Unknown"
 
             # Determine network segment
             network_segment = f"{'.'.join(ip_address.split('.')[:3])}.0/24"
@@ -116,6 +122,7 @@ class SentinelClient:
                 "gateway": gateway,
                 "dns_servers": self._get_dns_servers(),
                 "version": "2.0.0",
+                "client_id": self.client_id,
             }
 
             response = requests.post(
@@ -127,15 +134,15 @@ class SentinelClient:
 
             if response.status_code == 200:
                 result = response.json()
-                self.client_id = result.get("client_id")
-                logger.info(f"Client registered successfully: {self.client_id}")
+                self.client_id = result.get("client_id", self.client_id)
+                logger.info(f"✓ Client registered: {self.client_id}")
                 return True
             else:
-                logger.error(f"Registration failed: {response.status_code} - {response.text}")
+                logger.error(f"✗ Registration failed: {response.status_code}")
                 return False
 
         except Exception as e:
-            logger.error(f"Registration error: {e}")
+            logger.error(f"✗ Registration error")
             return False
 
     def _get_dns_servers(self) -> List[str]:
@@ -473,29 +480,11 @@ class SentinelClient:
 
 async def main():
     """Main entry point"""
-    print("=" * 60)
-    print("SENTINEL-AI Client v2.0")
-    print("Advanced Threat Detection and Defense")
-    print("=" * 60)
-    print()
-
-    # Initialize client
     client = SentinelClient()
-
-    # Register with server
-    print("Registering with server...")
     if await client.register():
-        print(f"✓ Registration successful - Client ID: {client.client_id}")
-        print()
-
-        # Start monitoring
-        print("Starting continuous monitoring...")
-        print("Press Ctrl+C to stop")
-        print()
-
         await client.start_monitoring()
     else:
-        print("✗ Registration failed. Check configuration and try again.")
+        logger.error("Registration failed")
         sys.exit(1)
 
 
@@ -503,5 +492,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nMonitoring stopped.")
         sys.exit(0)

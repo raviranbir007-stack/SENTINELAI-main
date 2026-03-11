@@ -46,8 +46,12 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    threats = relationship("Threat", back_populates="detected_by")
+    threats = relationship("Threat", back_populates="detected_by", foreign_keys="[Threat.detected_by_id]")
+    overridden_threats = relationship("Threat", foreign_keys="[Threat.analyst_override_by_id]")
     logs = relationship("SystemLog", back_populates="user")
+    scan_history = relationship("ScanHistory", back_populates="user")
+    attack_events = relationship("AttackEvent", back_populates="detected_by_user")
+    acknowledged_alerts = relationship("NetworkAlert", back_populates="acknowledged_by")
 
 
 class Threat(Base):
@@ -96,7 +100,7 @@ class Threat(Base):
 
     # Relationships
     detected_by = relationship("User", back_populates="threats", foreign_keys=[detected_by_id])
-    analyst_override_by = relationship("User", foreign_keys=[analyst_override_by_id])
+    analyst_override_by = relationship("User", back_populates="overridden_threats", foreign_keys=[analyst_override_by_id])
     responses = relationship("ResponseAction", back_populates="threat")
 
 
@@ -180,7 +184,7 @@ class ScanHistory(Base):
     
     # Relationships
     client = relationship("ClientInstallation", back_populates="scans")
-    user = relationship("User")
+    user = relationship("User", back_populates="scan_history")
 
 
 class ClientInstallation(Base):
@@ -259,7 +263,7 @@ class AttackEvent(Base):
     
     # Relationships
     target_client = relationship("ClientInstallation", back_populates="attacks")
-    detected_by_user = relationship("User")
+    detected_by_user = relationship("User", back_populates="attack_events")
     responses = relationship("DefenseAction", back_populates="attack_event")
 
 
@@ -324,4 +328,4 @@ class NetworkAlert(Base):
     resolved_at = Column(DateTime(timezone=True))
     
     # Relationship
-    acknowledged_by = relationship("User")
+    acknowledged_by = relationship("User", back_populates="acknowledged_alerts")

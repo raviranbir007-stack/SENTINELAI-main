@@ -1,3 +1,4 @@
+69
 """
 Advanced Reporting Endpoints
 Generates structured reports for multiple time intervals (24h, 7d, 30d)
@@ -12,10 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from ....database import get_db
+from ....database import get_db, init_db
 from ....models import (
     AttackEvent,
     ClientInstallation,
@@ -23,6 +25,7 @@ from ....models import (
     ScanHistory,
     ThreatSeverity,
 )
+from .report_generators import generate_executive_summary_pdf, generate_technical_analysis_pdf
 
 try:
     from reportlab.lib import colors
@@ -74,6 +77,7 @@ class AdvancedReportRequest(BaseModel):
     include_defense_actions: bool = True
     client_id: Optional[str] = None  # Filter by specific client
     format: str = "pdf"  # pdf or json
+    report_type: str = "executive_summary"  # 'executive_summary' or 'technical_analysis'
 
 
 @router.post("/generate-comprehensive")
@@ -85,6 +89,12 @@ async def generate_comprehensive_report(
     Includes all scans (files, URLs, IPs, domains, hashes), attacks, and defense actions
     """
     try:
+        # Ensure DB schema exists (handles fresh installs or new DB files)
+        try:
+            await init_db()
+        except Exception as e:
+            logger.warning(f"Database init check failed: {e}")
+
         logger.info(f"Generating comprehensive report for intervals: {request.intervals}")
 
         # Collect data for each interval
@@ -106,8 +116,15 @@ async def generate_comprehensive_report(
                     ClientInstallation.client_id == request.client_id
                 )
 
-            result = await db.execute(scan_query)
-            all_scans = result.scalars().all()
+            try:
+                result = await db.execute(scan_query)
+                all_scans = result.scalars().all()
+            except OperationalError as e:
+                # Attempt one-time schema creation and retry
+                logger.warning(f"Scan history query failed, retrying after init: {e}")
+                await init_db()
+                result = await db.execute(scan_query)
+                all_scans = result.scalars().all()
 
             # Filter scans by type
             scans_by_type = {
@@ -154,6 +171,25 @@ async def generate_comprehensive_report(
                 defense_actions = result.scalars().all()
 
             # Calculate statistics
+            # Forensic reliability metrics
+            scans_with_forensic = sum(1 for s in all_scans if s.analysis_data and s.analysis_data.get("forensic_metadata", {}).get("apis_checked", 0) > 0)
+            avg_apis_checked = (
+                sum(
+                    s.analysis_data.get("forensic_metadata", {}).get("apis_checked", 0)
+                    for s in all_scans
+                    if s.analysis_data
+                )
+                / len(all_scans)
+                if all_scans
+                else 0
+            )
+            corroborated_threats = sum(1 for s in all_scans if s.analysis_data and s.analysis_data.get("forensic_metadata", {}).get("corroboration_threshold_met", False))
+            high_confidence_threats = sum(
+                1
+                for s in all_scans
+                if s.threat_level in ["suspicious", "malicious"] and s.confidence >= 0.7
+            )
+            
             stats = {
                 "total_scans": len(all_scans),
                 "files_scanned": len(scans_by_type["files"]),
@@ -167,6 +203,13 @@ async def generate_comprehensive_report(
                 "safe_scans": sum(1 for s in all_scans if s.threat_level == "safe"),
                 "suspicious_scans": sum(1 for s in all_scans if s.threat_level == "suspicious"),
                 "malicious_scans": sum(1 for s in all_scans if s.threat_level == "malicious"),
+                # Forensic reliability metrics
+                "scans_with_forensic_data": scans_with_forensic,
+                "forensic_coverage_pct": (scans_with_forensic / len(all_scans) * 100) if all_scans else 0,
+                "avg_apis_per_scan": round(avg_apis_checked, 2),
+                "corroborated_threats": corroborated_threats,
+                "high_confidence_threats": high_confidence_threats,
+                "avg_confidence": (sum(s.confidence for s in all_scans) / len(all_scans)) if all_scans else 0,
             }
 
             report_data[interval_key] = {
@@ -200,9 +243,13 @@ async def generate_comprehensive_report(
                     detail="ReportLab not installed. Install with: pip install reportlab",
                 )
 
-            pdf_bytes = await _generate_comprehensive_pdf(report_data, request)
-
-            filename = f"security_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+            # Generate PDF based on report type
+            if request.report_type == "technical_analysis":
+                pdf_bytes = await generate_technical_analysis_pdf(report_data, request)
+                filename = f"security_report_technical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+            else:  # executive_summary (default)
+                pdf_bytes = await generate_executive_summary_pdf(report_data, request)
+                filename = f"security_report_executive_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
 
             return StreamingResponse(
                 io.BytesIO(pdf_bytes),
@@ -293,19 +340,61 @@ async def get_interval_report(
 
 # Helper functions
 def _scan_to_dict(scan: ScanHistory) -> dict:
-    """Convert ScanHistory object to dictionary with full details"""
+    """Convert ScanHistory object to dictionary with full details including forensic metadata"""
     analysis_data = scan.analysis_data or {}
     
+    # Extract forensic metadata from multiple sources
+    forensic_metadata = {}
+    
+    # First, try to get from analysis_data (where it's stored)
+    if "forensic_metadata" in analysis_data:
+        forensic_metadata = analysis_data.get("forensic_metadata", {})
+    # Fallback to scan attributes
+    elif hasattr(scan, 'evidence_sources') and scan.evidence_sources:
+        forensic_metadata = {
+            "evidence_sources": scan.evidence_sources if isinstance(scan.evidence_sources, list) else [],
+            "corroboration_count": scan.corroboration_count if hasattr(scan, 'corroboration_count') else 0,
+            "corroboration_threshold_met": (scan.corroboration_count >= 2) if hasattr(scan, 'corroboration_count') else False,
+        }
+    
+    # If still empty but we have evidence_sources attribute, use it
+    if not forensic_metadata and hasattr(scan, 'evidence_sources'):
+        forensic_metadata = {
+            "evidence_sources": scan.evidence_sources if scan.evidence_sources else [],
+            "corroboration_count": scan.corroboration_count if hasattr(scan, 'corroboration_count') else 0,
+            "corroboration_threshold_met": (scan.corroboration_count >= 2) if hasattr(scan, 'corroboration_count') else False,
+        }
+    
+    # Normalize threat level and target type for report display
+    threat_level = (scan.threat_level or analysis_data.get("verdict") or "unknown").lower()
+    if threat_level == "clean":
+        threat_level = "safe"
+
+    target_type = (scan.target_type or analysis_data.get("input_type") or "unknown").lower()
+    if target_type == "file_hash":
+        target_type = "hash"
+
+    if target_type == "unknown" and scan.target:
+        try:
+            from app.core.input_detector import InputDetector
+            detected, _meta = InputDetector.detect(scan.target)
+            target_type = detected.value
+            if target_type == "file_hash":
+                target_type = "hash"
+        except Exception:
+            pass
+
     return {
         "scan_id": scan.scan_id,
         "target": scan.target,
-        "target_type": scan.target_type,
+        "target_type": target_type,
         "target_name": scan.target_name,
-        "threat_level": scan.threat_level,
+        "threat_level": threat_level,
         "confidence": scan.confidence,
         "threats_detected": scan.threats_detected,
         "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
         "analysis": analysis_data,  # Full analysis data
+        "forensic_metadata": forensic_metadata,  # Forensic reliability data
     }
 
 
@@ -335,19 +424,48 @@ def _action_to_dict(action: DefenseAction) -> dict:
 
 
 async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReportRequest) -> bytes:
-    """Generate comprehensive PDF report"""
+    """Generate comprehensive PDF report with enhanced design and forensic analysis"""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
+    
+    # Custom page template with footer
+    def add_page_number(canvas, doc):
+        """Add page number and footer to each page"""
+        page_num = canvas.getPageNumber()
+        text = f"Page {page_num} | SENTINELAI Comprehensive Security Report | Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+        canvas.saveState()
+        canvas.setFont('Helvetica', 8)
+        canvas.setFillColor(colors.HexColor("#757575"))
+        canvas.drawCentredString(letter[0] / 2, 0.4 * inch, text)
+        canvas.restoreState()
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter, 
+        topMargin=0.75 * inch, 
+        bottomMargin=0.75 * inch,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch
+    )
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "Title",
         parent=styles["Heading1"],
-        fontSize=20,
-        textColor=colors.HexColor("#1a1a1a"),
+        fontSize=28,
+        textColor=colors.HexColor("#1a237e"),
         spaceAfter=12,
         alignment=TA_CENTER,
         fontName="Helvetica-Bold",
+    )
+    
+    subtitle_style = ParagraphStyle(
+        "Subtitle",
+        parent=styles["Normal"],
+        fontSize=14,
+        textColor=colors.HexColor("#424242"),
+        spaceAfter=20,
+        alignment=TA_CENTER,
+        fontName="Helvetica",
     )
 
     heading_style = ParagraphStyle(
@@ -362,14 +480,51 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
 
     elements = []
 
-    # Title
-    elements.append(Paragraph("COMPREHENSIVE SECURITY REPORT", title_style))
-    elements.append(
-        Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}", styles["Normal"])
-    )
-    if request.client_id:
-        elements.append(Paragraph(f"Client ID: {request.client_id}", styles["Normal"]))
+    # Enhanced Title Page
+    elements.append(Spacer(1, 1.5 * inch))
+    elements.append(Paragraph("🛡️ SENTINELAI", title_style))
+    elements.append(Paragraph("COMPREHENSIVE SECURITY ANALYSIS REPORT", subtitle_style))
     elements.append(Spacer(1, 0.3 * inch))
+    
+    # Report metadata box
+    report_info = [
+        ["Report Type:", "Multi-Interval Security Analysis"],
+        ["Generated:", datetime.utcnow().strftime('%B %d, %Y at %H:%M:%S UTC')],
+        ["Intervals Analyzed:", ", ".join(data["interval"] for data in report_data.values())],
+        ["Report ID:", f"COMP-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"],
+    ]
+    if request.client_id:
+        report_info.append(["Client ID:", request.client_id])
+    
+    info_table = Table(report_info, colWidths=[2 * inch, 3.5 * inch])
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e3f2fd")),
+        ("BACKGROUND", (1, 0), (1, -1), colors.white),
+        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#90caf9")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.5 * inch))
+    
+    # Security notice
+    notice_style = ParagraphStyle(
+        "Notice",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor=colors.HexColor("#666666"),
+        alignment=TA_CENTER,
+    )
+    elements.append(Paragraph(
+        "<i>This report contains sensitive security information. Handle according to your organization's data classification policy.</i>",
+        notice_style
+    ))
 
     # Process each interval
     for interval_key, data in report_data.items():
@@ -379,7 +534,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
 
         stats = data["statistics"]
 
-        # Statistics table
+        # Statistics table - Overview
         stats_data = [
             ["Metric", "Count"],
             ["Total Scans", str(stats["total_scans"])],
@@ -388,7 +543,10 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
             ["IPs Scanned", str(stats["ips_scanned"])],
             ["Domains Scanned", str(stats["domains_scanned"])],
             ["Hashes Scanned", str(stats["hashes_scanned"])],
+            ["", ""],  # Separator
             ["Threats Detected", str(stats["threats_detected"])],
+            ["High Confidence Threats", str(stats["high_confidence_threats"])],
+            ["Corroborated Threats", str(stats["corroborated_threats"])],
             ["Attacks Detected", str(stats["attacks_detected"])],
             ["Defense Actions", str(stats["defense_actions_taken"])],
         ]
@@ -409,6 +567,33 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
         )
 
         elements.append(stats_table)
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Forensic Reliability Metrics
+        elements.append(Paragraph("Forensic Reliability & Verification:", heading_style))
+        forensic_data = [
+            ["Forensic Metric", "Value"],
+            ["Scans with API Verification", f"{stats['scans_with_forensic_data']} ({stats['forensic_coverage_pct']:.1f}%)"],
+            ["Average APIs per Scan", f"{stats['avg_apis_per_scan']:.1f}/5 APIs"],
+            ["Multi-Source Corroborated", str(stats['corroborated_threats'])],
+            ["Average Confidence Score", f"{stats['avg_confidence']*100:.1f}%"],
+        ]
+        
+        forensic_table = Table(forensic_data, colWidths=[3 * inch, 2 * inch])
+        forensic_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2e7d32")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#388e3c")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+                ]
+            )
+        )
+        elements.append(forensic_table)
         elements.append(Spacer(1, 0.2 * inch))
 
         # Threat breakdown
@@ -440,39 +625,105 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
         scans_by_type = data["scans_by_type"]
         for scan_type, scans in scans_by_type.items():
             if scans and len(scans) > 0:
-                elements.append(Paragraph(f"{scan_type.upper()} Scans:", heading_style))
+                elements.append(Paragraph(f"📌 {scan_type.upper()} Scan Results ({len(scans)} total):", heading_style))
 
-                # Show top 10 malicious/suspicious
+                # Show top 15 malicious/suspicious with forensic data
                 threat_scans = [s for s in scans if s["threat_level"] in ["suspicious", "malicious"]]
-                threat_scans = sorted(threat_scans, key=lambda x: x["confidence"], reverse=True)[:10]
+                threat_scans = sorted(threat_scans, key=lambda x: x["confidence"], reverse=True)[:15]
 
                 if threat_scans:
-                    scan_data = [["Target", "Threat Level", "Confidence"]]
+                    elements.append(Paragraph(f"<b>⚠️ Threats Detected ({len(threat_scans)}):</b>", 
+                        ParagraphStyle("OrangeBold", parent=styles["Normal"], textColor=colors.HexColor("#ff6f00"), fontName="Helvetica-Bold")))
+                    elements.append(Spacer(1, 0.05 * inch))
+                    
+                    scan_data = [["Target", "Level", "Confidence", "Forensic"]]
                     for scan in threat_scans:
-                        target = scan["target"][:40] + "..." if len(scan["target"]) > 40 else scan["target"]
-                        scan_data.append([target, scan["threat_level"].upper(), f"{scan['confidence']:.2f}"])
+                        target = scan["target"][:35] + "..." if len(scan["target"]) > 35 else scan["target"]
+                        
+                        # Get forensic info
+                        forensic = scan.get("forensic_metadata", {})
+                        apis_checked = forensic.get("apis_checked", 0)
+                        corr_count = forensic.get("corroboration_count", 0)
+                        
+                        if corr_count >= 2:
+                            forensic_status = f"✓ {corr_count} APIs"
+                        elif apis_checked > 0:
+                            forensic_status = f"{apis_checked} API(s)"
+                        else:
+                            forensic_status = "No data"
+                        
+                        scan_data.append([
+                            target, 
+                            scan["threat_level"].upper()[:4], 
+                            f"{scan['confidence']*100:.0f}%",
+                            forensic_status
+                        ])
 
-                    scan_table = Table(scan_data, colWidths=[3 * inch, 1.5 * inch, 1.5 * inch])
+                    scan_table = Table(scan_data, colWidths=[2.5 * inch, 0.8 * inch, 0.9 * inch, 1.3 * inch])
                     scan_table.setStyle(
                         TableStyle(
                             [
-                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#cc0000")),
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d32f2f")),
                                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                                 ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                                ("ALIGN", (3, 0), (3, -1), "CENTER"),
                                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                                ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e57373")),
+                                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ffebee")]),
                             ]
                         )
                     )
                     elements.append(scan_table)
                 else:
-                    elements.append(Paragraph(f"No threats detected in {scan_type}", styles["Normal"]))
+                    elements.append(Paragraph(f"✅ No threats detected in {scan_type} scans", 
+                        ParagraphStyle("GreenNormal", parent=styles["Normal"], textColor=colors.HexColor("#2e7d32"))))
 
-                elements.append(Spacer(1, 0.1 * inch))
+                elements.append(Spacer(1, 0.15 * inch))
+        
+        # Add recommendations section at end of each interval
+        elements.append(PageBreak())
+        elements.append(Paragraph(f"🎯 SECURITY RECOMMENDATIONS - {data['interval'].upper()}", heading_style))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        recommendations = []
+        
+        # Check forensic coverage
+        if stats["forensic_coverage_pct"] < 50:
+            recommendations.append("⚠️ <b>Low Forensic Coverage</b>: Only {:.1f}% of scans have API verification. Configure API keys (VirusTotal, URLScan, AbuseIPDB, Shodan, Hybrid Analysis) for better threat detection.".format(stats["forensic_coverage_pct"]))
+        
+        # Check for threats
+        if stats["malicious_scans"] > 0:
+            recommendations.append(f"🚨 <b>Critical</b>: {stats['malicious_scans']} malicious threats detected. Immediate investigation and remediation required.")
+        
+        if stats["suspicious_scans"] > 0:
+            recommendations.append(f"⚠️ <b>Warning</b>: {stats['suspicious_scans']} suspicious activities detected. Review and monitor these targets closely.")
+        
+        # Check corroboration
+        if stats["corroborated_threats"] > 0:
+            recommendations.append(f"✓ <b>High Confidence</b>: {stats['corroborated_threats']} threats corroborated by multiple sources. These detections are highly reliable.")
+        
+        # Check average confidence
+        if stats["avg_confidence"] < 0.5:
+            recommendations.append("📊 <b>Low Confidence</b>: Average confidence score is {:.1f}%. Consider enabling more API sources for better accuracy.".format(stats["avg_confidence"]*100))
+        
+        # Good security posture
+        if stats["total_scans"] > 0 and stats["safe_scans"] > stats["total_scans"] * 0.8:
+            clean_pct = (stats["safe_scans"] / stats["total_scans"] * 100) if stats["total_scans"] else 0
+            recommendations.append(
+                f"✅ <b>Good Security Posture</b>: {clean_pct:.1f}% of scans are clean. Continue monitoring."
+            )
+        
+        if not recommendations:
+            recommendations.append("✅ <b>All Clear</b>: No critical security issues detected. Continue regular monitoring and maintain current security practices.")
+        
+        for rec in recommendations:
+            elements.append(Paragraph(f"• {rec}", styles["Normal"]))
+            elements.append(Spacer(1, 0.08 * inch))
 
-    # Build PDF
-    doc.build(elements)
+    # Build PDF with page numbers
+    doc.build(elements, onFirstPage=add_page_number, onLaterPages=add_page_number)
     buffer.seek(0)
     return buffer.read()
 
@@ -653,14 +904,54 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             
             for i, scan in enumerate(malicious_scans[:20], 1):  # Limit to 20
                 threat_data = [
-                    ["Threat #", str(i)],
-                    ["Target", scan.get("target", "Unknown")[:80]],
-                    ["Type", scan.get("target_type", "Unknown").upper()],
+                    ["Scan #", str(i)],
+                    ["Target URL/File", scan.get("target", "Unknown")[:100]],
+                    ["Scan Type", scan.get("target_type", "Unknown").upper()],
                     ["Threat Level", "🚨 MALICIOUS"],
                     ["Confidence", f"{scan.get('confidence', 0)*100:.1f}%"],
                     ["Threats Found", str(scan.get("threats_detected", 0))],
                     ["Detected At", scan.get("timestamp", "Unknown")[:19]],
                 ]
+                
+                # Always add forensic metadata display
+                forensic = scan.get("forensic_metadata", {})
+                analysis = scan.get("analysis", {})
+                warnings = analysis.get("warnings", [])
+                
+                if forensic:
+                    corr_count = forensic.get("corroboration_count", 0)
+                    corr_met = forensic.get("corroboration_threshold_met", False)
+                    evidence_sources = forensic.get("evidence_sources", [])
+                    apis_checked = forensic.get("apis_checked", 0)
+                    scan_coverage = forensic.get("scan_coverage", "")
+                    
+                    if corr_count > 0:
+                        # Threats found and corroborated
+                        threat_data.append(["Forensic Status", 
+                            f"{'✓ CORROBORATED' if corr_met else '⚠ SINGLE SOURCE'} ({corr_count} source{'s' if corr_count != 1 else ''})"])
+                        if evidence_sources:
+                            threat_data.append(["Evidence Sources", ", ".join(evidence_sources[:5])])
+                    else:
+                        # No threats, but show which APIs checked it
+                        if evidence_sources and len(evidence_sources) > 0:
+                            threat_data.append(["Forensic Status", f"✓ VERIFIED CLEAN ({len(evidence_sources)} APIs checked)"])
+                            threat_data.append(["APIs Checked", ", ".join(evidence_sources)])
+                        elif apis_checked > 0:
+                            threat_data.append(["Forensic Status", f"✓ VERIFIED CLEAN ({scan_coverage})"])
+                        else:
+                            # Check if APIs are not configured
+                            if warnings and any("not configured" in w.lower() for w in warnings):
+                                threat_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                                threat_data.append(["Configuration Note", "Please configure API keys (VirusTotal, URLScan, etc.) for verification"])
+                            else:
+                                threat_data.append(["Forensic Status", "⚠ NO API VERIFICATION"])
+                else:
+                    # Check if APIs are not configured from warnings
+                    if warnings and any("not configured" in w.lower() for w in warnings):
+                        threat_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                        threat_data.append(["Configuration Note", "Please configure API keys for threat verification"])
+                    else:
+                        threat_data.append(["Forensic Status", "⚠ FORENSIC DATA NOT AVAILABLE"])
                 
                 # Add analysis details if available
                 analysis = scan.get("analysis", {})
@@ -696,13 +987,54 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             
             for i, scan in enumerate(suspicious_scans[:15], 1):  # Limit to 15
                 susp_data = [
-                    ["Activity #", str(i)],
-                    ["Target", scan.get("target", "Unknown")[:80]],
-                    ["Type", scan.get("target_type", "Unknown").upper()],
+                    ["Scan #", str(i)],
+                    ["Target URL/File", scan.get("target", "Unknown")[:100]],
+                    ["Scan Type", scan.get("target_type", "Unknown").upper()],
                     ["Threat Level", "⚠️  SUSPICIOUS"],
                     ["Confidence", f"{scan.get('confidence', 0)*100:.1f}%"],
+                    ["Threats Found", str(scan.get("threats_detected", 0))],
                     ["Detected At", scan.get("timestamp", "Unknown")[:19]],
                 ]
+                
+                # Always add forensic metadata display
+                forensic = scan.get("forensic_metadata", {})
+                analysis = scan.get("analysis", {})
+                warnings = analysis.get("warnings", [])
+                
+                if forensic:
+                    corr_count = forensic.get("corroboration_count", 0)
+                    corr_met = forensic.get("corroboration_threshold_met", False)
+                    evidence_sources = forensic.get("evidence_sources", [])
+                    apis_checked = forensic.get("apis_checked", 0)
+                    scan_coverage = forensic.get("scan_coverage", "")
+                    
+                    if corr_count > 0:
+                        # Threats found and corroborated
+                        susp_data.append(["Forensic Status", 
+                            f"{'✓ CORROBORATED' if corr_met else '⚠ SINGLE SOURCE'} ({corr_count} source{'s' if corr_count != 1 else ''})"])
+                        if evidence_sources:
+                            susp_data.append(["Evidence Sources", ", ".join(evidence_sources[:5])])
+                    else:
+                        # No threats, but show which APIs checked it
+                        if evidence_sources and len(evidence_sources) > 0:
+                            susp_data.append(["Forensic Status", f"✓ VERIFIED CLEAN ({len(evidence_sources)} APIs checked)"])
+                            susp_data.append(["APIs Checked", ", ".join(evidence_sources)])
+                        elif apis_checked > 0:
+                            susp_data.append(["Forensic Status", f"✓ VERIFIED CLEAN ({scan_coverage})"])
+                        else:
+                            # Check if APIs are not configured
+                            if warnings and any("not configured" in w.lower() for w in warnings):
+                                susp_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                                susp_data.append(["Configuration Note", "Please configure API keys (VirusTotal, URLScan, etc.) for verification"])
+                            else:
+                                susp_data.append(["Forensic Status", "⚠ NO API VERIFICATION"])
+                else:
+                    # Check if APIs are not configured from warnings
+                    if warnings and any("not configured" in w.lower() for w in warnings):
+                        susp_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                        susp_data.append(["Configuration Note", "Please configure API keys for threat verification"])
+                    else:
+                        susp_data.append(["Forensic Status", "⚠ FORENSIC DATA NOT AVAILABLE"])
                 
                 susp_table = Table(susp_data, colWidths=[1.5*inch, 5*inch])
                 susp_table.setStyle(TableStyle([
@@ -718,8 +1050,67 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
         # Safe scans summary
         safe_scans = [s for s in scans if s.get("threat_level") == "safe"]
         if safe_scans:
-            elements.append(Paragraph(f"<b>✅ SAFE SCANS:</b> {len(safe_scans)} targets were scanned and found to be safe with no threats detected.", styles["Normal"]))
-            elements.append(Spacer(1, 0.2 * inch))
+            elements.append(Paragraph("<b>✅ SAFE SCANS:</b>", ParagraphStyle("GreenBold", parent=styles["Normal"], textColor=colors.HexColor("#2e7d32"), fontName="Helvetica-Bold")))
+            elements.append(Paragraph(f"{len(safe_scans)} target(s) were scanned and found to be safe with no threats detected.", styles["Normal"]))
+            elements.append(Spacer(1, 0.1 * inch))
+            
+            # Show first 10 safe scans with details
+            for i, scan in enumerate(safe_scans[:10], 1):
+                safe_data = [
+                    ["Scan #", str(i)],
+                    ["Target URL/File", scan.get("target", "Unknown")[:100]],
+                    ["Scan Type", scan.get("target_type", "Unknown").upper()],
+                    ["Status", "✅ SAFE - No Threats"],
+                    ["Confidence", f"{scan.get('confidence', 0)*100:.1f}%"],
+                    ["Scanned At", scan.get("timestamp", "Unknown")[:19]],
+                ]
+                
+                # Add forensic status for safe scans too
+                forensic = scan.get("forensic_metadata", {})
+                analysis = scan.get("analysis", {})
+                warnings = analysis.get("warnings", [])
+                
+                if forensic:
+                    corr_count = forensic.get("corroboration_count", 0)
+                    evidence_sources = forensic.get("evidence_sources", [])
+                    apis_checked = forensic.get("apis_checked", 0)
+                    scan_coverage = forensic.get("scan_coverage", "")
+                    
+                    # For safe scans, show which APIs verified it
+                    if evidence_sources and len(evidence_sources) > 0:
+                        safe_data.append(["Forensic Status", f"✓ VERIFIED SAFE ({len(evidence_sources)} APIs)"])
+                        safe_data.append(["APIs Checked", ", ".join(evidence_sources)])
+                    elif apis_checked > 0:
+                        safe_data.append(["Forensic Status", f"✓ VERIFIED ({scan_coverage})"])
+                    else:
+                        # Check if APIs are not configured
+                        if warnings and any("not configured" in w.lower() for w in warnings):
+                            safe_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                            safe_data.append(["Configuration Note", "Configure API keys for full verification"])
+                        else:
+                            safe_data.append(["Forensic Status", "⚠ LIMITED VERIFICATION"])
+                else:
+                    # Check if APIs are not configured from warnings
+                    if warnings and any("not configured" in w.lower() for w in warnings):
+                        safe_data.append(["Forensic Status", "⚠ APIs NOT CONFIGURED"])
+                        safe_data.append(["Configuration Note", "Configure API keys for verification"])
+                    else:
+                        safe_data.append(["Forensic Status", "⚠ NO VERIFICATION DATA"])
+                
+                safe_table = Table(safe_data, colWidths=[1.5*inch, 5*inch])
+                safe_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#4caf50")),
+                    ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                ]))
+                elements.append(safe_table)
+                elements.append(Spacer(1, 0.1 * inch))
+            
+            if len(safe_scans) > 10:
+                elements.append(Paragraph(f"<i>... and {len(safe_scans) - 10} more safe scan(s).</i>", styles["Normal"]))
+                elements.append(Spacer(1, 0.1 * inch))
     
     # Recommendations
     elements.append(Paragraph("💡 SECURITY RECOMMENDATIONS", heading_style))

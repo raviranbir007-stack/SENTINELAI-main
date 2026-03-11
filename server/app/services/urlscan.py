@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from ..config import settings
+from .cache import get_cached, rate_limit_allow, set_cached
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,18 @@ class URLScanService:
         Returns:
             Dict with URLScan results
         """
+        logger.debug(f"URLScan.scan_url called for {url}")
         if not settings.URLSCAN_API_KEY:
             logger.warning("URLScan API key not configured")
             return {"error": "URLScan API key not configured"}
+
+        cache_key = f"urlscan:url:{url}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("urlscan"):
+            return {"error": "URLScan rate limit reached"}
 
         try:
             headers = {
@@ -41,7 +51,10 @@ class URLScanService:
                 )
 
                 if response.status_code in [200, 201]:
-                    return response.json()
+                    logger.debug(f"URLScan scan submitted for {url}")
+                    data = response.json()
+                    set_cached(cache_key, data)
+                    return data
                 elif response.status_code == 400:
                     # Handle scan prevention (rate limit, blocked domain, etc.)
                     error_data = response.json()
@@ -77,6 +90,14 @@ class URLScanService:
             logger.warning("URLScan API key not configured")
             return {"error": "URLScan API key not configured"}
 
+        cache_key = f"urlscan:uuid:{uuid}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("urlscan"):
+            return {"error": "URLScan rate limit reached"}
+
         try:
             headers = {"API-Key": settings.URLSCAN_API_KEY}
 
@@ -88,7 +109,9 @@ class URLScanService:
                 )
 
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    set_cached(cache_key, data)
+                    return data
                 elif response.status_code == 404:
                     return {"error": "Scan not found or not yet complete"}
                 else:

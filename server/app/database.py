@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from .config import settings
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -6,6 +9,18 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Ensure an async driver is used for sqlite when running async engine
 db_url = settings.DATABASE_URL
+
+# Normalize relative sqlite paths to an absolute path under the server directory
+if db_url.startswith("sqlite:///"):
+    sqlite_path = db_url.replace("sqlite:///", "")
+    if sqlite_path.startswith("./"):
+        base_dir = Path(__file__).resolve().parents[2]
+        abs_path = (base_dir / sqlite_path[2:]).resolve()
+        db_url = f"sqlite:///{abs_path}"
+    elif not sqlite_path.startswith("/"):
+        base_dir = Path(__file__).resolve().parents[2]
+        abs_path = (base_dir / sqlite_path).resolve()
+        db_url = f"sqlite:///{abs_path}"
 if db_url.startswith("sqlite://") and "+aiosqlite" not in db_url:
     if db_url.startswith("sqlite:///"):
         db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///")
@@ -15,7 +30,7 @@ if db_url.startswith("sqlite://") and "+aiosqlite" not in db_url:
 
 engine = create_async_engine(
     db_url,
-    echo=settings.DEBUG,
+    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
     future=True,
     pool_pre_ping=True,
     pool_recycle=3600,

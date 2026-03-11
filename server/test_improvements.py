@@ -4,6 +4,9 @@ SENTINEL-AI Comprehensive Test Suite
 Tests all major improvements and features
 """
 
+# Manual validation script (not a pytest unit-test module)
+__test__ = False
+
 import sys
 import json
 from typing import Dict, Any

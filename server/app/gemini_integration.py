@@ -6,9 +6,28 @@ Handles all Gemini AI interactions for threat analysis
 import json
 import logging
 import os
+import sys
 from typing import Dict, Any, Optional, List
-import google.genai as genai
-from google.genai.types import GenerateContentConfig, HttpOptions
+
+# Make google.genai import optional to prevent server crash
+try:
+    import google.genai as genai
+    from google.genai.types import GenerateContentConfig, HttpOptions
+    GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    GenerateContentConfig = None
+    HttpOptions = None
+    GENAI_AVAILABLE = False
+
+# Legacy fallback: google-generativeai
+try:
+    import google.generativeai as legacy_genai
+    LEGACY_GENAI_AVAILABLE = True
+except ImportError:
+    legacy_genai = None
+    LEGACY_GENAI_AVAILABLE = False
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,29 +42,61 @@ class GeminiIntegration:
         self.client = None
         self.available_models = []
         self.initialized = False
+        self.backend = None
         self._initialize()
+
+    def _get_api_key(self) -> str:
+        """Get API key from settings or environment."""
+        return (
+            settings.GEMINI_API_KEY
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+            or ""
+        )
     
     def _initialize(self):
         """Initialize Gemini AI client"""
-        if not settings.GEMINI_API_KEY:
+        if not GENAI_AVAILABLE and not LEGACY_GENAI_AVAILABLE:
+            logger.warning("google.genai not installed. AI features will be limited.")
+            logger.warning(f"Gemini import check failed under: {sys.executable} (VIRTUAL_ENV={os.getenv('VIRTUAL_ENV')})")
+            return
+            
+        api_key = self._get_api_key()
+        if not api_key:
             logger.warning("Gemini API key not configured. AI features will be limited.")
             return
         
         try:
-            # Initialize with the new google.genai package
-            self.client = genai.Client(
-                api_key=settings.GEMINI_API_KEY,
-                http_options=HttpOptions(api_version='v1alpha')
-            )
-            
-            # Test connection and get available models
-            try:
-                models = self.client.models.list()
-                self.available_models = [model.name for model in models if 'gemini' in model.name.lower()]
-                logger.info(f"✅ Gemini AI initialized. Available models: {self.available_models[:3]}")
-                self.initialized = True
-            except Exception as e:
-                logger.warning(f"Could not list models, but client created: {e}")
+            if GENAI_AVAILABLE:
+                # Initialize with the new google.genai package
+                self.client = genai.Client(
+                    api_key=api_key,
+                    http_options=HttpOptions(api_version='v1alpha')
+                )
+                self.backend = "google-genai"
+                
+                # Test connection and get available models
+                try:
+                    models = self.client.models.list()
+                    self.available_models = [model.name for model in models if 'gemini' in model.name.lower()]
+                    logger.info(f"✅ Gemini AI initialized. Available models: {self.available_models[:3]}")
+                    self.initialized = True
+                except Exception as e:
+                    logger.warning(f"Could not list models, but client created: {e}")
+                    self.initialized = True
+            elif LEGACY_GENAI_AVAILABLE:
+                # Legacy google-generativeai client
+                legacy_genai.configure(api_key=api_key)
+                self.client = legacy_genai
+                self.backend = "google-generativeai"
+
+                # Try to list models if available
+                try:
+                    models = self.client.list_models()
+                    self.available_models = [m.name for m in models if 'gemini' in m.name.lower()]
+                    logger.info(f"✅ Gemini AI initialized (legacy). Available models: {self.available_models[:3]}")
+                except Exception as e:
+                    logger.warning(f"Legacy Gemini client initialized; model list unavailable: {e}")
                 self.initialized = True
                 
         except Exception as e:
@@ -351,7 +402,7 @@ CRITICAL GUIDELINES:
         return prompt
     
     def _generate_content(self, prompt: str) -> Optional[str]:
-        """Generate content using Gemini"""
+        """Generate content using Gemini with quota handling"""
         if not self.is_available():
             return None
         
@@ -362,22 +413,40 @@ CRITICAL GUIDELINES:
             for model_name in models_to_try:
                 try:
                     logger.info(f"Trying model: {model_name}")
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=GenerateContentConfig(
-                            temperature=0.1,
-                            max_output_tokens=4000,
-                            top_p=0.8,
-                            top_k=40
+                    if self.backend == "google-generativeai":
+                        model = self.client.GenerativeModel(model_name)
+                        response = model.generate_content(
+                            prompt,
+                            generation_config={
+                                "temperature": 0.1,
+                                "max_output_tokens": 4000,
+                                "top_p": 0.8,
+                                "top_k": 40,
+                            },
                         )
-                    )
+                    else:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=GenerateContentConfig(
+                                temperature=0.1,
+                                max_output_tokens=4000,
+                                top_p=0.8,
+                                top_k=40
+                            )
+                        )
                     
                     if response and response.text:
                         logger.info(f"Success with model: {model_name}")
                         return response.text
                         
                 except Exception as e:
+                    error_msg = str(e)
+                    # Check if it's a quota error
+                    if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                        logger.warning(f"⚠️ Gemini API quota exceeded for {model_name}. Skipping AI analysis.")
+                        # Don't try other models if quota is exhausted
+                        return None
                     logger.warning(f"Model {model_name} failed: {e}")
                     continue
             
@@ -393,16 +462,39 @@ CRITICAL GUIDELINES:
             # Clean the response
             text = response_text.strip()
             
-            # Find JSON in response
+            # Try to find complete JSON by matching braces
             start = text.find('{')
-            end = text.rfind('}') + 1
-            
-            if start == -1 or end <= start:
+            if start == -1:
                 logger.error("No JSON found in Gemini response")
                 return self._create_fallback_analysis(scan_type)
             
+            # Find matching closing brace
+            brace_count = 0
+            end = -1
+            for i in range(start, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end = i + 1
+                        break
+            
+            if end == -1:
+                logger.error("No matching closing brace found in Gemini response")
+                return self._create_fallback_analysis(scan_type)
+            
             json_str = text[start:end]
-            analysis = json.loads(json_str)
+            
+            # Try parsing with lenient mode
+            try:
+                analysis = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to fix common JSON issues
+                json_str = json_str.replace('\n', ' ').replace('\r', '')
+                # Remove trailing commas
+                json_str = json_str.replace(',}', '}').replace(',]', ']')
+                analysis = json.loads(json_str)
             
             # Validate required structure
             if self._validate_analysis_structure(analysis):
@@ -612,6 +704,9 @@ def get_gemini_client() -> GeminiIntegration:
     Returns:
         GeminiIntegration: Singleton instance of Gemini integration
     """
+    # Re-initialize if API key became available after module import
+    if not gemini_integration.is_available() and gemini_integration._get_api_key():
+        gemini_integration._initialize()
     return gemini_integration
 
 def get_analysis_status() -> Dict[str, Any]:
