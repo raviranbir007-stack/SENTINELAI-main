@@ -1,8 +1,11 @@
 import random
 import hashlib
 import os
+import json
+import logging
 from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
@@ -17,13 +20,74 @@ from ..database import get_db
 from ..models import ScanHistory, SystemLog
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[2] / "generated_reports"
+REPORTS_INDEX_FILE = GENERATED_REPORTS_DIR / "reports_index.json"
+
+
+def _load_persistent_reports() -> list[dict]:
+    try:
+        if not REPORTS_INDEX_FILE.exists():
+            return []
+        with REPORTS_INDEX_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to load reports index: {e}")
+        return []
+
+
+def _save_persistent_reports() -> None:
+    try:
+        GENERATED_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        with REPORTS_INDEX_FILE.open("w", encoding="utf-8") as f:
+            json.dump(REPORTS_STORE, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save reports index: {e}")
+
+
+def store_report_artifacts(report_meta: dict, pdf_bytes: bytes) -> None:
+    """Persist report metadata + PDF to memory and disk."""
+    report_id = report_meta.get("report_id")
+    if not report_id:
+        return
+
+    GENERATED_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_file = GENERATED_REPORTS_DIR / f"{report_id}.pdf"
+    report_file.write_bytes(pdf_bytes)
+
+    report_meta = {**report_meta, "report_path": str(report_file)}
+
+    # upsert by report_id
+    existing_idx = next((i for i, r in enumerate(REPORTS_STORE) if r.get("report_id") == report_id), None)
+    if existing_idx is None:
+        REPORTS_STORE.append(report_meta)
+    else:
+        REPORTS_STORE[existing_idx] = report_meta
+
+    REPORTS_PDF_CACHE[report_id] = pdf_bytes
+
+    # keep only latest N report metadata
+    if len(REPORTS_STORE) > 500:
+        del REPORTS_STORE[:-500]
+
+    # keep only latest N in-memory PDFs
+    if len(REPORTS_PDF_CACHE) > 100:
+        oldest_ids = sorted(REPORTS_PDF_CACHE.keys())[:-100]
+        for old_id in oldest_ids:
+            REPORTS_PDF_CACHE.pop(old_id, None)
+
+    _save_persistent_reports()
 
 # In-memory scan store for compatibility (ephemeral)
 SCANS_STORE: list[dict] = []
 MAX_STORE = 100
 
 # In-memory reports store
-REPORTS_STORE: list[dict] = []
+REPORTS_STORE: list[dict] = _load_persistent_reports()
 # Report PDF cache (report_id -> pdf_bytes)
 REPORTS_PDF_CACHE: dict[str, bytes] = {}
 
@@ -563,6 +627,9 @@ async def get_api_status():
 @router.get("/reports")
 async def list_reports():
     """Return all generated reports from store."""
+    # refresh from disk if in-memory store is empty (e.g., process started fresh)
+    if not REPORTS_STORE:
+        REPORTS_STORE.extend(_load_persistent_reports())
     # Return reports in reverse chronological order (newest first)
     return list(reversed(REPORTS_STORE)) if REPORTS_STORE else []
 
@@ -648,17 +715,7 @@ async def generate_report(req: ReportRequest):
         "confidence": threat_analysis.get("confidence", 0.5),
         "created": now.isoformat(),
     }
-    REPORTS_STORE.append(report_meta)
-    
-    # Cache PDF for later retrieval
-    REPORTS_PDF_CACHE[report_id] = pdf_bytes
-    
-    # Trim old cache (keep last 50 reports)
-    if len(REPORTS_PDF_CACHE) > 50:
-        # Remove oldest entries
-        sorted_ids = sorted(REPORTS_PDF_CACHE.keys())
-        for old_id in sorted_ids[:-50]:
-            del REPORTS_PDF_CACHE[old_id]
+    store_report_artifacts(report_meta, pdf_bytes)
 
     return StreamingResponse(
         BytesIO(pdf_bytes),
@@ -679,10 +736,16 @@ async def get_report(report_id: str):
 async def download_report(report_id: str):
     """Download a specific report PDF by ID."""
     # Check if report exists in cache
-    if report_id not in REPORTS_PDF_CACHE:
-        raise HTTPException(status_code=404, detail="Report not found or expired")
-    
-    pdf_bytes = REPORTS_PDF_CACHE[report_id]
+    if report_id in REPORTS_PDF_CACHE:
+        pdf_bytes = REPORTS_PDF_CACHE[report_id]
+    else:
+        # fallback to persisted file path
+        report_meta = next((r for r in REPORTS_STORE if r.get("report_id") == report_id), None)
+        report_path = report_meta.get("report_path") if report_meta else None
+        if not report_path or not Path(report_path).exists():
+            raise HTTPException(status_code=404, detail="Report not found or expired")
+        pdf_bytes = Path(report_path).read_bytes()
+        REPORTS_PDF_CACHE[report_id] = pdf_bytes
     
     return StreamingResponse(
         BytesIO(pdf_bytes),

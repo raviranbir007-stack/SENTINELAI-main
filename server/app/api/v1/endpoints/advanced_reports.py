@@ -26,7 +26,7 @@ from ....models import (
     ScanHistory,
     ThreatSeverity,
 )
-from ...compat import REPORTS_PDF_CACHE, REPORTS_STORE
+from ...compat import store_report_artifacts
 from .report_generators import generate_executive_summary_pdf, generate_technical_analysis_pdf
 
 try:
@@ -272,17 +272,7 @@ async def generate_comprehensive_report(
                 "created": generated_at.isoformat(),
                 "source": "advanced_reports",
             }
-            REPORTS_STORE.append(report_meta)
-            REPORTS_PDF_CACHE[report_id] = pdf_bytes
-
-            # Keep caches bounded
-            if len(REPORTS_PDF_CACHE) > 100:
-                oldest_ids = sorted(REPORTS_PDF_CACHE.keys())[:-100]
-                for old_id in oldest_ids:
-                    REPORTS_PDF_CACHE.pop(old_id, None)
-
-            if len(REPORTS_STORE) > 500:
-                del REPORTS_STORE[:-500]
+            store_report_artifacts(report_meta, pdf_bytes)
 
             return StreamingResponse(
                 io.BytesIO(pdf_bytes),
