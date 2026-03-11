@@ -20,9 +20,18 @@ class ActivityDatabase:
     """
     
     def __init__(self, db_path: str = "activity_monitoring.db"):
-        self.db_path = db_path
+        # Use stable absolute path to avoid creating different DB files from different CWDs
+        if Path(db_path).is_absolute():
+            resolved_path = Path(db_path)
+        else:
+            # server/app/core/activity_database.py -> server/
+            server_root = Path(__file__).resolve().parents[2]
+            resolved_path = server_root / db_path
+
+        self.db_path = str(resolved_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_enhanced_schema()
-        logger.info(f"📊 Activity database initialized: {db_path}")
+        logger.info(f"📊 Activity database initialized: {self.db_path}")
     
     def _init_enhanced_schema(self):
         """Initialize comprehensive database schema"""
@@ -292,6 +301,52 @@ class ActivityDatabase:
             
             return record_id
             
+        except sqlite3.OperationalError as e:
+            # Self-heal when schema/table is missing in an existing DB file
+            if "no such table: applications" in str(e).lower():
+                logger.warning("Detected missing applications table; reinitializing activity DB schema")
+                try:
+                    self._init_enhanced_schema()
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        INSERT INTO applications (
+                            app_name, app_path, pid, start_time, risk_level, risk_score, risk_factors,
+                            cpu_usage, memory_usage_mb, disk_io_mb, network_io_mb,
+                            file_operations_count, network_connections_count, suspicious_behaviors,
+                            parent_process, command_line, hash_md5, hash_sha256, metadata
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        data.get('app_name'),
+                        data.get('app_path'),
+                        data.get('pid'),
+                        data.get('start_time', datetime.now(timezone.utc)),
+                        data.get('risk_level', 'LOW'),
+                        data.get('risk_score', 0.0),
+                        json.dumps(data.get('risk_factors', [])),
+                        data.get('cpu_usage'),
+                        data.get('memory_usage_mb'),
+                        data.get('disk_io_mb'),
+                        data.get('network_io_mb'),
+                        data.get('file_operations_count', 0),
+                        data.get('network_connections_count', 0),
+                        json.dumps(data.get('suspicious_behaviors', [])),
+                        data.get('parent_process'),
+                        data.get('command_line'),
+                        data.get('hash_md5'),
+                        data.get('hash_sha256'),
+                        json.dumps(data.get('metadata', {}))
+                    ))
+                    record_id = cursor.lastrowid
+                    conn.commit()
+                    conn.close()
+                    return record_id
+                except Exception as retry_error:
+                    logger.error(f"Error logging application after schema reinit: {retry_error}")
+                    return -1
+            logger.error(f"Error logging application: {e}")
+            return -1
+
         except Exception as e:
             logger.error(f"Error logging application: {e}")
             return -1
