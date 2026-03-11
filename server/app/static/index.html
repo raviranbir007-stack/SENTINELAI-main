@@ -1744,6 +1744,7 @@
         ];
 
         let recentLogs = [];
+        let allReports = [];
         let selectedReportType = 'executive_summary';
         let lastToastSignature = null;
         let lastToastTimestamp = 0;
@@ -3156,11 +3157,20 @@
 
         async function fetchAllReports() {
             try {
-                const reports = await apiRequest(API_ENDPOINTS.reports);
-                allReports = reports || [];
+                const payload = await apiRequest(API_ENDPOINTS.reports);
+                const reports = Array.isArray(payload)
+                    ? payload
+                    : Array.isArray(payload?.reports)
+                        ? payload.reports
+                        : [];
+
+                allReports = reports
+                    .filter(report => report && (report.report_id || report.title || report.created))
+                    .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
                 return allReports;
             } catch (error) {
                 console.error('Failed to fetch reports:', error);
+                allReports = [];
                 return [];
             }
         }

@@ -8,6 +8,7 @@ import io
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -25,6 +26,7 @@ from ....models import (
     ScanHistory,
     ThreatSeverity,
 )
+from ...compat import REPORTS_PDF_CACHE, REPORTS_STORE
 from .report_generators import generate_executive_summary_pdf, generate_technical_analysis_pdf
 
 try:
@@ -244,12 +246,43 @@ async def generate_comprehensive_report(
                 )
 
             # Generate PDF based on report type
+            generated_at = datetime.utcnow()
+            report_id = f"RPT_ADV_{generated_at.strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
             if request.report_type == "technical_analysis":
                 pdf_bytes = await generate_technical_analysis_pdf(report_data, request)
-                filename = f"security_report_technical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+                filename = f"security_report_technical_{generated_at.strftime('%Y%m%d_%H%M%S')}.pdf"
             else:  # executive_summary (default)
                 pdf_bytes = await generate_executive_summary_pdf(report_data, request)
-                filename = f"security_report_executive_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+                filename = f"security_report_executive_{generated_at.strftime('%Y%m%d_%H%M%S')}.pdf"
+
+            # Persist metadata so dashboard /api/reports can show recent advanced reports
+            total_threats_detected = sum(
+                interval_data.get("statistics", {}).get("threats_detected", 0)
+                for interval_data in report_data.values()
+            )
+            report_meta = {
+                "report_id": report_id,
+                "title": f"{request.report_type.replace('_', ' ').title()} Report",
+                "target": request.client_id or "all_targets",
+                "type": request.report_type,
+                "time_range": ", ".join(request.intervals),
+                "threats_detected": total_threats_detected,
+                "verdict": "safe" if total_threats_detected == 0 else "suspicious",
+                "confidence": 0.9 if total_threats_detected == 0 else 0.7,
+                "created": generated_at.isoformat(),
+                "source": "advanced_reports",
+            }
+            REPORTS_STORE.append(report_meta)
+            REPORTS_PDF_CACHE[report_id] = pdf_bytes
+
+            # Keep caches bounded
+            if len(REPORTS_PDF_CACHE) > 100:
+                oldest_ids = sorted(REPORTS_PDF_CACHE.keys())[:-100]
+                for old_id in oldest_ids:
+                    REPORTS_PDF_CACHE.pop(old_id, None)
+
+            if len(REPORTS_STORE) > 500:
+                del REPORTS_STORE[:-500]
 
             return StreamingResponse(
                 io.BytesIO(pdf_bytes),
