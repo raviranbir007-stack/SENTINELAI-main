@@ -1665,6 +1665,7 @@
         const DASHBOARD_NOTIFICATIONS_KEY = 'sentinel_dashboard_notifications_v1';
         const DASHBOARD_PANEL_STATE_KEY = 'sentinel_dashboard_panel_state_v1';
         const DASHBOARD_UI_STATE_KEY = 'sentinel_dashboard_ui_state_v1';
+        const DASHBOARD_LOCAL_REPORTS_KEY = 'sentinel_dashboard_local_reports_v1';
 
         const DEFAULT_DASHBOARD_SETTINGS = {
             apiBaseUrl: 'http://localhost:8000',
@@ -1779,6 +1780,49 @@
             toast.textContent = message;
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 5000);
+        }
+
+        function loadLocalReportsCache() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_LOCAL_REPORTS_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_e) {
+                return [];
+            }
+        }
+
+        function saveLocalReportsCache(reports) {
+            try {
+                const normalized = Array.isArray(reports) ? reports.slice(0, 50) : [];
+                localStorage.setItem(DASHBOARD_LOCAL_REPORTS_KEY, JSON.stringify(normalized));
+            } catch (_e) {
+                // ignore storage errors
+            }
+        }
+
+        function rememberGeneratedReport(reportMeta) {
+            const entry = {
+                report_id: reportMeta?.report_id || null,
+                title: reportMeta?.title || 'Generated Security Report',
+                target: reportMeta?.target || 'N/A',
+                threats_detected: Number(reportMeta?.threats_detected || 0),
+                verdict: reportMeta?.verdict || 'unknown',
+                created: reportMeta?.created || new Date().toISOString(),
+                type: reportMeta?.type || selectedReportType || 'report',
+                local_only: !reportMeta?.report_id,
+            };
+
+            const existing = loadLocalReportsCache();
+            const merged = [entry, ...existing]
+                .filter((r, idx, arr) => {
+                    const key = r.report_id || `${r.title}-${r.created}`;
+                    return arr.findIndex(x => (x.report_id || `${x.title}-${x.created}`) === key) === idx;
+                })
+                .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime())
+                .slice(0, 50);
+
+            saveLocalReportsCache(merged);
         }
 
         function setSyncStatus(mode = 'ok', text = 'SYNCED') {
@@ -2033,7 +2077,9 @@
                     </div>
                     <div class="report-item-right">
                         <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
-                        <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️</button>
+                        ${report.report_id
+                            ? `<button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️</button>`
+                            : `<span class="badge" style="font-size:10px;">Local</span>`}
                     </div>
                 </div>
             `).join('');
@@ -2345,7 +2391,9 @@
                                     </div>
                                 </div>
                                 <div class="report-item-right">
-                                    <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download</button>
+                                    ${report.report_id
+                                        ? `<button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download</button>`
+                                        : `<span class="badge" style="font-size:10px;">Stored locally</span>`}
                                 </div>
                             </div>
                         `).join('')}
@@ -2393,7 +2441,9 @@
                                 </div>
                                 <div class="report-item-right">
                                     <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
-                                    <button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download PDF</button>
+                                    ${report.report_id
+                                        ? `<button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download PDF</button>`
+                                        : `<span class="badge" style="font-size:10px;">Stored locally</span>`}
                                 </div>
                             </div>
                         `).join('')}
@@ -2971,6 +3021,15 @@
                 URL.revokeObjectURL(url);
                 
                 showToast(`${reportLabel} ready`, 'success');
+
+                rememberGeneratedReport({
+                    title: `${reportLabel} (${btnText})`,
+                    target: 'all_targets',
+                    threats_detected: 0,
+                    verdict: 'unknown',
+                    created: new Date().toISOString(),
+                    type: selectedReportType,
+                });
                 
                 // Refresh reports list (ignore errors silently)
                 try {
@@ -3034,6 +3093,15 @@
                     a.remove();
                     URL.revokeObjectURL(url);
                     showToast(`${reportLabel} ready`, 'success');
+
+                    rememberGeneratedReport({
+                        title: `${reportLabel} (All Intervals)`,
+                        target: 'all_targets',
+                        threats_detected: 0,
+                        verdict: 'unknown',
+                        created: new Date().toISOString(),
+                        type: selectedReportType,
+                    });
                     
                     // Refresh reports list (ignore errors)
                     try {
@@ -3144,6 +3212,15 @@
                 URL.revokeObjectURL(url);
                 
                 showToast('Report generated and downloaded!', 'success');
+
+                rememberGeneratedReport({
+                    title: `Threat Analysis - ${target}`,
+                    target: target,
+                    threats_detected: 0,
+                    verdict: 'unknown',
+                    created: new Date().toISOString(),
+                    type: 'scan_report',
+                });
                 
                 await fetchAllReports();
                 renderRecentReports();
@@ -3164,14 +3241,22 @@
                         ? payload.reports
                         : [];
 
-                allReports = reports
+                const remoteReports = reports
                     .filter(report => report && (report.report_id || report.title || report.created))
+                    .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
+
+                const localReports = loadLocalReportsCache();
+                allReports = [...remoteReports, ...localReports]
+                    .filter((r, idx, arr) => {
+                        const key = r.report_id || `${r.title}-${r.created}`;
+                        return arr.findIndex(x => (x.report_id || `${x.title}-${x.created}`) === key) === idx;
+                    })
                     .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
                 return allReports;
             } catch (error) {
                 console.error('Failed to fetch reports:', error);
-                allReports = [];
-                return [];
+                allReports = loadLocalReportsCache();
+                return allReports;
             }
         }
 
