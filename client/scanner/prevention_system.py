@@ -6,6 +6,7 @@ Implements real-time blocking and warning mechanisms
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
@@ -45,6 +46,8 @@ class PreventionSystem:
         # System files
         self.hosts_file = self._get_hosts_file()
         self.hosts_backup = Path("/tmp/hosts.backup") if platform.system() != "Windows" else Path("C:\\hosts.backup")
+        self.quarantine_dir = Path.home() / ".sentinelai_quarantine"
+        self.quarantine_index = self.quarantine_dir / "quarantine_index.json"
         
         # Firewall rules
         self.firewall_rules = []
@@ -166,6 +169,7 @@ class PreventionSystem:
             if self.callback:
                 self.callback({
                     'event': 'IP_BLOCKED',
+                    'ip': ip_address,
                     'ip_address': ip_address,
                     'reason': reason,
                     'timestamp': datetime.now().isoformat()
@@ -194,7 +198,8 @@ class PreventionSystem:
             # Notify
             if self.callback:
                 self.callback({
-                    'event': 'FILE_BLOCKED',
+                    'event': 'FILE_QUARANTINED',
+                    'file': file_path,
                     'file_path': file_path,
                     'reason': reason,
                     'timestamp': datetime.now().isoformat()
@@ -455,6 +460,96 @@ Recommendations:
         except Exception as e:
             logger.error(f"Error adding firewall rule: {e}")
 
+    def harden_firewall(self, profile: str = "default", high_risk_ports: Optional[List[int]] = None) -> Dict:
+        """Apply defensive firewall rules with emphasis on Windows malware exposure."""
+        system = platform.system()
+        high_risk_ports = high_risk_ports or [135, 137, 138, 139, 445, 3389, 5985, 5986]
+        results = {
+            'system': system,
+            'profile': profile,
+            'success': True,
+            'actions': [],
+            'warnings': [],
+        }
+
+        try:
+            if system == "Linux":
+                if shutil.which('ufw'):
+                    subprocess.run(['sudo', 'ufw', '--force', 'enable'], check=False, capture_output=True, text=True)
+                    subprocess.run(['sudo', 'ufw', 'default', 'deny', 'incoming'], check=False, capture_output=True, text=True)
+                    subprocess.run(['sudo', 'ufw', 'default', 'allow', 'outgoing'], check=False, capture_output=True, text=True)
+                    results['actions'].append('Enabled ufw with default deny incoming policy')
+                    for port in high_risk_ports:
+                        for protocol in ('tcp', 'udp'):
+                            subprocess.run(
+                                ['sudo', 'ufw', 'deny', f'{port}/{protocol}'],
+                                check=False,
+                                capture_output=True,
+                                text=True,
+                            )
+                    results['actions'].append('Blocked inbound high-risk Windows service ports via ufw')
+                elif shutil.which('iptables'):
+                    subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-i', 'lo', '-j', 'ACCEPT'], check=False)
+                    subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'], check=False)
+                    for port in high_risk_ports:
+                        subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'tcp', '--dport', str(port), '-j', 'DROP'], check=False)
+                        subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'udp', '--dport', str(port), '-j', 'DROP'], check=False)
+                    results['actions'].append('Applied iptables drops for high-risk inbound ports')
+                else:
+                    results['success'] = False
+                    results['warnings'].append('No supported Linux firewall tool detected (ufw/iptables)')
+
+            elif system == "Windows":
+                subprocess.run(
+                    ['netsh', 'advfirewall', 'set', 'allprofiles', 'state', 'on'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                results['actions'].append('Enabled Windows Firewall on all profiles')
+                for port in high_risk_ports:
+                    for protocol in ('TCP', 'UDP'):
+                        rule_name = f'SentinelAI_Harden_{protocol}_{port}'
+                        subprocess.run(
+                            [
+                                'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                                f'name={rule_name}',
+                                'dir=in',
+                                'action=block',
+                                f'protocol={protocol}',
+                                f'localport={port}',
+                            ],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                results['actions'].append('Blocked common Windows malware and lateral-movement ports')
+
+            elif system == "Darwin":
+                if shutil.which('pfctl'):
+                    subprocess.run(['sudo', 'pfctl', '-e'], check=False, capture_output=True, text=True)
+                    results['actions'].append('Ensured pf firewall is enabled')
+                else:
+                    results['success'] = False
+                    results['warnings'].append('pfctl not found; unable to harden firewall')
+
+            self.firewall_rules.extend([f'hardening:{system}:{port}' for port in high_risk_ports])
+        except Exception as e:
+            results['success'] = False
+            results['warnings'].append(str(e))
+            logger.error(f"Failed to harden firewall: {e}")
+
+        if self.callback:
+            self.callback({
+                'event': 'FIREWALL_HARDENED',
+                'profile': profile,
+                'system': system,
+                'timestamp': datetime.now().isoformat(),
+                'details': results,
+            })
+
+        return results
+
     def _quarantine_file(self, file_path: str):
         """Quarantine a malicious file"""
         try:
@@ -465,23 +560,70 @@ Recommendations:
                 return
             
             # Create quarantine directory
-            quarantine_dir = Path.home() / ".sentinelai_quarantine"
-            quarantine_dir.mkdir(exist_ok=True)
+            self.quarantine_dir.mkdir(exist_ok=True)
             
             # Move file to quarantine
             import shutil
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            quarantine_path = quarantine_dir / f"{timestamp}_{file_path.name}"
+            quarantine_path = self.quarantine_dir / f"{timestamp}_{file_path.name}"
+
+            sha256_hash = None
+            try:
+                import hashlib
+                digest = hashlib.sha256()
+                with open(file_path, 'rb') as handle:
+                    for chunk in iter(lambda: handle.read(65536), b''):
+                        digest.update(chunk)
+                sha256_hash = digest.hexdigest()
+            except Exception:
+                sha256_hash = None
             
             shutil.move(str(file_path), str(quarantine_path))
             
             # Remove execute permissions
-            os.chmod(quarantine_path, 0o000)
+            try:
+                os.chmod(quarantine_path, 0o000)
+            except Exception:
+                pass
+
+            self._record_quarantine_event(file_path, quarantine_path, sha256_hash)
             
             logger.info(f"File quarantined: {file_path} -> {quarantine_path}")
             
         except Exception as e:
             logger.error(f"Failed to quarantine file: {e}")
+
+    def _record_quarantine_event(self, original_path: Path, quarantine_path: Path, sha256_hash: Optional[str]):
+        """Persist quarantine metadata for audit and manual restoration."""
+        try:
+            records = []
+            if self.quarantine_index.exists():
+                import json
+                records = json.loads(self.quarantine_index.read_text(encoding='utf-8'))
+
+            records.append({
+                'timestamp': datetime.now().isoformat(),
+                'original_path': str(original_path),
+                'quarantine_path': str(quarantine_path),
+                'sha256': sha256_hash,
+            })
+
+            import json
+            self.quarantine_index.write_text(json.dumps(records, indent=2), encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Failed to record quarantine metadata: {e}")
+
+    def get_quarantine_inventory(self) -> List[Dict]:
+        """Return quarantined item metadata."""
+        try:
+            if self.quarantine_index.exists():
+                import json
+                data = json.loads(self.quarantine_index.read_text(encoding='utf-8'))
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            logger.error(f"Failed to load quarantine inventory: {e}")
+        return []
 
     def _kill_application(self, app_name: str):
         """Kill running instances of an application"""
@@ -634,10 +776,19 @@ Recommendations:
 
     def get_statistics(self) -> Dict:
         """Get prevention statistics"""
+        quarantine_count = 0
+        try:
+            if self.quarantine_index.exists():
+                import json
+                quarantine_count = len(json.loads(self.quarantine_index.read_text(encoding='utf-8')))
+        except Exception:
+            quarantine_count = 0
+
         return {
             'blocked_domains': len(self.blocked_domains),
             'blocked_ips': len(self.blocked_ips),
             'blocked_files': len(self.blocked_files),
             'blocked_apps': len(self.blocked_apps),
-            'firewall_rules': len(self.firewall_rules)
+            'firewall_rules': len(self.firewall_rules),
+            'quarantined_items': quarantine_count
         }

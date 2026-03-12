@@ -1230,6 +1230,51 @@
             </div>
         </section>
 
+        <!-- Security Posture Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🔒 Security Posture</h2>
+                        <p>Startup threat assessment &amp; system vulnerability baseline</p>
+                    </div>
+                    <button id="refreshSecurityPostureBtn" class="btn btn-outline btn-sm" onclick="fetchSecurityPosture()" title="Refresh security posture">↺ Refresh</button>
+                </div>
+                <div id="securityPostureCard" class="card card-glass" style="padding: 1.5rem;">
+                    <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading security posture...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Quarantine Inventory Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🗂️ Quarantine Inventory</h2>
+                        <p>Files and entities isolated by the intrusion prevention system</p>
+                    </div>
+                    <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
+                </div>
+                <div class="card card-glass">
+                    <table class="threats-table">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>Size</th>
+                                <th>Quarantined At</th>
+                                <th>Original Path</th>
+                            </tr>
+                        </thead>
+                        <tbody id="quarantineTableBody">
+                            <tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted-foreground);">Loading quarantine inventory...</td></tr>
+                        </tbody>
+                    </table>
+                    <div id="quarantineStats" style="display:flex; gap:2rem; padding:1rem 1.5rem; border-top:1px solid var(--border); font-size:0.875rem; color:var(--muted-foreground);"></div>
+                </div>
+            </div>
+        </section>
+
         <!-- AI Report Section -->
         <section class="section">
             <div class="container">
@@ -1477,7 +1522,7 @@
                 </div>
             </div>
             <div class="footer-bottom">
-                <span>© 2024 SENTINEL-AI-SYSTEM. All rights reserved.</span>
+                <span>© 2026 SENTINEL-AI. Built &amp; owned by Ravi.</span>
                 <span>Build: v2.4.1-stable | Last Updated: <span id="currentDate"></span></span>
             </div>
         </div>
@@ -2629,6 +2674,8 @@
                     fetchThreats();
                     fetchLogs();
                     fetchApiStatus();
+                    fetchSecurityPosture();
+                    fetchQuarantineInventory();
                 }, interval);
             }
         }
@@ -2758,6 +2805,50 @@
             badge.textContent = unreadCount;
             badge.style.display = unreadCount > 0 ? 'flex' : 'none';
             updateSystemStatusPanel();
+        }
+
+        async function runWithRefreshIndicator(buttonId, fn) {
+            const btn = document.getElementById(buttonId);
+            if (!btn) {
+                return fn();
+            }
+
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Refreshing...';
+            try {
+                await fn();
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        }
+
+        function parseQuarantineTimestamp(item) {
+            if (!item || typeof item !== 'object') return 'Unknown';
+
+            const value = item.quarantine_time ?? item.quarantined_at ?? item.timestamp;
+            if (value === null || value === undefined || value === '') return 'Unknown';
+
+            if (typeof value === 'number') {
+                const millis = value < 1e12 ? value * 1000 : value;
+                const dt = new Date(millis);
+                return Number.isNaN(dt.getTime()) ? 'Unknown' : dt.toLocaleString();
+            }
+
+            if (typeof value === 'string') {
+                const numeric = Number(value);
+                if (!Number.isNaN(numeric) && value.trim() !== '') {
+                    const millis = numeric < 1e12 ? numeric * 1000 : numeric;
+                    const dt = new Date(millis);
+                    if (!Number.isNaN(dt.getTime())) return dt.toLocaleString();
+                }
+
+                const dt = new Date(value);
+                return Number.isNaN(dt.getTime()) ? 'Unknown' : dt.toLocaleString();
+            }
+
+            return 'Unknown';
         }
 
         function markNotificationRead(notifId) {
@@ -3278,6 +3369,125 @@
         }
 
         // =============================================
+        // Security Posture & Quarantine Functions
+        // =============================================
+        async function fetchSecurityPosture() {
+            const card = document.getElementById('securityPostureCard');
+            if (!card) return;
+            await runWithRefreshIndicator('refreshSecurityPostureBtn', async () => {
+                try {
+                    const data = await apiRequest('/api/v1/dashboard/security-posture');
+                    renderSecurityPosture(data);
+                } catch (error) {
+                    card.innerHTML = `<div style="padding:1rem; color:var(--muted-foreground);">Security posture data unavailable — run the protection client to generate a startup report.</div>`;
+                }
+            });
+        }
+
+        function renderSecurityPosture(data) {
+            const card = document.getElementById('securityPostureCard');
+            if (!card) return;
+            const summary = data.summary || {};
+            const categories = data.categories || {};
+            const available = data.available;
+            const lastRun = data.timestamp ? new Date(data.timestamp).toLocaleString() : 'No report yet';
+
+            const criticalCount = summary.critical_findings || 0;
+            const highCount = summary.high_findings || 0;
+            const totalCount = summary.total_findings || 0;
+            const actionsCount = summary.actions_taken || 0;
+
+            const statusText = !available ? 'pending' : criticalCount > 0 ? 'critical' : highCount > 0 ? 'warning' : 'ok';
+            const statusBadgeClass = statusText === 'critical' ? 'badge-threat' :
+                                     statusText === 'warning' ? 'badge-warning' : 'badge-safe';
+
+            const catEntries = Object.entries(categories).filter(([, count]) => count > 0);
+
+            card.innerHTML = `
+                <div style="display:flex; flex-wrap:wrap; gap:2rem; align-items:flex-start;">
+                    <div style="flex:1; min-width:160px;">
+                        <div style="font-size:0.75rem; color:var(--muted-foreground); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">System Status</div>
+                        <div style="display:flex; align-items:center; gap:0.75rem;">
+                            <span style="font-size:2rem;">🛡️</span>
+                            <span class="badge ${statusBadgeClass}" style="font-size:0.9rem; padding:0.3rem 0.9rem; text-transform:uppercase;">${statusText}</span>
+                        </div>
+                        <div style="font-size:0.75rem; color:var(--muted-foreground); margin-top:0.5rem;">Last scan: ${lastRun}</div>
+                    </div>
+                    <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
+                        <div style="text-align:center; min-width:70px;">
+                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--destructive);">${criticalCount}</div>
+                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Critical</div>
+                        </div>
+                        <div style="text-align:center; min-width:70px;">
+                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--warning);">${highCount}</div>
+                            <div style="font-size:0.75rem; color:var(--muted-foreground);">High</div>
+                        </div>
+                        <div style="text-align:center; min-width:70px;">
+                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--primary);">${totalCount}</div>
+                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Total</div>
+                        </div>
+                        <div style="text-align:center; min-width:70px;">
+                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--success);">${actionsCount}</div>
+                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Actions</div>
+                        </div>
+                    </div>
+                    ${catEntries.length ? `
+                    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-left:auto;">
+                        ${catEntries.map(([cat, count]) => `<span class="badge badge-threat" style="font-size:0.75rem;">${cat}: ${count}</span>`).join('')}
+                    </div>` : ''}
+                </div>
+            `;
+            if (criticalCount > 0 && shouldNotify('posture_critical', 120000)) {
+                addNotification(
+                    '⚠ Critical Security Findings',
+                    `Startup scan found ${criticalCount} critical issue(s). Check Security Posture section.`,
+                    'warning', 'posture_critical', 120000
+                );
+            }
+        }
+
+        async function fetchQuarantineInventory() {
+            const tbody = document.getElementById('quarantineTableBody');
+            if (!tbody) return;
+            await runWithRefreshIndicator('refreshQuarantineBtn', async () => {
+                try {
+                    const data = await apiRequest('/api/v1/dashboard/quarantine-inventory');
+                    renderQuarantineInventory(data);
+                } catch (error) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted-foreground);">Quarantine data unavailable.</td></tr>';
+                }
+            });
+        }
+
+        function renderQuarantineInventory(data) {
+            const tbody = document.getElementById('quarantineTableBody');
+            const statsDiv = document.getElementById('quarantineStats');
+            if (!tbody) return;
+
+            const items = data.items || [];
+            if (items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--success);">✅ No quarantined files — system is clean.</td></tr>';
+            } else {
+                tbody.innerHTML = items.map(item => {
+                    const sizeKB = item.size ? (item.size / 1024).toFixed(1) + ' KB' : 'N/A';
+                    const ts = parseQuarantineTimestamp(item);
+                    const origPath = item.original_path || item.path || '—';
+                    return `
+                        <tr>
+                            <td><code class="threat-target">${item.name || item.filename || '—'}</code></td>
+                            <td style="color:var(--muted-foreground); font-family:'JetBrains Mono',monospace;">${sizeKB}</td>
+                            <td><div class="threat-time">🕐 ${ts}</div></td>
+                            <td style="color:var(--muted-foreground); font-size:0.8rem; font-family:'JetBrains Mono',monospace; word-break:break-all;">${origPath}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+            if (statsDiv) {
+                statsDiv.innerHTML = `<span>📦 <strong>${data.total || 0}</strong> quarantined file(s)</span>`;
+            }
+        }
+
+        // =============================================
         // Scans Page Functions
         // =============================================
         async function performNewScan() {
@@ -3518,6 +3728,8 @@
             toggleRecentLogsBtn.addEventListener('click', toggleRecentLogsPanel);
         }
 
+        // refreshSecurityPostureBtn and refreshQuarantineBtn use inline onclick — no extra listener needed
+
         // Scans page handlers
         document.getElementById('newScanBtn').addEventListener('click', performNewScan);
         document.getElementById('newScanInput').addEventListener('keypress', (e) => {
@@ -3628,6 +3840,8 @@
             fetchScanHistory();
             fetchLogs();
             fetchApiStatus();
+            fetchSecurityPosture();
+            fetchQuarantineInventory();
             initLogStream();
             setupRefreshScheduler();
 
@@ -3662,6 +3876,8 @@
                     fetchThreats();
                     fetchLogs();
                     fetchApiStatus();
+                    fetchSecurityPosture();
+                    fetchQuarantineInventory();
                 }
             });
         });

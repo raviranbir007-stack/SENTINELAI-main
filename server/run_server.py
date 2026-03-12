@@ -35,6 +35,10 @@ def _reexec_with_venv_if_needed():
 
 _reexec_with_venv_if_needed()
 
+PROJECT_ROOT = Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # Preserve Gemini quota by skipping startup tests
 os.environ.setdefault("SKIP_GEMINI_STARTUP_TESTS", "true")
 # Integrated launcher should explicitly enable background monitoring
@@ -144,11 +148,12 @@ def run_protection_client():
         sys.path.insert(0, str(scanner_dir))
         
         # Import all protection components
-        from scanner.intrusion_detector import IntrusionDetector
-        from scanner.prevention_system import PreventionSystem
-        from scanner.activity_logger import ActivityLogger
-        from scanner.traffic_monitor import AutomaticTrafficMonitor
-        from scanner.defense_coordinator import DefenseCoordinator
+        from client.scanner.intrusion_detector import IntrusionDetector
+        from client.scanner.prevention_system import PreventionSystem
+        from client.scanner.activity_logger import ActivityLogger
+        from client.scanner.traffic_monitor import AutomaticTrafficMonitor
+        from client.scanner.defense_coordinator import DefenseCoordinator
+        from client.scanner.startup_hardening import StartupThreatMonitor
         
         # Initialize components
         stats = {
@@ -157,6 +162,9 @@ def run_protection_client():
             "intrusions_blocked": 0,
             "activities_logged": 0,
             "threats_detected": 0,
+            "startup_findings": 0,
+            "files_quarantined": 0,
+            "firewall_hardening_actions": 0,
         }
         
         def handle_intrusion(intrusion):
@@ -190,12 +198,33 @@ def run_protection_client():
         def handle_defense_event(event):
             if event.get('event') == 'QUARANTINE_ACTIVATED':
                 logger.critical("🔒 SYSTEM QUARANTINED - Threat response timeout")
+
+        def handle_prevention_event(event):
+            event_type = event.get('event')
+            if event_type == 'FILE_QUARANTINED':
+                stats['files_quarantined'] += 1
+            elif event_type == 'FIREWALL_HARDENED':
+                details = event.get('details', {})
+                stats['firewall_hardening_actions'] += len(details.get('actions', []))
+
+        def handle_startup_event(event):
+            if event.get('event') != 'STARTUP_ASSESSMENT_COMPLETED':
+                return
+
+            summary = event.get('report', {}).get('summary', {})
+            stats['startup_findings'] += summary.get('total_findings', 0)
+            logger.info(
+                "🧪 Startup assessment complete | findings=%s critical=%s high=%s",
+                summary.get('total_findings', 0),
+                summary.get('critical_findings', 0),
+                summary.get('high_findings', 0),
+            )
         
         # Start all components
         ids = IntrusionDetector(callback=handle_intrusion)
         ids.start()
         
-        ips = PreventionSystem()
+        ips = PreventionSystem(callback=handle_prevention_event)
         ips.start()
         
         activity_logger = ActivityLogger(callback=handle_activity)
@@ -207,6 +236,13 @@ def run_protection_client():
         
         defense_coordinator = DefenseCoordinator(server_url="http://localhost:8000", callback=handle_defense_event)
         defense_coordinator.start()
+
+        startup_monitor = StartupThreatMonitor(
+            prevention_system=ips,
+            defense_coordinator=defense_coordinator,
+            callback=handle_startup_event,
+        )
+        startup_monitor.run_startup_assessment(apply_firewall_hardening=True)
         
         logger.info("✅ IDS | IPS | Monitor | Traffic | Defense → ACTIVE")
         
@@ -224,6 +260,9 @@ def run_protection_client():
                 logger.info(f"  • Intrusions blocked: {stats['intrusions_blocked']}")
                 logger.info(f"  • Activities logged: {stats['activities_logged']}")
                 logger.info(f"  • Threats detected: {stats['threats_detected']}")
+                logger.info(f"  • Startup findings: {stats['startup_findings']}")
+                logger.info(f"  • Files quarantined: {stats['files_quarantined']}")
+                logger.info(f"  • Firewall hardening actions: {stats['firewall_hardening_actions']}")
                 last_stats = time.time()
         
     except ImportError as e:

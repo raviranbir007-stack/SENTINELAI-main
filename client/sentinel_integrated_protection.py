@@ -27,6 +27,7 @@ from scanner.file_scanner import FileScanner
 from scanner.process_scanner import ProcessScanner
 from scanner.threat_analyzer import ThreatAnalyzer
 from scanner.minimal_cli import MinimalCLI
+from scanner.startup_hardening import StartupThreatMonitor
 
 # Configure logging
 logging.basicConfig(
@@ -81,6 +82,11 @@ class IntegratedProtectionSystem:
             server_url=server_url,
             callback=self._handle_defense_event
         )
+        self.startup_monitor = StartupThreatMonitor(
+            prevention_system=self.ips,
+            defense_coordinator=self.defense_coordinator,
+            callback=self._handle_startup_event,
+        )
         
         # Scanners
         self.network_scanner = NetworkScanner()
@@ -100,6 +106,8 @@ class IntegratedProtectionSystem:
             "artifacts_scanned": 0,
             "websites_scanned": 0,
             "files_scanned": 0,
+            "startup_findings": 0,
+            "firewall_hardening_actions": 0,
         }
         
         # Threat correlation
@@ -145,6 +153,10 @@ class IntegratedProtectionSystem:
             self.stats["files_quarantined"] += 1
             file_path = event.get("file", "")
             logger.info(f"🔒 File quarantined: {file_path}")
+        elif event_type == "FIREWALL_HARDENED":
+            details = event.get("details", {})
+            self.stats["firewall_hardening_actions"] += len(details.get("actions", []))
+            logger.info("🛡️  Firewall hardening applied")
 
     def _handle_activity(self, activity: Dict):
         """Handle logged activity"""
@@ -187,6 +199,20 @@ class IntegratedProtectionSystem:
             logger.critical("🔒 SYSTEM QUARANTINED - Threat response timeout")
         elif event_type == "QUARANTINE_RELEASED":
             logger.info("🔓 System quarantine released")
+
+    def _handle_startup_event(self, event: Dict):
+        """Handle startup hardening results."""
+        if event.get("event") != "STARTUP_ASSESSMENT_COMPLETED":
+            return
+
+        summary = event.get("report", {}).get("summary", {})
+        self.stats["startup_findings"] += summary.get("total_findings", 0)
+        logger.info(
+            "🧪 Startup security baseline complete | findings=%s critical=%s high=%s",
+            summary.get("total_findings", 0),
+            summary.get("critical_findings", 0),
+            summary.get("high_findings", 0),
+        )
 
     def _handle_threat_verdict(self, verdict: Dict):
         """Handle threat verdicts from multi-API scanner"""
@@ -268,6 +294,8 @@ class IntegratedProtectionSystem:
         logger.info("✅ ALL SYSTEMS ACTIVE - Protection enabled")
         logger.info("=" * 60)
         logger.info("")
+
+        self.startup_monitor.run_startup_assessment(apply_firewall_hardening=True)
         
         # Start monitoring loop
         self._run_monitoring_loop()
@@ -344,6 +372,8 @@ class IntegratedProtectionSystem:
         logger.info(f"  • Domains blocked: {self.stats['domains_blocked']}")
         logger.info(f"  • IPs blocked: {self.stats['ips_blocked']}")
         logger.info(f"  • Files quarantined: {self.stats['files_quarantined']}")
+        logger.info(f"  • Startup findings: {self.stats['startup_findings']}")
+        logger.info(f"  • Firewall hardening actions: {self.stats['firewall_hardening_actions']}")
         logger.info("")
         logger.info("Monitoring:")
         logger.info(f"  • Activities logged: {self.stats['activities_logged']}")

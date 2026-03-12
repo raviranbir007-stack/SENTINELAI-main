@@ -58,7 +58,7 @@ class TerminalActivityMonitor:
             return
         
         self.running = True
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
         
@@ -74,7 +74,7 @@ class TerminalActivityMonitor:
     def log_website_activity(self, domain: str, risk_level: str = 'LOW'):
         """Log website activity"""
         self.stats['websites_monitored'] += 1
-        self.stats['last_activity_time'] = datetime.utcnow()
+        self.stats['last_activity_time'] = datetime.now(timezone.utc)
         
         activity = f"{domain} [{risk_level}]"
         if activity not in self.recent_websites:
@@ -83,7 +83,7 @@ class TerminalActivityMonitor:
     def log_app_activity(self, app_name: str, risk_level: str = 'LOW'):
         """Log application activity"""
         self.stats['apps_monitored'] += 1
-        self.stats['last_activity_time'] = datetime.utcnow()
+        self.stats['last_activity_time'] = datetime.now(timezone.utc)
         
         activity = f"{app_name} [{risk_level}]"
         if activity not in self.recent_apps:
@@ -92,12 +92,12 @@ class TerminalActivityMonitor:
     def log_connection_activity(self):
         """Log network connection"""
         self.stats['connections_monitored'] += 1
-        self.stats['last_activity_time'] = datetime.utcnow()
+        self.stats['last_activity_time'] = datetime.now(timezone.utc)
     
     def log_scan_activity(self, artifact_type: str, artifact_value: str, verdict: str):
         """Log threat scan activity"""
         self.stats['scans_performed'] += 1
-        self.stats['last_activity_time'] = datetime.utcnow()
+        self.stats['last_activity_time'] = datetime.now(timezone.utc)
         
         if verdict in ['malicious', 'suspicious', 'critical']:
             self.stats['threats_detected'] += 1
@@ -105,7 +105,7 @@ class TerminalActivityMonitor:
                 'type': artifact_type,
                 'value': artifact_value,
                 'verdict': verdict,
-                'time': datetime.utcnow()
+                'time': datetime.now(timezone.utc)
             })
     
     def _monitor_loop(self):
@@ -166,13 +166,13 @@ class TerminalActivityMonitor:
             return
         
         # Calculate uptime
-        uptime = datetime.utcnow() - self.start_time
+        uptime = datetime.now(timezone.utc) - self.start_time
         uptime_str = str(uptime).split('.')[0]  # Remove microseconds
         
         # Get time since last activity
         last_activity = "N/A"
         if self.stats['last_activity_time']:
-            time_since = datetime.utcnow() - self.stats['last_activity_time']
+            time_since = datetime.now(timezone.utc) - self.stats['last_activity_time']
             if time_since.total_seconds() < 60:
                 last_activity = f"{int(time_since.total_seconds())}s ago"
             elif time_since.total_seconds() < 3600:
@@ -197,7 +197,7 @@ class TerminalActivityMonitor:
     def print_summary(self):
         """Print final summary"""
         # Calculate session duration
-        duration = datetime.utcnow() - self.start_time
+        duration = datetime.now(timezone.utc) - self.start_time
         duration_str = str(duration).split('.')[0]
         threat_rate = (self.stats['threats_detected'] / self.stats['scans_performed']) * 100 if self.stats['scans_performed'] > 0 else 0.0
         print(

@@ -67,6 +67,24 @@ class SentinelAPI {
     });
   }
 
+  /**
+   * Get startup security posture
+   */
+  async getSecurityPosture() {
+    return this.request('/dashboard/security-posture', {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Get local quarantine inventory
+   */
+  async getQuarantineInventory() {
+    return this.request('/dashboard/quarantine-inventory', {
+      method: 'GET',
+    });
+  }
+
   // ============= SCAN ENDPOINTS =============
   
   /**

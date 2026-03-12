@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends
@@ -13,6 +14,9 @@ from ....config import settings
 from ....models import ScanHistory, SystemLog
 
 router = APIRouter()
+
+STARTUP_REPORT_PATH = Path.home() / ".sentinelai_startup_assessment.json"
+QUARANTINE_INDEX_PATH = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
 
 
 def _get_time_threshold(time_range: str) -> datetime:
@@ -51,6 +55,18 @@ async def options_dashboard_threats():
 @router.options("/stats")
 async def options_stats():
     """Handle CORS preflight for /stats endpoint."""
+    return {}
+
+
+@router.options("/security-posture")
+async def options_security_posture():
+    """Handle CORS preflight for /security-posture endpoint."""
+    return {}
+
+
+@router.options("/quarantine-inventory")
+async def options_quarantine_inventory():
+    """Handle CORS preflight for /quarantine-inventory endpoint."""
     return {}
 
 
@@ -175,6 +191,57 @@ async def get_dashboard_stats(
             stats["ips_scanned"] += 1
 
     return stats
+
+
+@router.get("/security-posture")
+async def get_security_posture():
+    """Return the latest startup hardening report and summarized posture."""
+    report = {}
+    if STARTUP_REPORT_PATH.exists():
+        try:
+            report = json.loads(STARTUP_REPORT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            report = {}
+
+    findings = report.get("findings", {}) if isinstance(report, dict) else {}
+    summary = report.get("summary", {}) if isinstance(report, dict) else {}
+    return {
+        "available": bool(report),
+        "timestamp": report.get("timestamp") if isinstance(report, dict) else None,
+        "host": report.get("host", {}) if isinstance(report, dict) else {},
+        "summary": {
+            "total_findings": summary.get("total_findings", 0),
+            "critical_findings": summary.get("critical_findings", 0),
+            "high_findings": summary.get("high_findings", 0),
+            "actions_taken": summary.get("actions_taken", 0),
+        },
+        "categories": {
+            "processes": len(findings.get("processes", [])),
+            "files": len(findings.get("files", [])),
+            "vulnerabilities": len(findings.get("vulnerabilities", [])),
+            "firewall": len(findings.get("firewall", [])),
+        },
+        "report": report,
+    }
+
+
+@router.get("/quarantine-inventory")
+async def get_quarantine_inventory():
+    """Return local quarantine inventory for the unified protection host."""
+    inventory = []
+    if QUARANTINE_INDEX_PATH.exists():
+        try:
+            loaded = json.loads(QUARANTINE_INDEX_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                inventory = loaded
+        except Exception:
+            inventory = []
+
+    return {
+        "total": len(inventory),
+        "items": inventory,
+        "quarantine_path": str(QUARANTINE_INDEX_PATH.parent),
+    }
 
 
 @router.get("/logs")
