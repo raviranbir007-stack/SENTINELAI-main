@@ -140,9 +140,12 @@ async def _save_scan_to_db(scan_data: dict, db: AsyncSession):
             component="scanner",
             message=f"Scan completed: {scan_data.get('scan_id')} - {scan_data.get('target')}",
             details={
+                "scan_id": scan_data.get("scan_id"),
+                "target": scan_data.get("target"),
                 "threat_level": scan_data.get("threat_level"),
                 "target_type": scan_data.get("type"),
                 "threats_detected": scan_data.get("threats_detected", 0),
+                "confidence": scan_data.get("confidence", 0.0),
             },
         )
         db.add(log_entry)

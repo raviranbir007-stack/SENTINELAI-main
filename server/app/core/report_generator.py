@@ -6,7 +6,9 @@ Generates AI-analyzed threat reports in PDF format
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 import time
 
@@ -816,6 +818,66 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
 
         return rows
 
+    def _get_endpoint_vuln_summary(self, hours: int = 24) -> Optional[Dict[str, int]]:
+        """Summarize endpoint vulnerability findings from local activity_logs DB.
+
+        Returns per-severity counts for the requested time window, or None when
+        no vulnerability table/data is available.
+        """
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            candidates = [
+                project_root / "activity_logs.db",
+                project_root / "server" / "activity_logs.db",
+                project_root / "client" / "activity_logs.db",
+            ]
+
+            cutoff = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+            for db_path in candidates:
+                if not db_path.exists():
+                    continue
+
+                conn = sqlite3.connect(str(db_path))
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='vulnerabilities'"
+                    )
+                    if not cur.fetchone():
+                        continue
+
+                    cur.execute(
+                        """
+                        SELECT UPPER(COALESCE(severity, 'INFO')) as sev, COUNT(*)
+                        FROM vulnerabilities
+                        WHERE timestamp >= ?
+                        GROUP BY UPPER(COALESCE(severity, 'INFO'))
+                        """,
+                        (cutoff,),
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        continue
+
+                    counts = {sev: int(cnt) for sev, cnt in rows}
+                    summary = {
+                        "critical": counts.get("CRITICAL", 0),
+                        "high": counts.get("HIGH", 0),
+                        "medium": counts.get("MEDIUM", 0),
+                        "low": counts.get("LOW", 0),
+                        "info": counts.get("INFO", 0),
+                    }
+                    summary["total"] = sum(summary.values())
+                    return summary
+                finally:
+                    conn.close()
+
+            return None
+        except Exception as e:
+            logger.debug(f"Could not read endpoint vulnerability summary: {e}")
+            return None
+
     def _create_pdf_report(
         self, threat_analysis: Dict[str, Any], ai_analysis: str
     ) -> bytes:
@@ -995,6 +1057,40 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 
                 elements.append(activity_table)
                 elements.append(Spacer(1, 0.2 * inch))
+
+                # Endpoint vulnerability scan summary (short/simple table)
+                vuln_summary = self._get_endpoint_vuln_summary(hours=24)
+                if vuln_summary and vuln_summary.get("total", 0) > 0:
+                    elements.append(Paragraph("ENDPOINT VULNERABILITY SUMMARY (Last 24h)", heading_style))
+
+                    vuln_data = [
+                        ["Severity", "Findings"],
+                        ["Critical", str(vuln_summary.get("critical", 0))],
+                        ["High", str(vuln_summary.get("high", 0))],
+                        ["Medium", str(vuln_summary.get("medium", 0))],
+                        ["Low", str(vuln_summary.get("low", 0))],
+                        ["Info", str(vuln_summary.get("info", 0))],
+                        ["Total", str(vuln_summary.get("total", 0))],
+                    ]
+
+                    vuln_table = Table(vuln_data, colWidths=[3 * inch, 2 * inch])
+                    vuln_table.setStyle(
+                        TableStyle([
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#37474f")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 10),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                            ("TOPPADDING", (0, 0), (-1, -1), 7),
+                            ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
+                            ("BACKGROUND", (0, 6), (-1, 6), colors.HexColor("#eceff1")),
+                            ("FONTNAME", (0, 6), (-1, 6), "Helvetica-Bold"),
+                        ])
+                    )
+                    elements.append(vuln_table)
+                    elements.append(Spacer(1, 0.2 * inch))
                 
                 # Recent threats from activity monitoring
                 recent_threats = activity_db.get_recent_threats(limit=5)

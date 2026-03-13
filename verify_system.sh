@@ -7,6 +7,12 @@ echo "🔍 SENTINELAI System Verification"
 echo "========================================"
 echo ""
 
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_CMD="python3"
+if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    PYTHON_CMD="$ROOT_DIR/.venv/bin/python"
+fi
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,7 +50,7 @@ echo "Checking Python dependencies..."
 
 check_python_package() {
     echo -n "  $1... "
-    if python3 -c "import $1" 2>/dev/null; then
+    if "$PYTHON_CMD" -c "import $1" 2>/dev/null; then
         echo -e "${GREEN}✓${NC} Installed"
     else
         echo -e "${RED}✗${NC} Missing"
@@ -57,6 +63,21 @@ check_python_package "scapy"
 check_python_package "requests"
 check_python_package "fastapi"
 check_python_package "uvicorn"
+
+# Optional packages used by extended monitors
+echo ""
+echo "Checking optional monitor dependencies..."
+check_optional_package() {
+    echo -n "  $1... "
+    if "$PYTHON_CMD" -c "import $1" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Installed"
+    else
+        echo -e "${YELLOW}⚠${NC} Missing (optional)"
+        ((WARNINGS++))
+    fi
+}
+
+check_optional_package "pyudev"
 
 # Check system tools
 echo ""
@@ -136,8 +157,15 @@ else
 fi
 
 echo -n "  Port 8000 availability... "
-if lsof -i :8000 &> /dev/null; then
-    echo -e "${YELLOW}⚠${NC} Port in use"
+if command -v ss &> /dev/null; then
+    if ss -ltn '( sport = :8000 )' | grep -q LISTEN; then
+        echo -e "${YELLOW}⚠${NC} Port in use (LISTEN)"
+        ((WARNINGS++))
+    else
+        echo -e "${GREEN}✓${NC} Available"
+    fi
+elif lsof -iTCP:8000 -sTCP:LISTEN -n -P &> /dev/null; then
+    echo -e "${YELLOW}⚠${NC} Port in use (LISTEN)"
     ((WARNINGS++))
 else
     echo -e "${GREEN}✓${NC} Available"

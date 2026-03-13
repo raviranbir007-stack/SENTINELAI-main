@@ -1,12 +1,20 @@
 #!/bin/bash
 # Quick validation test before starting the system
 
+set -u
+
 echo "🔍 Validating system before start..."
 echo ""
 
-cd /home/kali/Documents/SENTINELAI-main/server || exit 1
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+    PYTHON_BIN="$(command -v python3)"
+fi
 
-python3 << 'EOF'
+cd "$ROOT_DIR/server" || exit 1
+
+"$PYTHON_BIN" << 'EOF'
 import sys
 from pathlib import Path
 
@@ -44,6 +52,39 @@ try:
     from scanner.defense_coordinator import DefenseCoordinator
     dc = DefenseCoordinator(server_url="http://localhost:8000", callback=None)
     print("✓ Defense Coordinator (Alert & Quarantine)")
+
+    # Test 6-10: Extended endpoint monitors
+    from scanner.usb_monitor import USBMonitor
+    from scanner.email_monitor import EmailMonitor
+    from scanner.vulnerability_scanner import VulnerabilityScanner
+    from scanner.behavioral_monitor import BehavioralMonitor
+    from scanner.dns_monitor import DNSMonitor
+    from scanner.network_scanner import NetworkScanner
+    from scanner.process_scanner import ProcessScanner
+    from scanner.file_scanner import FileScanner
+
+    USBMonitor(callback=None)
+    EmailMonitor(callback=None)
+    VulnerabilityScanner(callback=None)
+    BehavioralMonitor(callback=None)
+    DNSMonitor(callback=None)
+    NetworkScanner(callback=None)
+    ProcessScanner(callback=None)
+    FileScanner(threat_analyzer=None)
+    print("✓ Extended monitors (USB/Email/Vuln/Behavior/DNS/Network/Process/File)")
+
+    # Test 11: API route registration for defense event pipeline
+    from app.main import app
+    route_paths = {r.path for r in app.routes}
+    required = {
+        "/api/v1/network/event",
+        "/api/v1/network/events",
+        "/api/v1/network/ingest/nids",
+    }
+    missing = sorted(required - route_paths)
+    if missing:
+        raise RuntimeError(f"Missing required API routes: {missing}")
+    print("✓ Server API routes (defense event + NIDS ingest)")
     
     print()
     print("="*60)

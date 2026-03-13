@@ -6,6 +6,7 @@ Generates Executive Summary and Technical Analysis reports
 import io
 from datetime import datetime
 from typing import Dict, Any, List
+from xml.sax.saxutils import escape
 
 from app.gemini_integration import get_gemini_client
 
@@ -88,6 +89,34 @@ async def generate_executive_summary_pdf(report_data: Dict[str, Any], request: A
         spaceBefore=10,
         fontName="Helvetica-Bold",
     )
+
+    wrapped_header_exec = ParagraphStyle(
+        "ExecTableHeaderWrap",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=10,
+        textColor=colors.whitesmoke,
+        fontName="Helvetica-Bold",
+    )
+
+    wrapped_body_exec = ParagraphStyle(
+        "ExecTableBodyWrap",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=10,
+        textColor=colors.HexColor("#212121"),
+        fontName="Helvetica",
+    )
+
+    def _wrap_rows_exec(rows: List[List[Any]], has_header: bool = True) -> List[List[Any]]:
+        wrapped: List[List[Any]] = []
+        for ridx, row in enumerate(rows):
+            style = wrapped_header_exec if (has_header and ridx == 0) else wrapped_body_exec
+            wrapped.append([
+                Paragraph(escape(str(cell)).replace("\n", "<br/>"), style)
+                for cell in row
+            ])
+        return wrapped
     
     elements = []
     
@@ -107,7 +136,7 @@ async def generate_executive_summary_pdf(report_data: Dict[str, Any], request: A
     if request.client_id:
         report_info.append(["Client ID:", request.client_id])
     
-    info_table = Table(report_info, colWidths=[2 * inch, 3.5 * inch])
+    info_table = Table(_wrap_rows_exec(report_info, has_header=False), colWidths=[2 * inch, 3.5 * inch])
     info_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e3f2fd")),
         ("BACKGROUND", (1, 0), (1, -1), colors.white),
@@ -120,6 +149,8 @@ async def generate_executive_summary_pdf(report_data: Dict[str, Any], request: A
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(info_table)
     elements.append(Spacer(1, 0.5 * inch))
@@ -188,7 +219,7 @@ Key Findings:<br/>
         ["Attack Events", str(total_attacks), "⚠" if total_attacks > 0 else "✓"],
     ]
     
-    metrics_table = Table(metrics_data, colWidths=[2.5 * inch, 1.5 * inch, 1 * inch])
+    metrics_table = Table(_wrap_rows_exec(metrics_data), colWidths=[2.5 * inch, 1.5 * inch, 1 * inch])
     metrics_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a237e")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -199,6 +230,8 @@ Key Findings:<br/>
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("GRID", (0, 0), (-1, -1), 1, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(metrics_table)
     elements.append(Spacer(1, 0.3 * inch))
@@ -247,7 +280,7 @@ Key Findings:<br/>
             risk
         ])
     
-    timeline_table = Table(timeline_data, colWidths=[1.5 * inch, 1 * inch, 1 * inch, 1 * inch, 1.5 * inch])
+    timeline_table = Table(_wrap_rows_exec(timeline_data), colWidths=[1.5 * inch, 1 * inch, 1 * inch, 1 * inch, 1.5 * inch])
     timeline_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0066cc")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -256,6 +289,8 @@ Key Findings:<br/>
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("GRID", (0, 0), (-1, -1), 1, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9f9f9")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(timeline_table)
     elements.append(Spacer(1, 0.3 * inch))
@@ -297,7 +332,7 @@ Key Findings:<br/>
                     f"{stats['malicious_scans']/stats['total_scans']*100:.1f}%"
                 ])
         
-        threat_dist_table = Table(threat_dist_data, colWidths=[2.5 * inch, 1.5 * inch, 1.5 * inch])
+        threat_dist_table = Table(_wrap_rows_exec(threat_dist_data), colWidths=[2.5 * inch, 1.5 * inch, 1.5 * inch])
         threat_dist_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#cc6600")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -307,6 +342,8 @@ Key Findings:<br/>
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("GRID", (0, 0), (-1, -1), 1, colors.grey),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff3e0")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(threat_dist_table)
         elements.append(Spacer(1, 0.3 * inch))
@@ -480,6 +517,35 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
         spaceBefore=10,
         fontName="Helvetica-Bold",
     )
+
+    wrapped_header_style = ParagraphStyle(
+        "TechTableHeaderWrap",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=9,
+        textColor=colors.whitesmoke,
+        fontName="Helvetica-Bold",
+    )
+
+    wrapped_body_style = ParagraphStyle(
+        "TechTableBodyWrap",
+        parent=styles["Normal"],
+        fontSize=7.5,
+        leading=9,
+        textColor=colors.HexColor("#212121"),
+        fontName="Helvetica",
+    )
+
+    def _wrap_rows(rows: List[List[Any]]) -> List[List[Any]]:
+        wrapped: List[List[Any]] = []
+        for ridx, row in enumerate(rows):
+            style = wrapped_header_style if ridx == 0 else wrapped_body_style
+            wrapped_row = [
+                Paragraph(escape(str(cell)).replace("\n", "<br/>"), style)
+                for cell in row
+            ]
+            wrapped.append(wrapped_row)
+        return wrapped
     
     elements = []
     
@@ -499,7 +565,7 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
     if request.client_id:
         report_info.append(["Client ID:", request.client_id])
     
-    info_table = Table(report_info, colWidths=[2 * inch, 3.5 * inch])
+    info_table = Table(_wrap_rows(report_info), colWidths=[2 * inch, 3.5 * inch])
     info_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#ffebee")),
         ("BACKGROUND", (1, 0), (1, -1), colors.white),
@@ -512,6 +578,8 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(info_table)
     elements.append(Spacer(1, 0.5 * inch))
@@ -537,6 +605,94 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
         elements.append(Spacer(1, 0.1 * inch))
         elements.append(Paragraph(ai_insights.replace("\n", "<br/>") , styles["Normal"]))
         elements.append(Spacer(1, 0.2 * inch))
+
+    # Global SOC-style technical overview
+    all_scans_global = _collect_scans(report_data)
+    total_scans_global = len(all_scans_global)
+    total_threats_global = sum(1 for s in all_scans_global if (s.get("threat_level") or "").lower() in {"suspicious", "malicious", "critical", "high"})
+    total_attacks_global = sum(len((d.get("attacks") or [])) for d in report_data.values())
+    total_defense_global = sum(len((d.get("defense_actions") or [])) for d in report_data.values())
+    successful_defense_global = sum(
+        1
+        for d in report_data.values()
+        for a in (d.get("defense_actions") or [])
+        if a.get("successful")
+    )
+    defense_success_pct = (successful_defense_global / total_defense_global * 100) if total_defense_global else 0.0
+    avg_conf_global = (
+        sum(float(s.get("confidence", 0) or 0) for s in all_scans_global) / max(total_scans_global, 1)
+    )
+
+    elements.append(PageBreak())
+    elements.append(Paragraph("GLOBAL TECHNICAL OVERVIEW", heading_style))
+    elements.append(Spacer(1, 0.08 * inch))
+
+    global_overview_rows = [
+        ["Technical Metric", "Value"],
+        ["Total Scan Events", str(total_scans_global)],
+        ["Threat-bearing Scan Events", str(total_threats_global)],
+        ["Attack Events", str(total_attacks_global)],
+        ["Defense Actions Executed", str(total_defense_global)],
+        ["Defense Success Rate", f"{defense_success_pct:.1f}%"],
+        ["Average Scan Confidence", f"{avg_conf_global * 100:.1f}%"],
+    ]
+    global_table = Table(_wrap_rows(global_overview_rows), colWidths=[3.2 * inch, 1.8 * inch])
+    global_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#263238")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#607d8b")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eceff1")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(global_table)
+    elements.append(Spacer(1, 0.14 * inch))
+
+    elements.append(Paragraph("API RELIABILITY MATRIX (GLOBAL)", heading_style))
+    elements.append(Spacer(1, 0.05 * inch))
+    api_reliability_rows = _build_global_api_reliability_rows(report_data)
+    api_reliability_table = Table(
+        _wrap_rows(api_reliability_rows),
+        colWidths=[1.25 * inch, 0.6 * inch, 0.6 * inch, 0.65 * inch, 0.65 * inch, 0.55 * inch, 0.75 * inch, 0.7 * inch],
+    )
+    api_reliability_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1b5e20")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#66bb6a")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(api_reliability_table)
+    elements.append(Spacer(1, 0.14 * inch))
+
+    elements.append(Paragraph("PRIORITY INVESTIGATION QUEUE (GLOBAL)", heading_style))
+    elements.append(Spacer(1, 0.05 * inch))
+    triage_rows = _build_priority_investigation_rows(report_data, limit=15)
+    triage_table = Table(_wrap_rows(triage_rows), colWidths=[0.6 * inch, 1.95 * inch, 0.7 * inch, 0.7 * inch, 0.7 * inch, 0.65 * inch, 1.3 * inch])
+    triage_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4a148c")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (2, 0), (5, -1), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#b39ddb")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3e5f5")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(triage_table)
+    elements.append(Spacer(1, 0.12 * inch))
     
     # For each interval, generate detailed analysis
     for interval_key, data in report_data.items():
@@ -563,7 +719,7 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             ["Corroborated Threats", str(stats["corroborated_threats"])],
         ]
         
-        stats_table = Table(detailed_stats, colWidths=[3 * inch, 2 * inch])
+        stats_table = Table(_wrap_rows(detailed_stats), colWidths=[3 * inch, 2 * inch])
         stats_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d32f2f")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -573,8 +729,117 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("GRID", (0, 0), (-1, -1), 1, colors.grey),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ffebee")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(stats_table)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # Interval analyst triage queue
+        interval_scans = _collect_scans({interval_key: data})
+        elements.append(Paragraph("ANALYST TRIAGE QUEUE (INTERVAL)", heading_style))
+        elements.append(Spacer(1, 0.05 * inch))
+        interval_triage_rows = _build_interval_triage_rows(interval_scans, limit=10)
+        interval_triage_table = Table(_wrap_rows(interval_triage_rows), colWidths=[0.7 * inch, 2.0 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch, 0.7 * inch])
+        interval_triage_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#6a1b9a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+            ("ALIGN", (2, 0), (5, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#ce93d8")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3e5f5")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+        ]))
+        elements.append(interval_triage_table)
+        elements.append(Spacer(1, 0.15 * inch))
+
+        # Interval API gap diagnostics
+        elements.append(Paragraph("EVIDENCE GAPS & FAILURE MODES", heading_style))
+        elements.append(Spacer(1, 0.05 * inch))
+        gap_rows = _build_interval_api_gap_rows(interval_scans)
+        gap_table = Table(_wrap_rows(gap_rows), colWidths=[1.4 * inch, 0.7 * inch, 0.7 * inch, 0.7 * inch, 0.8 * inch, 1.5 * inch])
+        gap_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#bf360c")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("ALIGN", (5, 0), (5, -1), "LEFT"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#ffab91")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fbe9e7")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+        ]))
+        elements.append(gap_table)
+        elements.append(Spacer(1, 0.15 * inch))
+
+        # Attack event correlation matrix (technical SOC view)
+        attack_rows = _build_attack_correlation_rows(data, limit=20)
+        elements.append(Paragraph("ATTACK EVENT CORRELATION", heading_style))
+        elements.append(Spacer(1, 0.05 * inch))
+        attack_table = Table(
+            _wrap_rows(attack_rows),
+            colWidths=[1.6 * inch, 1.3 * inch, 0.9 * inch, 0.7 * inch, 0.6 * inch, 0.9 * inch],
+        )
+        attack_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4a148c")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#b39ddb")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3e5f5")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+        ]))
+        elements.append(attack_table)
+        elements.append(Spacer(1, 0.15 * inch))
+
+        # Defense action execution matrix
+        defense_rows = _build_defense_action_rows(data, limit=20)
+        elements.append(Paragraph("DEFENSE ACTION EXECUTION", heading_style))
+        elements.append(Spacer(1, 0.05 * inch))
+        defense_table = Table(
+            _wrap_rows(defense_rows),
+            colWidths=[1.4 * inch, 1.6 * inch, 1.3 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch],
+        )
+        defense_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d47a1")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("ALIGN", (3, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#90caf9")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e3f2fd")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+        ]))
+        elements.append(defense_table)
+        defense_count = len(data.get("defense_actions", []) or [])
+        attack_count = len(data.get("attacks", []) or [])
+        success_count = sum(1 for a in (data.get("defense_actions", []) or []) if a.get("successful"))
+        if defense_count == 0 and attack_count > 0:
+            elements.append(Paragraph(
+                f"<b>Defense Status:</b> No defense action taken for {attack_count} detected attack event(s) in this interval.",
+                styles["Normal"],
+            ))
+        elif defense_count == 0:
+            elements.append(Paragraph(
+                "<b>Defense Status:</b> No defense action taken in this interval.",
+                styles["Normal"],
+            ))
+        else:
+            elements.append(Paragraph(
+                f"<b>Defense Status:</b> {defense_count} action(s) executed, {success_count} succeeded.",
+                styles["Normal"],
+            ))
         elements.append(Spacer(1, 0.2 * inch))
         
         # Forensic Analysis
@@ -602,7 +867,7 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             ["Defense Actions", str(stats['defense_actions_taken'])],
         ]
         
-        forensic_table = Table(forensic_data, colWidths=[3 * inch, 2 * inch])
+        forensic_table = Table(_wrap_rows(forensic_data), colWidths=[3 * inch, 2 * inch])
         forensic_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2e7d32")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -612,6 +877,8 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#388e3c")),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(forensic_table)
         elements.append(Spacer(1, 0.2 * inch))
@@ -660,11 +927,10 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
         elements.append(Spacer(1, 0.15 * inch))
 
         # Detailed scan analysis (top items by confidence)
-        all_scans = _collect_scans(report_data)
-        if all_scans:
+        if interval_scans:
             elements.append(Paragraph("DETAILED SCAN ANALYSIS", heading_style))
             elements.append(Spacer(1, 0.05 * inch))
-            top_scans = sorted(all_scans, key=lambda s: s.get("confidence", 0), reverse=True)[:20]
+            top_scans = sorted(interval_scans, key=lambda s: s.get("confidence", 0), reverse=True)[:20]
             scan_table_data = [["Target", "Type", "Verdict", "Confidence", "Evidence", "APIs"]]
             for scan in top_scans:
                 analysis = scan.get("analysis", {}) or {}
@@ -681,7 +947,7 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
                     str(len(apis_called)),
                 ])
 
-            scan_table = Table(scan_table_data, colWidths=[2.2 * inch, 0.8 * inch, 0.9 * inch, 1.0 * inch, 0.7 * inch, 0.7 * inch])
+            scan_table = Table(_wrap_rows(scan_table_data), colWidths=[2.2 * inch, 0.8 * inch, 0.9 * inch, 1.0 * inch, 0.7 * inch, 0.7 * inch])
             scan_table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#263238")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -691,6 +957,8 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#90a4ae")),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eceff1")]),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
             ]))
             elements.append(scan_table)
             elements.append(Spacer(1, 0.2 * inch))
@@ -698,7 +966,33 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             # Full scan cards for forensic review
             elements.append(Paragraph("FORENSIC SCAN CARDS", heading_style))
             elements.append(Spacer(1, 0.05 * inch))
-            elements.extend(_build_scan_cards(all_scans, styles, colors))
+            elements.extend(_build_scan_cards(interval_scans, styles, colors))
+
+            # MITRE ATT&CK mapping (derived from technical indicators)
+            mitre_rows = _build_interval_mitre_rows(interval_scans)
+            elements.append(Paragraph("MITRE ATT&CK MAPPING MATRIX (DERIVED)", heading_style))
+            elements.append(Spacer(1, 0.05 * inch))
+            mitre_table = Table(_wrap_rows(mitre_rows), colWidths=[1.0 * inch, 2.2 * inch, 1.5 * inch, 1.8 * inch])
+            mitre_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#263238")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#90a4ae")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eceff1")]),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+            ]))
+            elements.append(mitre_table)
+            elements.append(Spacer(1, 0.15 * inch))
+
+            # SIEM query starter pack for IR workflows
+            elements.append(Paragraph("SIEM QUERY STARTER PACK (KQL / SPL)", heading_style))
+            elements.append(Spacer(1, 0.05 * inch))
+            for query_line in _build_siem_query_pack(interval_scans):
+                elements.append(Paragraph(f"• {query_line}", styles["Normal"]))
+            elements.append(Spacer(1, 0.15 * inch))
 
         # Digital investigation & SOAR guidance
         elements.append(Paragraph("DIGITAL INVESTIGATION & RESPONSE GUIDANCE", heading_style))
@@ -758,7 +1052,7 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
                             verdict[:15] + "..." if len(verdict) > 15 else verdict
                         ])
                     
-                    threat_table = Table(threat_table_data, colWidths=[1.5 * inch, 1 * inch, 1 * inch, 0.7 * inch, 1.3 * inch])
+                    threat_table = Table(_wrap_rows(threat_table_data), colWidths=[1.5 * inch, 1 * inch, 1 * inch, 0.7 * inch, 1.3 * inch])
                     threat_table.setStyle(TableStyle([
                         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c62828")),
                         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -768,9 +1062,63 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
                         ("FONTSIZE", (0, 0), (-1, -1), 8),
                         ("GRID", (0, 0), (-1, -1), 1, colors.grey),
                         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ffcdd2")]),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                     ]))
                     elements.append(threat_table)
                     elements.append(Spacer(1, 0.15 * inch))
+
+    # IR case-file appendix
+    elements.append(PageBreak())
+    elements.append(Paragraph("APPENDIX A — RAW IOC EXPORT", heading_style))
+    elements.append(Spacer(1, 0.08 * inch))
+    elements.append(Paragraph(
+        "Raw indicator export for analyst pivoting. Includes source, type, confidence, first/last seen, and linked scan IDs.",
+        styles["Normal"],
+    ))
+    elements.append(Spacer(1, 0.06 * inch))
+
+    ioc_rows = _build_raw_ioc_export_rows(report_data, limit=120)
+    ioc_table = Table(_wrap_rows(ioc_rows), colWidths=[1.9 * inch, 0.7 * inch, 1.1 * inch, 0.7 * inch, 1.1 * inch, 1.1 * inch])
+    ioc_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#37474f")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (1, 0), (3, -1), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#90a4ae")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eceff1")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(ioc_table)
+    elements.append(Spacer(1, 0.14 * inch))
+
+    elements.append(Paragraph("APPENDIX B — INCIDENT TIMELINE RECONSTRUCTION", heading_style))
+    elements.append(Spacer(1, 0.08 * inch))
+    elements.append(Paragraph(
+        "Chronological reconstruction across scan events, detected attacks, and defense actions for incident response case handling.",
+        styles["Normal"],
+    ))
+    elements.append(Spacer(1, 0.06 * inch))
+
+    timeline_rows = _build_incident_timeline_rows(report_data, limit=140)
+    timeline_table = Table(_wrap_rows(timeline_rows), colWidths=[1.2 * inch, 0.9 * inch, 0.7 * inch, 1.7 * inch, 1.0 * inch, 1.0 * inch])
+    timeline_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3e2723")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (1, 0), (2, -1), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bcaaa4")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#efebe9")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(timeline_table)
+    elements.append(Spacer(1, 0.14 * inch))
     
     # Technical Recommendations
     elements.append(PageBreak())
@@ -980,6 +1328,448 @@ def _get_detection_method_stats(report_data: Dict[str, Any]) -> Dict[str, int]:
         if apis_called:
             intel += 1
     return {"heuristic": heuristic, "signature": signature, "intel": intel}
+
+
+def _build_attack_correlation_rows(interval_data: Dict[str, Any], limit: int = 20) -> List[List[str]]:
+    """Build rows for per-interval attack correlation table."""
+    rows: List[List[str]] = [["Detected At", "Attack Type", "Severity", "Status", "Blocked", "Source IP"]]
+    attacks = interval_data.get("attacks", []) or []
+    if not attacks:
+        rows.append(["-", "No attack events", "-", "-", "-", "-"])
+        return rows
+
+    for attack in attacks[:limit]:
+        detected_at = str(attack.get("detected_at") or "-")[:19]
+        attack_type = str(attack.get("attack_type") or "-")
+        severity = str(attack.get("severity") or "-").upper()
+        status = str(attack.get("status") or "-")
+        blocked = "YES" if bool(attack.get("blocked")) else "NO"
+        src_ip = str(attack.get("source_ip") or "-")
+        rows.append([
+            detected_at,
+            attack_type[:28] + ("..." if len(attack_type) > 28 else ""),
+            severity,
+            status[:12] + ("..." if len(status) > 12 else ""),
+            blocked,
+            src_ip,
+        ])
+
+    return rows
+
+
+def _build_defense_action_rows(interval_data: Dict[str, Any], limit: int = 20) -> List[List[str]]:
+    """Build rows for defense action execution table."""
+    rows: List[List[str]] = [["Created At", "Action Type", "Target", "Status", "Success", "Action ID"]]
+    actions = interval_data.get("defense_actions", []) or []
+    if not actions:
+        rows.append(["-", "No defense action taken", "-", "-", "-", "-"])
+        return rows
+
+    for action in actions[:limit]:
+        created_at = str(action.get("created_at") or "-")[:19]
+        action_type = str(action.get("action_type") or "-")
+        target = str(action.get("target") or "-")
+        status = str(action.get("status") or "-")
+        success = "YES" if bool(action.get("successful")) else "NO"
+        action_id = str(action.get("action_id") or "-")
+        rows.append([
+            created_at,
+            action_type[:24] + ("..." if len(action_type) > 24 else ""),
+            target[:20] + ("..." if len(target) > 20 else ""),
+            status[:12] + ("..." if len(status) > 12 else ""),
+            success,
+            action_id[:14] + ("..." if len(action_id) > 14 else ""),
+        ])
+
+    return rows
+
+
+def _build_interval_mitre_rows(scans: List[dict], limit: int = 12) -> List[List[str]]:
+    """Build a compact MITRE ATT&CK mapping table for interval scans."""
+    rows: List[List[str]] = [["ID", "Technique", "Tactic", "Observed In"]]
+    seen = set()
+
+    for scan in scans:
+        target = str(scan.get("target") or "-")
+        for item in _derive_mitre_mapping(scan):
+            tid = str(item.get("technique_id") or "-")
+            technique = str(item.get("technique") or "-")
+            tactic = str(item.get("tactic") or "-")
+            key = (tid, technique, tactic)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append([
+                tid,
+                technique[:34] + ("..." if len(technique) > 34 else ""),
+                tactic[:20] + ("..." if len(tactic) > 20 else ""),
+                target[:26] + ("..." if len(target) > 26 else ""),
+            ])
+            if len(rows) - 1 >= limit:
+                return rows
+
+    if len(rows) == 1:
+        rows.append(["-", "No mapped techniques", "-", "-"])
+
+    return rows
+
+
+def _build_siem_query_pack(scans: List[dict]) -> List[str]:
+    """Return practical SIEM query snippets tailored to observed targets."""
+    iocs: List[str] = []
+    for scan in scans:
+        target = str(scan.get("target") or "").strip()
+        level = str(scan.get("threat_level") or "").lower()
+        if target and level in {"suspicious", "malicious", "critical", "high"}:
+            iocs.append(target)
+    iocs = list(dict.fromkeys(iocs))[:5]
+
+    if not iocs:
+        return [
+            "KQL: SecurityEvent | where TimeGenerated > ago(24h) | summarize count() by EventID",
+            "SPL: index=* earliest=-24h | stats count by sourcetype",
+        ]
+
+    ioc_filter = " OR ".join(iocs)
+    return [
+        f"KQL: DeviceNetworkEvents | where TimeGenerated > ago(24h) | where RemoteUrl has_any ({', '.join(repr(i) for i in iocs)}) or RemoteIP has_any ({', '.join(repr(i) for i in iocs)}) | project TimeGenerated, DeviceName, InitiatingProcessFileName, RemoteIP, RemoteUrl, ActionType",
+        f"SPL: index=* earliest=-24h ({ioc_filter}) | stats count by src, dest, user, process",
+        f"KQL: EmailEvents | where TimeGenerated > ago(24h) | where SenderFromDomain has_any ({', '.join(repr(i) for i in iocs)}) or Subject has_any ({', '.join(repr(i) for i in iocs)}) | project TimeGenerated, SenderFromAddress, RecipientEmailAddress, Subject, ThreatTypes",
+        "KQL: DeviceProcessEvents | where TimeGenerated > ago(24h) | where ProcessCommandLine has_any ('powershell','curl','wget','mshta','rundll32') | summarize count() by DeviceName, InitiatingProcessFileName",
+    ]
+
+
+def _extract_api_status_map(scan: dict) -> Dict[str, dict]:
+    """Extract per-API status map from forensic or analysis storage paths."""
+    forensic = _effective_forensic(scan)
+    analysis = _effective_analysis(scan)
+
+    forensic_api_status = forensic.get("api_status") if isinstance(forensic.get("api_status"), dict) else {}
+    analysis_api_status = (
+        (analysis.get("api_results", {}) or {}).get("api_status", {})
+        if isinstance((analysis.get("api_results", {}) or {}).get("api_status", {}), dict)
+        else {}
+    )
+
+    # Prefer forensic projection when available, fallback to analysis map.
+    return forensic_api_status or analysis_api_status or {}
+
+
+def _build_global_api_reliability_rows(report_data: Dict[str, Any]) -> List[List[str]]:
+    """Build global API reliability matrix across all scans."""
+    scans = _collect_scans(report_data)
+    counters: Dict[str, Dict[str, int]] = {}
+
+    for scan in scans:
+        for _api_key, entry in _extract_api_status_map(scan).items():
+            name = str(entry.get("name") or _api_key or "unknown")
+            status = str(entry.get("status") or "unknown").lower()
+            if status == "not_applicable":
+                continue
+
+            bucket = counters.setdefault(name, {
+                "checked": 0,
+                "pending": 0,
+                "rate_limited": 0,
+                "not_authorized": 0,
+                "error": 0,
+                "not_configured": 0,
+                "unknown": 0,
+            })
+            if status in bucket:
+                bucket[status] += 1
+            else:
+                bucket["unknown"] += 1
+
+    if not counters:
+        return [["API", "Checked", "Pending", "Rate", "Auth", "Error", "Not Config", "Success %"], ["-", "0", "0", "0", "0", "0", "0", "0.0%"]]
+
+    rows: List[List[str]] = [["API", "Checked", "Pending", "Rate", "Auth", "Error", "Not Config", "Success %"]]
+    for api_name in sorted(counters.keys()):
+        c = counters[api_name]
+        total = c["checked"] + c["pending"] + c["rate_limited"] + c["not_authorized"] + c["error"] + c["not_configured"] + c["unknown"]
+        success_pct = (c["checked"] / total * 100) if total else 0.0
+        rows.append([
+            api_name,
+            str(c["checked"]),
+            str(c["pending"]),
+            str(c["rate_limited"]),
+            str(c["not_authorized"]),
+            str(c["error"] + c["unknown"]),
+            str(c["not_configured"]),
+            f"{success_pct:.1f}%",
+        ])
+
+    return rows
+
+
+def _build_priority_investigation_rows(report_data: Dict[str, Any], limit: int = 15) -> List[List[str]]:
+    """Build global prioritized analyst queue for threat-bearing scans."""
+    scans = _collect_scans(report_data)
+    risky = [
+        s for s in scans
+        if (s.get("threat_level") or "").lower() in {"malicious", "critical", "high", "suspicious", "medium"}
+    ]
+
+    def _priority_score(scan: dict) -> tuple:
+        level = (scan.get("threat_level") or "").lower()
+        level_rank = 3 if level in {"malicious", "critical", "high"} else 2
+        confidence = float(scan.get("confidence", 0) or 0)
+        threats = int(scan.get("threats_detected", 0) or 0)
+        return (level_rank, confidence, threats)
+
+    risky = sorted(risky, key=_priority_score, reverse=True)[:limit]
+    rows: List[List[str]] = [["Prio", "Target", "Type", "Level", "Conf", "IOCs", "Action"]]
+    if not risky:
+        rows.append(["-", "No threat-bearing scans", "-", "-", "-", "-", "No immediate analyst action"])
+        return rows
+
+    for idx, scan in enumerate(risky, 1):
+        target = str(scan.get("target") or "-")
+        action = _scan_action_hint(scan)
+        rows.append([
+            f"P{1 if idx <= 5 else 2}",
+            target[:40] + ("..." if len(target) > 40 else ""),
+            str(scan.get("target_type") or "-")[:10],
+            str(scan.get("threat_level") or "-")[:10].upper(),
+            f"{float(scan.get('confidence', 0) or 0) * 100:.1f}%",
+            str(int(scan.get("threats_detected", 0) or 0)),
+            action[:44] + ("..." if len(action) > 44 else ""),
+        ])
+
+    return rows
+
+
+def _build_interval_triage_rows(scans: List[dict], limit: int = 10) -> List[List[str]]:
+    """Build per-interval triage queue by level + confidence."""
+    risky = [
+        s for s in scans
+        if (s.get("threat_level") or "").lower() in {"malicious", "critical", "high", "suspicious", "medium"}
+    ]
+    risky = sorted(risky, key=lambda s: (float(s.get("confidence", 0) or 0), int(s.get("threats_detected", 0) or 0)), reverse=True)[:limit]
+
+    rows: List[List[str]] = [["Queue", "Target", "Type", "Level", "Confidence", "Threats"]]
+    if not risky:
+        rows.append(["-", "No interval threats", "-", "-", "-", "-"])
+        return rows
+
+    for idx, scan in enumerate(risky, 1):
+        target = str(scan.get("target") or "-")
+        rows.append([
+            str(idx),
+            target[:44] + ("..." if len(target) > 44 else ""),
+            str(scan.get("target_type") or "-")[:10],
+            str(scan.get("threat_level") or "-")[:10].upper(),
+            f"{float(scan.get('confidence', 0) or 0) * 100:.1f}%",
+            str(int(scan.get("threats_detected", 0) or 0)),
+        ])
+    return rows
+
+
+def _build_interval_api_gap_rows(scans: List[dict]) -> List[List[str]]:
+    """Build interval view of API failure and evidence gaps."""
+    counts: Dict[str, Dict[str, int]] = {}
+    for scan in scans:
+        for _key, entry in _extract_api_status_map(scan).items():
+            name = str(entry.get("name") or _key or "unknown")
+            status = str(entry.get("status") or "unknown").lower()
+            if status == "not_applicable":
+                continue
+            bucket = counts.setdefault(name, {
+                "checked": 0,
+                "pending": 0,
+                "rate_limited": 0,
+                "not_authorized": 0,
+                "error": 0,
+                "not_configured": 0,
+                "unknown": 0,
+            })
+            if status in bucket:
+                bucket[status] += 1
+            else:
+                bucket["unknown"] += 1
+
+    rows: List[List[str]] = [["API", "Checked", "Pending", "Rate", "Auth", "Primary Gap"]]
+    if not counts:
+        rows.append(["-", "0", "0", "0", "0", "No API telemetry in interval"])
+        return rows
+
+    for api_name in sorted(counts.keys()):
+        c = counts[api_name]
+        failure_candidates = {
+            "rate_limited": c["rate_limited"],
+            "not_authorized": c["not_authorized"],
+            "error": c["error"] + c["unknown"],
+            "not_configured": c["not_configured"],
+            "pending": c["pending"],
+        }
+        top_gap = max(failure_candidates, key=lambda k: failure_candidates[k])
+        gap_label_map = {
+            "rate_limited": "Rate limiting",
+            "not_authorized": "Authorization",
+            "error": "Request/API error",
+            "not_configured": "Key missing",
+            "pending": "Async result delay",
+        }
+        primary_gap = gap_label_map[top_gap] if failure_candidates[top_gap] > 0 else "None"
+        rows.append([
+            api_name,
+            str(c["checked"]),
+            str(c["pending"]),
+            str(c["rate_limited"]),
+            str(c["not_authorized"]),
+            primary_gap,
+        ])
+
+    return rows
+
+
+def _classify_ioc_type(value: str) -> str:
+    """Best-effort IOC type classifier for report appendix exports."""
+    v = (value or "").strip().lower()
+    if not v:
+        return "unknown"
+    if v.startswith("http://") or v.startswith("https://"):
+        return "url"
+    if len(v) in {32, 40, 64} and all(c in "0123456789abcdef" for c in v):
+        return "hash"
+    # rudimentary IPv4 check
+    parts = v.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        return "ip"
+    if "." in v and " " not in v:
+        return "domain"
+    return "artifact"
+
+
+def _build_raw_ioc_export_rows(report_data: Dict[str, Any], limit: int = 120) -> List[List[str]]:
+    """Build appendix table rows for raw IOC export with first/last seen and source metadata."""
+    scans = _collect_scans(report_data)
+    ioc_index: Dict[str, Dict[str, Any]] = {}
+
+    for scan in scans:
+        scan_id = str(scan.get("scan_id") or "-")
+        ts = str(scan.get("timestamp") or "-")
+        level = str(scan.get("threat_level") or "unknown").lower()
+        confidence = float(scan.get("confidence", 0) or 0)
+        indicators = _effective_threat_indicators(scan)
+
+        # Include the scanned target itself as IOC candidate when suspicious/malicious.
+        target = str(scan.get("target") or "").strip()
+        if target and level in {"suspicious", "malicious", "critical", "high", "medium"}:
+            indicators = indicators + [{"indicator": target, "source": "scan_target"}]
+
+        for ind in indicators:
+            ioc = str(ind.get("indicator") or "").strip()
+            if not ioc:
+                continue
+            key = ioc.lower()
+            row = ioc_index.setdefault(key, {
+                "ioc": ioc,
+                "type": _classify_ioc_type(ioc),
+                "source": set(),
+                "max_conf": 0.0,
+                "first_seen": ts,
+                "last_seen": ts,
+                "scan_ids": [],
+            })
+
+            src = str(ind.get("source") or "unknown")
+            row["source"].add(src)
+            row["max_conf"] = max(row["max_conf"], confidence)
+            if ts != "-":
+                row["first_seen"] = min(row["first_seen"], ts)
+                row["last_seen"] = max(row["last_seen"], ts)
+            if scan_id not in row["scan_ids"]:
+                row["scan_ids"].append(scan_id)
+
+    rows: List[List[str]] = [["IOC", "Type", "Source", "Conf", "First Seen", "Last Seen"]]
+    if not ioc_index:
+        rows.append(["-", "-", "No IOCs extracted", "-", "-", "-"])
+        return rows
+
+    sorted_iocs = sorted(
+        ioc_index.values(),
+        key=lambda r: (r["max_conf"], len(r["scan_ids"])),
+        reverse=True,
+    )[:limit]
+
+    for rec in sorted_iocs:
+        source_label = ",".join(sorted(rec["source"]))
+        if len(source_label) > 18:
+            source_label = source_label[:18] + "..."
+        ioc_text = rec["ioc"]
+        if len(ioc_text) > 46:
+            ioc_text = ioc_text[:46] + "..."
+        rows.append([
+            ioc_text,
+            rec["type"],
+            source_label,
+            f"{rec['max_conf'] * 100:.1f}%",
+            str(rec["first_seen"])[:19],
+            str(rec["last_seen"])[:19],
+        ])
+
+    return rows
+
+
+def _build_incident_timeline_rows(report_data: Dict[str, Any], limit: int = 140) -> List[List[str]]:
+    """Build chronological event rows combining scans, attack events, and defense actions."""
+    events: List[Dict[str, str]] = []
+
+    for interval_key, data in report_data.items():
+        interval_name = str(data.get("interval") or interval_key)
+
+        scans = _collect_scans({interval_key: data})
+        for scan in scans:
+            events.append({
+                "ts": str(scan.get("timestamp") or "-"),
+                "etype": "scan",
+                "severity": str(scan.get("threat_level") or "unknown").upper(),
+                "target": str(scan.get("target") or "-")[:42],
+                "source": interval_name,
+                "ref": str(scan.get("scan_id") or "-"),
+            })
+
+        for attack in (data.get("attacks") or []):
+            events.append({
+                "ts": str(attack.get("detected_at") or "-"),
+                "etype": "attack",
+                "severity": str(attack.get("severity") or "unknown").upper(),
+                "target": str(attack.get("source_ip") or "-")[:42],
+                "source": str(attack.get("attack_type") or interval_name)[:24],
+                "ref": str(attack.get("event_id") or "-")[:20],
+            })
+
+        for action in (data.get("defense_actions") or []):
+            status = "SUCCESS" if action.get("successful") else str(action.get("status") or "-" ).upper()
+            events.append({
+                "ts": str(action.get("created_at") or "-"),
+                "etype": "defense",
+                "severity": status[:10],
+                "target": str(action.get("target") or "-")[:42],
+                "source": str(action.get("action_type") or interval_name)[:24],
+                "ref": str(action.get("action_id") or "-")[:20],
+            })
+
+    events = sorted(events, key=lambda e: e.get("ts") or "")[:limit]
+
+    rows: List[List[str]] = [["Timestamp", "Event", "Severity", "Target", "Source", "Reference"]]
+    if not events:
+        rows.append(["-", "-", "-", "No timeline events", "-", "-"])
+        return rows
+
+    for ev in events:
+        rows.append([
+            str(ev.get("ts") or "-")[:19],
+            str(ev.get("etype") or "-").upper(),
+            str(ev.get("severity") or "-")[:10],
+            str(ev.get("target") or "-")[:42],
+            str(ev.get("source") or "-")[:24],
+            str(ev.get("ref") or "-")[:20],
+        ])
+
+    return rows
 
 
 def _format_forensic_status(scan: dict) -> str:
@@ -1213,6 +2003,23 @@ def _compute_forensic_integrity(scan: dict) -> tuple:
 def _build_scan_cards(scans: List[dict], styles, colors) -> List[Any]:
     """Build scan cards similar to the requested report layout."""
     elements: List[Any] = []
+
+    card_label_style = ParagraphStyle(
+        "CardLabelWrap",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=10,
+        textColor=colors.HexColor("#212121"),
+        fontName="Helvetica-Bold",
+    )
+    card_value_style = ParagraphStyle(
+        "CardValueWrap",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=10,
+        textColor=colors.HexColor("#212121"),
+        fontName="Helvetica",
+    )
     for idx, scan in enumerate(scans, 1):
         target = scan.get("target", "N/A")
         scan_type = (scan.get("target_type") or "unknown").upper()
@@ -1264,7 +2071,15 @@ def _build_scan_cards(scans: List[dict], styles, colors) -> List[Any]:
             ["Action", action_hint],
         ]
 
-        card_table = Table(card_data, colWidths=[1.6 * inch, 4.9 * inch])
+        wrapped_card_data = [
+            [
+                Paragraph(escape(str(label)).replace("\n", "<br/>"), card_label_style),
+                Paragraph(escape(str(value)).replace("\n", "<br/>"), card_value_style),
+            ]
+            for label, value in card_data
+        ]
+
+        card_table = Table(wrapped_card_data, colWidths=[1.6 * inch, 4.9 * inch])
         card_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), header_bg),
             ("BACKGROUND", (0, 1), (-1, -1), body_bg),
@@ -1278,6 +2093,8 @@ def _build_scan_cards(scans: List[dict], styles, colors) -> List[Any]:
             ("RIGHTPADDING", (0, 0), (-1, -1), 6),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
 
         elements.append(card_table)

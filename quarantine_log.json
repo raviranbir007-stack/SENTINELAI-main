@@ -1,0 +1,26 @@
+[
+  {
+    "quarantine_id": "Q_20260313124201",
+    "attack_id": "process_alert_UNKNOWN_20260313163901",
+    "attack": {
+      "type": "process_alert",
+      "severity": "HIGH",
+      "description": "Suspicious command pattern matched: -[eE]\\s+[A-Za-z0-9+/=]{20,}",
+      "source_ip": "UNKNOWN",
+      "timestamp": "2026-03-13 16:39:01.138434+00:00",
+      "first_seen": "2026-03-13 12:39:01.138467",
+      "alert_count": "3",
+      "last_alert": "2026-03-13 12:41:01.886932",
+      "user_notified": "False",
+      "auto_quarantined": "True"
+    },
+    "user_initiated": "Automatic (No response to alerts)",
+    "timestamp": "2026-03-13T12:42:01.891878",
+    "reason": {
+      "attack_id": "process_alert_UNKNOWN_20260313163901",
+      "attack": {
+        "type": "process_alert",
+        "severity": "HIGH",
+        "description": "Suspicious command pattern matched: -[eE]\\s+[A-Za-z0-9+/=]{20,}",
+        "source_ip": "UNKNOWN",
+        "timestamp": 

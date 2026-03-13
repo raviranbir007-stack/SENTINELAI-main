@@ -122,9 +122,12 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
             component="scanner",
             message=f"Scan completed: {scan_data['scan_id']} - {scan_data.get('target', '')}",
             details={
+                "scan_id": scan_data.get("scan_id"),
+                "target": scan_data.get("target", scan_data.get("filename", "")),
                 "threat_level": scan_data.get("threat_level"),
                 "target_type": scan_data.get("target_type"),
                 "threats_detected": scan_data.get("threats_detected", 0),
+                "confidence": scan_data.get("confidence", 0.0),
             },
         ))
         await db.commit()
@@ -496,6 +499,13 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
     except Exception as e:
         logger.error(f"Universal scan error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+
+
+@router.post("")
+@router.post("/")
+async def universal_scan_root(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
+    """Compatibility alias for cleaner route usage: /api/v1/scan"""
+    return await universal_scan(request, db)
 
 
 @router.get("/results/{scan_id}")

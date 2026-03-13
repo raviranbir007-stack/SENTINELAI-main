@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, UTC
 from pathlib import Path
 
 # Ensure we run with the project venv interpreter when available (important for Gemini deps)
@@ -64,8 +65,17 @@ class ConsoleNoiseFilter(logging.Filter):
         "app.api.v1.endpoints.advanced_reports",
     )
 
+    # Suppress routine scan/analysis INFO lines in terminal only.
+    # Warnings/errors from these loggers are still shown.
+    noisy_info_only = (
+        "app.api.v1.endpoints.scan",
+        "app.core.threat_analyzer",
+    )
+
     def filter(self, record: logging.LogRecord) -> bool:
         if record.name.startswith(self.noisy_prefixes):
+            return False
+        if record.levelno <= logging.INFO and record.name.startswith(self.noisy_info_only):
             return False
         return True
 
@@ -139,7 +149,7 @@ def signal_handler(signum, frame):
 
 
 def run_protection_client():
-    """Run the integrated protection client (IDS/IPS/Monitoring)"""
+    """Run the full integrated protection client stack."""
     try:
         # Add client directory to Python path
         client_dir = Path(__file__).parent.parent / "client"
@@ -154,6 +164,15 @@ def run_protection_client():
         from client.scanner.traffic_monitor import AutomaticTrafficMonitor
         from client.scanner.defense_coordinator import DefenseCoordinator
         from client.scanner.startup_hardening import StartupThreatMonitor
+        from client.scanner.threat_analyzer import ThreatAnalyzer
+        from client.scanner.usb_monitor import USBMonitor
+        from client.scanner.email_monitor import EmailMonitor
+        from client.scanner.vulnerability_scanner import VulnerabilityScanner
+        from client.scanner.behavioral_monitor import BehavioralMonitor
+        from client.scanner.dns_monitor import DNSMonitor
+        from client.scanner.network_scanner import NetworkScanner
+        from client.scanner.process_scanner import ProcessScanner
+        from client.scanner.file_scanner import FileScanner
         
         # Initialize components
         stats = {
@@ -162,10 +181,21 @@ def run_protection_client():
             "intrusions_blocked": 0,
             "activities_logged": 0,
             "threats_detected": 0,
+            "extended_events": 0,
             "startup_findings": 0,
             "files_quarantined": 0,
             "firewall_hardening_actions": 0,
         }
+
+        def _normalize_risk(value: str) -> str:
+            text = str(value or "").strip().upper()
+            if text in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
+                return text
+            if text in {"MALICIOUS", "DANGEROUS"}:
+                return "HIGH"
+            if text in {"SUSPICIOUS", "WARNING"}:
+                return "MEDIUM"
+            return "LOW"
         
         def handle_intrusion(intrusion):
             stats["intrusions_detected"] += 1
@@ -187,6 +217,26 @@ def run_protection_client():
 
             if activity.get('risk_level') in ['HIGH', 'CRITICAL']:
                 logger.warning(f"⚠️  Suspicious activity: {activity.get('type', 'UNKNOWN')}")
+
+        def handle_threat_verdict(verdict):
+            verdict_value = str(verdict.get('verdict', '')).upper()
+            artifact_type = verdict.get('artifact_type', 'artifact')
+            artifact_value = verdict.get('artifact', 'UNKNOWN')
+
+            if verdict_value != 'MALICIOUS':
+                return
+
+            stats['threats_detected'] += 1
+            logger.warning("⚠️  Threat intel verdict: %s -> %s", artifact_type, artifact_value)
+
+            if artifact_type == 'ip':
+                ips.block_ip(artifact_value, reason="Threat intelligence malicious IP")
+            elif artifact_type in {'domain', 'url'}:
+                from urllib.parse import urlparse
+
+                domain = artifact_value if artifact_type == 'domain' else urlparse(artifact_value).netloc
+                if domain:
+                    ips.block_domain(domain, reason="Threat intelligence malicious domain")
         
         def handle_artifact(artifact):
             if artifact.get('threat_level') in ['high', 'critical', 'malicious']:
@@ -219,15 +269,63 @@ def run_protection_client():
                 summary.get('critical_findings', 0),
                 summary.get('high_findings', 0),
             )
+
+        def handle_extended_monitor_event(event):
+            event_type = event.get('type', 'extended_monitor_event')
+            risk = _normalize_risk(event.get('risk') or event.get('severity'))
+            stats['extended_events'] += 1
+
+            if event_type in {'usb_file_quarantined', 'FILE_QUARANTINED'}:
+                stats['files_quarantined'] += 1
+
+            if risk not in {'HIGH', 'CRITICAL'}:
+                return
+
+            stats['threats_detected'] += 1
+            description = event.get('description') or event.get('reason') or event_type
+            logger.warning("⚠️  Extended monitor alert [%s]: %s", risk, description)
+
+            remote_ip = event.get('source_ip') or event.get('remote_ip') or event.get('ip')
+            domain = event.get('domain') or event.get('source_domain')
+            file_path = event.get('file_path') or event.get('original_path')
+
+            # Avoid noisy SOC popup alerts for local host-only heuristics
+            # (e.g. browser helper path or short-lived Python CPU spikes)
+            alert_type = str(event.get('alert_type') or '').upper()
+            if event_type in {'process_alert', 'behavioral_alert'} and not remote_ip and not domain:
+                if alert_type in {'EXEC_FROM_TEMP', 'CPU_SPIKE'}:
+                    logger.info("ℹ️  Local heuristic noted (not escalated to attack alert): %s", description)
+                    return
+
+            if remote_ip:
+                ips.block_ip(remote_ip, reason=description)
+            if domain and event_type in {'dns_threat', 'email_threat'}:
+                ips.block_domain(domain, reason=description)
+            if file_path and event_type in {'usb_file_quarantined', 'email_threat'}:
+                ips.block_file(file_path, reason=description)
+
+            defense_coordinator.handle_attack({
+                'type': event_type,
+                'severity': risk,
+                'description': description,
+                'source_ip': remote_ip or 'UNKNOWN',
+                'timestamp': datetime.now(UTC),
+            })
         
         # Start all components
+        threat_analyzer = ThreatAnalyzer(
+            callback=handle_threat_verdict,
+            server_url="http://localhost:8000",
+        )
+        threat_analyzer.start()
+
         ids = IntrusionDetector(callback=handle_intrusion)
         ids.start()
         
         ips = PreventionSystem(callback=handle_prevention_event)
         ips.start()
         
-        activity_logger = ActivityLogger(callback=handle_activity)
+        activity_logger = ActivityLogger(callback=handle_activity, threat_analyzer=threat_analyzer)
         activity_logger.start()
         
         traffic_config = {'scan_interval': 60, 'batch_size': 10}
@@ -243,8 +341,25 @@ def run_protection_client():
             callback=handle_startup_event,
         )
         startup_monitor.run_startup_assessment(apply_firewall_hardening=True)
+
+        usb_monitor = USBMonitor(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
+        email_monitor = EmailMonitor(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
+        vulnerability_scanner = VulnerabilityScanner(callback=handle_extended_monitor_event)
+        behavioral_monitor = BehavioralMonitor(callback=handle_extended_monitor_event)
+        dns_monitor = DNSMonitor(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
+        network_scanner = NetworkScanner(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
+        process_scanner = ProcessScanner(callback=handle_extended_monitor_event)
+        file_scanner = FileScanner(threat_analyzer=threat_analyzer)
+
+        usb_monitor.start()
+        email_monitor.start()
+        vulnerability_scanner.start()
+        behavioral_monitor.start()
+        dns_monitor.start()
+        network_scanner.start()
+        process_scanner.start()
         
-        logger.info("✅ IDS | IPS | Monitor | Traffic | Defense → ACTIVE")
+        logger.info("✅ IDS | IPS | Monitor | Traffic | Defense | USB | Email | Vuln | Behavior | DNS | Network | Process → ACTIVE")
         
         # Keep running and print stats periodically
         last_stats = time.time()
@@ -260,9 +375,18 @@ def run_protection_client():
                 logger.info(f"  • Intrusions blocked: {stats['intrusions_blocked']}")
                 logger.info(f"  • Activities logged: {stats['activities_logged']}")
                 logger.info(f"  • Threats detected: {stats['threats_detected']}")
+                logger.info(f"  • Extended monitor events: {stats['extended_events']}")
                 logger.info(f"  • Startup findings: {stats['startup_findings']}")
                 logger.info(f"  • Files quarantined: {stats['files_quarantined']}")
                 logger.info(f"  • Firewall hardening actions: {stats['firewall_hardening_actions']}")
+                logger.info(f"  • USB summary: {usb_monitor.get_events_summary()}")
+                logger.info(f"  • Email summary: {email_monitor.get_summary()}")
+                logger.info(f"  • Vulnerability summary: {vulnerability_scanner.get_summary()}")
+                logger.info(f"  • Behavioral summary: {behavioral_monitor.get_summary()}")
+                logger.info(f"  • DNS summary: {dns_monitor.get_summary()}")
+                logger.info(f"  • Network summary: {network_scanner.get_summary()}")
+                logger.info(f"  • Process summary: {process_scanner.get_summary()}")
+                logger.info(f"  • Traffic summary: {traffic_monitor.get_statistics()}")
                 last_stats = time.time()
         
     except ImportError as e:

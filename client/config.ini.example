@@ -1,13 +1,49 @@
 [client]
-# Server URL
-SERVER_URL=http://localhost:8000
+# Scan / heartbeat intervals (seconds)
+scan_interval=300
+heartbeat_interval=60
 
-# Client ID
-CLIENT_ID=default
+[server]
+url=http://localhost:8000
+api_key=
 
-# Scan Intervals (in seconds)
-FILE_SCAN_INTERVAL=3600
-NETWORK_SCAN_INTERVAL=1800
+[apis]
+# Required / recommended threat-intel APIs
+virustotal=
+abuseipdb=
+urlscan=
+otx=
+ipqualityscore=
 
-# Log Level
-LOG_LEVEL=INFO
+# Optional enrichment APIs
+shodan=
+hybrid_analysis=
+
+[email]
+scan_local_thunderbird=true
+poll_interval=60
+imap_host=
+imap_port=993
+imap_user=
+imap_pass=
+pop3_host=
+pop3_port=995
+pop3_user=
+pop3_pass=
+
+[vulnerability]
+scan_interval_hours=6
+full_scan_on_start=true
+
+[dns]
+poll_interval=5
+use_scapy=false
+
+[network]
+poll_interval=10
+
+[process]
+poll_interval=5
+
+[behavior]
+poll_interval=5

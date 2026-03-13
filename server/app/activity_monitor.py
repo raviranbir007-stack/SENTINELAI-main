@@ -601,6 +601,7 @@ class ActivityMonitor:
     async def _monitor_browser_connections(self):
         """Fallback: Monitor browser processes and their network connections"""
         new_visits = []
+        seen_keys = set()
         browser_processes = ['firefox', 'firefox-esr', 'chrome', 'chromium', 'brave', 
                            'brave-browser', 'microsoft-edge', 'opera', 'vivaldi']
         
@@ -806,9 +807,15 @@ class ActivityMonitor:
         risk_level = analysis['risk_level']
         is_blocked = risk_level in ['HIGH', 'CRITICAL']
         
-        # Only display if HIGH/CRITICAL threat
+        # Only show actionable threat events
         if risk_level in ['HIGH', 'CRITICAL']:
-            print(f"🚫 [NETWORK] {conn['remote_ip']}:{conn['remote_port']} via {conn['app_name']} blocked ({risk_level})", flush=True)
+            logger.warning(
+                "🚫 [NETWORK] %s:%s via %s blocked (%s)",
+                conn['remote_ip'],
+                conn['remote_port'],
+                conn['app_name'],
+                risk_level,
+            )
             self._block_ip(conn['remote_ip'])
         
         # Save to database (only if threat detected)

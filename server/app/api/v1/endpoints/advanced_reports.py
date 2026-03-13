@@ -7,8 +7,9 @@ Generates structured reports for multiple time intervals (24h, 7d, 30d)
 import io
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import uuid4
+from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -50,6 +51,45 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _wrap_table_rows(
+    rows: List[List[Any]],
+    styles,
+    header_font_size: float = 8.5,
+    body_font_size: float = 8.0,
+    header_color=None,
+) -> List[List[Any]]:
+    """Render table cells as wrapped Paragraphs so long text fits in blocks."""
+    if not REPORTLAB_AVAILABLE:
+        return rows
+
+    header_color = header_color if header_color is not None else colors.whitesmoke
+    header_style = ParagraphStyle(
+        "AdvTblHeaderWrap",
+        parent=styles["Normal"],
+        fontSize=header_font_size,
+        leading=max(header_font_size + 1, 9),
+        fontName="Helvetica-Bold",
+        textColor=header_color,
+    )
+    body_style = ParagraphStyle(
+        "AdvTblBodyWrap",
+        parent=styles["Normal"],
+        fontSize=body_font_size,
+        leading=max(body_font_size + 1.5, 8.5),
+        fontName="Helvetica",
+        textColor=colors.HexColor("#212121"),
+    )
+
+    wrapped: List[List[Any]] = []
+    for idx, row in enumerate(rows):
+        style = header_style if idx == 0 else body_style
+        wrapped.append([
+            Paragraph(escape(str(cell)).replace("\n", "<br/>"), style)
+            for cell in row
+        ])
+    return wrapped
 
 
 class ReportInterval(BaseModel):
@@ -519,7 +559,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
     if request.client_id:
         report_info.append(["Client ID:", request.client_id])
     
-    info_table = Table(report_info, colWidths=[2 * inch, 3.5 * inch])
+    info_table = Table(_wrap_table_rows(report_info, styles), colWidths=[2 * inch, 3.5 * inch])
     info_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e3f2fd")),
         ("BACKGROUND", (1, 0), (1, -1), colors.white),
@@ -532,6 +572,8 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(info_table)
     elements.append(Spacer(1, 0.5 * inch))
@@ -574,7 +616,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
             ["Defense Actions", str(stats["defense_actions_taken"])],
         ]
 
-        stats_table = Table(stats_data, colWidths=[3 * inch, 2 * inch])
+        stats_table = Table(_wrap_table_rows(stats_data, styles), colWidths=[3 * inch, 2 * inch])
         stats_table.setStyle(
             TableStyle(
                 [
@@ -585,6 +627,8 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                     ("FONTSIZE", (0, 0), (-1, -1), 10),
                     ("GRID", (0, 0), (-1, -1), 1, colors.grey),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9f9f9")]),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]
             )
         )
@@ -602,7 +646,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
             ["Average Confidence Score", f"{stats['avg_confidence']*100:.1f}%"],
         ]
         
-        forensic_table = Table(forensic_data, colWidths=[3 * inch, 2 * inch])
+        forensic_table = Table(_wrap_table_rows(forensic_data, styles), colWidths=[3 * inch, 2 * inch])
         forensic_table.setStyle(
             TableStyle(
                 [
@@ -613,6 +657,8 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                     ("FONTSIZE", (0, 0), (-1, -1), 10),
                     ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#388e3c")),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]
             )
         )
@@ -629,7 +675,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                 ["Malicious", str(stats["malicious_scans"])],
             ]
 
-            threat_table = Table(threat_data, colWidths=[3 * inch, 2 * inch])
+            threat_table = Table(_wrap_table_rows(threat_data, styles), colWidths=[3 * inch, 2 * inch])
             threat_table.setStyle(
                 TableStyle(
                     [
@@ -638,6 +684,8 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                         ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                     ]
                 )
             )
@@ -682,7 +730,7 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                             forensic_status
                         ])
 
-                    scan_table = Table(scan_data, colWidths=[2.5 * inch, 0.8 * inch, 0.9 * inch, 1.3 * inch])
+                    scan_table = Table(_wrap_table_rows(scan_data, styles), colWidths=[2.5 * inch, 0.8 * inch, 0.9 * inch, 1.3 * inch])
                     scan_table.setStyle(
                         TableStyle(
                             [
@@ -695,6 +743,8 @@ async def _generate_comprehensive_pdf(report_data: dict, request: AdvancedReport
                                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                                 ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e57373")),
                                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ffebee")]),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                             ]
                         )
                     )
@@ -811,7 +861,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
         ["Report ID:", f"RPT-{interval.upper()}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"],
     ]
     
-    metadata_table = Table(metadata_data, colWidths=[2*inch, 4.5*inch])
+    metadata_table = Table(_wrap_table_rows(metadata_data, styles, header_font_size=8, body_font_size=8), colWidths=[2*inch, 4.5*inch])
     metadata_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e3f2fd")),
         ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#212121")),
@@ -824,6 +874,8 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(metadata_table)
     elements.append(Spacer(1, 0.3 * inch))
@@ -858,7 +910,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
         ["❓ Unknown/Unclassified", str(stats["unknown"]), f"{stats['unknown']/total_scans*100:.1f}%" if total_scans > 0 else "0%"],
     ]
     
-    stats_table = Table(stats_data, colWidths=[3*inch, 1.5*inch, 2*inch])
+    stats_table = Table(_wrap_table_rows(stats_data, styles), colWidths=[3*inch, 1.5*inch, 2*inch])
     stats_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565c0")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -873,6 +925,8 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
     elements.append(stats_table)
     elements.append(Spacer(1, 0.3 * inch))
@@ -902,7 +956,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                 str(safe)
             ])
         
-        type_summary_table = Table(type_summary_data, colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+        type_summary_table = Table(_wrap_table_rows(type_summary_data, styles), colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
         type_summary_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ff6f00")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -910,6 +964,8 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#ff8f00")),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff3e0")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(type_summary_table)
         elements.append(Spacer(1, 0.2 * inch))
@@ -986,7 +1042,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                     if "risk_score" in analysis:
                         threat_data.append(["Risk Score", f"{analysis['risk_score']}/100"])
                 
-                threat_table = Table(threat_data, colWidths=[1.5*inch, 5*inch])
+                threat_table = Table(_wrap_table_rows(threat_data, styles, header_font_size=8, body_font_size=8), colWidths=[1.5*inch, 5*inch])
                 threat_table.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#ffebee")),
                     ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#ffcdd2")),
@@ -1000,6 +1056,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                     ("RIGHTPADDING", (0, 0), (-1, -1), 6),
                     ("TOPPADDING", (0, 0), (-1, -1), 4),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]))
                 elements.append(threat_table)
                 elements.append(Spacer(1, 0.15 * inch))
@@ -1059,13 +1116,15 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                     else:
                         susp_data.append(["Forensic Status", "⚠ FORENSIC DATA NOT AVAILABLE"])
                 
-                susp_table = Table(susp_data, colWidths=[1.5*inch, 5*inch])
+                susp_table = Table(_wrap_table_rows(susp_data, styles, header_font_size=8, body_font_size=8), colWidths=[1.5*inch, 5*inch])
                 susp_table.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#fff8e1")),
                     ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#ff8f00")),
                     ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]))
                 elements.append(susp_table)
                 elements.append(Spacer(1, 0.1 * inch))
@@ -1120,13 +1179,15 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                     else:
                         safe_data.append(["Forensic Status", "⚠ NO VERIFICATION DATA"])
                 
-                safe_table = Table(safe_data, colWidths=[1.5*inch, 5*inch])
+                safe_table = Table(_wrap_table_rows(safe_data, styles, header_font_size=8, body_font_size=8), colWidths=[1.5*inch, 5*inch])
                 safe_table.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
                     ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#4caf50")),
                     ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]))
                 elements.append(safe_table)
                 elements.append(Spacer(1, 0.1 * inch))
@@ -1203,7 +1264,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
                 attacks[:50] + "..." if len(attacks) > 50 else attacks
             ])
         
-        taxonomy_table = Table(taxonomy_data, colWidths=[1.2*inch, 0.8*inch, 2.2*inch, 2.3*inch])
+        taxonomy_table = Table(_wrap_table_rows(taxonomy_data, styles), colWidths=[1.2*inch, 0.8*inch, 2.2*inch, 2.3*inch])
         taxonomy_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#311b92")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -1212,7 +1273,8 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             ("FONTSIZE", (0, 1), (-1, -1), 8),
             ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#512da8")),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#ede7f6")]),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(taxonomy_table)
         elements.append(Spacer(1, 0.2 * inch))
@@ -1266,7 +1328,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             ]
         ]
         
-        mitigation_table = Table(mitigation_data, colWidths=[1.5*inch, 1*inch, 4*inch])
+        mitigation_table = Table(_wrap_table_rows(mitigation_data, styles), colWidths=[1.5*inch, 1*inch, 4*inch])
         mitigation_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1b5e20")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -1277,6 +1339,7 @@ def _generate_simple_pdf(report: dict, interval: str) -> bytes:
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("ALIGN", (1, 1), (1, -1), "CENTER"),
+            ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
         ]))
         elements.append(mitigation_table)
         elements.append(Spacer(1, 0.2 * inch))

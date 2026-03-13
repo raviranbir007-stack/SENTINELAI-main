@@ -2175,9 +2175,22 @@
                     // Build API results section
                     let apiResultsHTML = '';
                     if (effectiveApiResults) {
-                        const apiStatusEntries = Object.values(effectiveApiResults.api_status || {});
+                        const rawApiStatusEntries = Object.values(effectiveApiResults.api_status || {});
                         const apis = effectiveApiResults.apis_called || [];
                         const expectedApis = effectiveApiResults.apis_expected || [];
+                        const relevantApiNames = new Set(expectedApis);
+                        const apiStatusEntries = rawApiStatusEntries.filter(api => {
+                            const status = (api.status || '').toLowerCase();
+                            // Keep APIs relevant to this indicator, and hide non-applicable rows
+                            if (status === 'not_applicable') {
+                                return false;
+                            }
+                            if (relevantApiNames.has(api.name)) {
+                                return true;
+                            }
+                            // Preserve visibility for APIs that were actually called or produced a result
+                            return ['checked', 'pending', 'not_configured', 'rate_limited', 'not_authorized', 'error'].includes(status);
+                        });
                         if (apiStatusEntries.length > 0 || apis.length > 0) {
                             apiResultsHTML = `
                                 <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px;">
@@ -2189,8 +2202,27 @@
                                     ` : ''}
                                     <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                                         ${(apiStatusEntries.length > 0 ? apiStatusEntries : apis.map(api => ({ name: api, status: 'checked' }))).map(api => {
-                                            const badgeClass = api.status === 'checked' ? 'badge-safe' : api.status === 'not_configured' || api.status === 'rate_limited' ? 'badge-warning' : 'badge-threat';
-                                            const label = api.status === 'checked' ? 'checked' : api.status === 'not_configured' ? 'not configured' : api.status === 'rate_limited' ? 'rate limited' : 'error';
+                                            const status = (api.status || '').toLowerCase();
+                                            const badgeClass = status === 'checked'
+                                                ? 'badge-safe'
+                                                : status === 'pending' || status === 'not_configured' || status === 'rate_limited'
+                                                    ? 'badge-warning'
+                                                    : status === 'not_authorized' || status === 'error'
+                                                        ? 'badge-threat'
+                                                        : 'badge-warning';
+                                            const label = status === 'checked'
+                                                ? 'checked'
+                                                : status === 'pending'
+                                                    ? 'pending'
+                                                    : status === 'not_configured'
+                                                        ? 'not configured'
+                                                        : status === 'rate_limited'
+                                                            ? 'rate limited'
+                                                            : status === 'not_authorized'
+                                                                ? 'unauthorized'
+                                                                : status === 'not_applicable'
+                                                                    ? 'not applicable'
+                                                                    : 'error';
                                             return `<span class="badge ${badgeClass}" style="text-transform: capitalize;">${api.name} • ${label}</span>`;
                                         }).join('')}
                                     </div>
@@ -3027,19 +3059,60 @@
                 return;
             }
 
-            list.innerHTML = logs.map(log => {
+            list.innerHTML = logs.map((log, index) => {
                 const level = (log.level || 'INFO').toLowerCase();
                 const badge = level === 'error' || level === 'critical' ? 'badge-threat' : level === 'warning' ? 'badge-warning' : 'badge-safe';
+                const hasDetails = Boolean(log && (log.details || extractScanIdFromLog(log)));
                 return `
                     <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:0.75rem 0;border-bottom:1px solid var(--border);">
                         <div style="flex:1;">
                             <div style="font-weight:600;">${log.component || 'system'} - ${log.message || ''}</div>
                             <div style="font-size:0.8rem;color:var(--muted-foreground);">${log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}</div>
                         </div>
-                        <span class="badge ${badge}" style="height:fit-content;">${level.toUpperCase()}</span>
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            ${hasDetails ? `<button class="icon-btn" title="View details" onclick="viewLogInfo(${index})" style="font-size:0.9rem;">ℹ️</button>` : ''}
+                            <span class="badge ${badge}" style="height:fit-content;">${level.toUpperCase()}</span>
+                        </div>
                     </div>
                 `;
             }).join('');
+        }
+
+        function extractScanIdFromLog(log) {
+            if (!log) return null;
+            const detailsId = log.details && typeof log.details === 'object' ? log.details.scan_id : null;
+            if (detailsId) return detailsId;
+
+            const msg = String(log.message || '');
+            const m = msg.match(/SCAN_[A-Za-z0-9_\-]+/);
+            return m ? m[0] : null;
+        }
+
+        function viewLogInfo(index) {
+            const log = recentLogs[index];
+            if (!log) return;
+
+            const scanId = extractScanIdFromLog(log);
+            if (scanId) {
+                viewScanDetail(scanId);
+                return;
+            }
+
+            const detailsText = log.details
+                ? (typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2))
+                : 'No additional details available';
+
+            const message = [
+                `Component: ${log.component || 'system'}`,
+                `Level: ${String(log.level || 'INFO').toUpperCase()}`,
+                `Time: ${log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}`,
+                `Message: ${log.message || ''}`,
+                '',
+                `Details: ${detailsText}`,
+            ].join('\n');
+
+            showToast('Log details opened in alert dialog', 'info');
+            window.alert(message);
         }
 
         function initLogStream() {
@@ -3632,6 +3705,9 @@
 
             tbody.innerHTML = scans.map(scan => {
                 const target = scan.target || scan.target_name || scan.url || scan.ip || scan.hash || 'unknown';
+                const targetText = String(target);
+                const isSha256 = /^[a-fA-F0-9]{64}$/.test(targetText);
+                const displayTarget = isSha256 ? `${targetText.slice(0, 16)}…${targetText.slice(-12)}` : targetText;
                 const threatLevel = normalizeThreatLevel(scan.threat_level, scan.verdict);
                 const threatColor = getThreatColor(threatLevel);
                 const resultBadge = getThreatBadgeClass(threatLevel);
@@ -3639,7 +3715,7 @@
                 return `
                     <tr>
                         <td><code style="color: var(--primary);">${scan.scan_id}</code></td>
-                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">${target}</td>
+                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;" title="${targetText}">${displayTarget}</td>
                         <td><span class="badge" style="font-size: 10px; text-transform: capitalize;">${scan.type || 'unknown'}</span></td>
                         <td style="color: ${threatColor};">✓ ${scan.status || 'unknown'}</td>
                         <td><span class="badge ${resultBadge}" style="font-size: 10px; text-transform: capitalize;">${threatLevel}</span></td>

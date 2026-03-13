@@ -16,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from ....database import get_db
+from ....core.nids_ingestor import NIDSIngestor
 from ....models import (
     AttackEvent,
     ClientInstallation,
     DefenseAction,
     NetworkAlert,
     ScanHistory,
+    SystemLog,
     ThreatSeverity,
 )
 
@@ -65,6 +67,65 @@ class DefenseActionRequest(BaseModel):
     client_id: Optional[str] = None
     attack_event_id: Optional[str] = None
     details: Optional[dict] = None
+
+
+class DefenseEventRequest(BaseModel):
+    """Generic event stream from endpoint agents and monitor modules."""
+
+    client_id: Optional[str] = None
+    event: str
+    severity: Optional[str] = None
+    risk: Optional[str] = None
+    source_ip: Optional[str] = None
+    source_domain: Optional[str] = None
+    destination_ip: Optional[str] = None
+    destination_port: Optional[int] = None
+    description: Optional[str] = None
+    details: Optional[dict] = None
+    monitor_event: Optional[dict] = None
+
+
+class NIDSBatchIngestRequest(BaseModel):
+    """Batch ingest request for Suricata EVE / Zeek logs."""
+
+    source: str  # suricata | zeek
+    records: List[dict]
+    client_id: Optional[str] = None
+    zeek_log_type: str = "conn"
+
+
+def _map_text_severity(value: Optional[str]) -> ThreatSeverity:
+    raw = (value or "").strip().lower()
+    if raw in {"critical", "p1", "sev1"}:
+        return ThreatSeverity.CRITICAL
+    if raw in {"high", "sev2"}:
+        return ThreatSeverity.HIGH
+    if raw in {"medium", "moderate", "sev3", "suspicious"}:
+        return ThreatSeverity.MEDIUM
+    return ThreatSeverity.LOW
+
+
+def _is_security_event(event_name: str) -> bool:
+    lowered = (event_name or "").lower()
+    return any(
+        token in lowered
+        for token in [
+            "attack",
+            "threat",
+            "alert",
+            "malicious",
+            "suspicious",
+            "intrusion",
+            "quarantine",
+            "brute",
+            "scan",
+            "exploit",
+            "phishing",
+            "dns",
+            "usb",
+            "process",
+        ]
+    )
 
 
 @router.post("/client/register")
@@ -342,6 +403,269 @@ async def execute_defense_action(request: DefenseActionRequest, db: AsyncSession
     except Exception as e:
         logger.error(f"Defense action failed: {str(e)}")
         await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/event")
+async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Ingest endpoint monitor events and convert high-confidence events into
+    attack records + actionable network alerts.
+    """
+    try:
+        payload = request.monitor_event or {}
+        event_name = payload.get("type") or request.event or "unknown_event"
+        risk_text = payload.get("risk") or payload.get("severity") or request.risk or request.severity
+        severity = _map_text_severity(risk_text)
+
+        source_ip = payload.get("source_ip") or payload.get("remote_ip") or request.source_ip
+        source_domain = payload.get("domain") or request.source_domain
+        destination_ip = payload.get("destination_ip") or request.destination_ip
+        destination_port = payload.get("destination_port") or request.destination_port
+        description = (
+            payload.get("description")
+            or request.description
+            or f"Endpoint event: {event_name}"
+        )
+
+        # Resolve client foreign key (optional)
+        client_fk = None
+        if request.client_id:
+            q = select(ClientInstallation).where(ClientInstallation.client_id == request.client_id)
+            r = await db.execute(q)
+            client = r.scalar_one_or_none()
+            if client:
+                client_fk = client.id
+
+        # Always persist raw event in structured system log
+        db.add(
+            SystemLog(
+                log_level="WARNING" if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} else "INFO",
+                component="defense_event",
+                message=f"{event_name}: {description}",
+                details={
+                    "client_id": request.client_id,
+                    "event": event_name,
+                    "severity": severity.value,
+                    "source_ip": source_ip,
+                    "source_domain": source_domain,
+                    "destination_ip": destination_ip,
+                    "destination_port": destination_port,
+                    "payload": payload,
+                },
+            )
+        )
+
+        created_attack_id = None
+
+        # Promote to attack event when high confidence or security-significant event type
+        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} or _is_security_event(event_name):
+            event_id = f"EVT_{uuid.uuid4().hex[:12].upper()}"
+            attack = AttackEvent(
+                event_id=event_id,
+                attack_type=event_name,
+                source_ip=source_ip,
+                source_domain=source_domain,
+                destination_ip=destination_ip,
+                destination_port=destination_port,
+                severity=severity,
+                confidence=0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55,
+                description=description,
+                indicators=payload if payload else (request.details or {}),
+                status="detected",
+                target_client_id=client_fk,
+            )
+            db.add(attack)
+            await db.flush()
+            created_attack_id = event_id
+
+        # Correlate burst activity for the same source/client in the last 10 minutes
+        since_time = datetime.utcnow() - timedelta(minutes=10)
+        base_query = select(func.count(AttackEvent.id)).where(AttackEvent.detected_at >= since_time)
+        if source_ip:
+            base_query = base_query.where(AttackEvent.source_ip == source_ip)
+        elif client_fk:
+            base_query = base_query.where(AttackEvent.target_client_id == client_fk)
+
+        count_res = await db.execute(base_query)
+        recent_count = int(count_res.scalar() or 0)
+
+        # Create a correlated alert when threshold reached
+        alert_created = None
+        if recent_count >= 4:
+            alert = NetworkAlert(
+                alert_id=f"ALERT_{uuid.uuid4().hex[:12].upper()}",
+                alert_type="correlated_multi_event_incident",
+                severity=ThreatSeverity.CRITICAL if recent_count >= 8 else ThreatSeverity.HIGH,
+                title="Correlated multi-event attack pattern",
+                description=(
+                    f"Detected {recent_count} related security events within 10 minutes"
+                    + (f" from source {source_ip}" if source_ip else "")
+                ),
+                affected_clients=[request.client_id] if request.client_id else [],
+                affected_count=1 if request.client_id else 0,
+                status="active",
+            )
+            db.add(alert)
+            await db.flush()
+            alert_created = alert.alert_id
+
+        await db.commit()
+
+        return {
+            "status": "ingested",
+            "event": event_name,
+            "severity": severity.value,
+            "created_attack_event": created_attack_id,
+            "correlated_alert": alert_created,
+            "recent_related_events_10m": recent_count,
+        }
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Defense event ingestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ingest/nids")
+async def ingest_nids_events(request: NIDSBatchIngestRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Ingest normalized NIDS events from Suricata or Zeek and persist as
+    `AttackEvent` records. This endpoint enables hybrid NIDS/HIDS correlation.
+    """
+    try:
+        source = (request.source or "").strip().lower()
+        if source not in {"suricata", "zeek"}:
+            raise HTTPException(status_code=400, detail="source must be 'suricata' or 'zeek'")
+
+        client_fk = None
+        if request.client_id:
+            q = select(ClientInstallation).where(ClientInstallation.client_id == request.client_id)
+            r = await db.execute(q)
+            client = r.scalar_one_or_none()
+            if client:
+                client_fk = client.id
+
+        normalized = NIDSIngestor.batch_normalize(source, request.records, zeek_log_type=request.zeek_log_type)
+        created = 0
+        high_critical = 0
+
+        for evt in normalized:
+            sev = _map_text_severity(evt.severity)
+            if sev in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL}:
+                high_critical += 1
+
+            attack = AttackEvent(
+                event_id=f"NIDS_{uuid.uuid4().hex[:12].upper()}",
+                attack_type=evt.attack_type,
+                source_ip=evt.source_ip,
+                source_domain=evt.source_domain,
+                destination_ip=evt.destination_ip,
+                destination_port=evt.destination_port,
+                severity=sev,
+                confidence=float(evt.confidence),
+                description=evt.description,
+                indicators=evt.indicators,
+                status="detected",
+                target_client_id=client_fk,
+            )
+            db.add(attack)
+            created += 1
+
+        # Persist a summarized log entry
+        db.add(
+            SystemLog(
+                log_level="WARNING" if high_critical > 0 else "INFO",
+                component="nids_ingestion",
+                message=f"Ingested {created} {source} events ({high_critical} high/critical)",
+                details={
+                    "source": source,
+                    "client_id": request.client_id,
+                    "records_received": len(request.records or []),
+                    "events_created": created,
+                    "high_critical": high_critical,
+                    "zeek_log_type": request.zeek_log_type,
+                },
+            )
+        )
+
+        # Raise network alert for sustained high-severity NIDS input
+        alert_id = None
+        if high_critical >= 5:
+            alert = NetworkAlert(
+                alert_id=f"ALERT_{uuid.uuid4().hex[:12].upper()}",
+                alert_type="nids_high_severity_burst",
+                severity=ThreatSeverity.CRITICAL,
+                title="Burst of high-severity NIDS detections",
+                description=f"{high_critical} high/critical {source} detections in a single batch",
+                affected_clients=[request.client_id] if request.client_id else [],
+                affected_count=1 if request.client_id else 0,
+                status="active",
+            )
+            db.add(alert)
+            await db.flush()
+            alert_id = alert.alert_id
+
+        await db.commit()
+
+        return {
+            "status": "ingested",
+            "source": source,
+            "records_received": len(request.records or []),
+            "events_created": created,
+            "high_critical": high_critical,
+            "alert_id": alert_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"NIDS ingestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/events")
+async def list_defense_events(
+    hours: int = 24,
+    limit: int = 200,
+    client_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent defense event timeline for analyst investigation."""
+    try:
+        since_time = datetime.utcnow() - timedelta(hours=hours)
+        query = (
+            select(SystemLog)
+            .where(SystemLog.component == "defense_event")
+            .where(SystemLog.timestamp >= since_time)
+            .order_by(SystemLog.timestamp.desc())
+            .limit(max(1, min(limit, 1000)))
+        )
+        result = await db.execute(query)
+        rows = result.scalars().all()
+
+        events = []
+        for row in rows:
+            details = row.details or {}
+            if client_id and details.get("client_id") != client_id:
+                continue
+            events.append(
+                {
+                    "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                    "log_level": row.log_level,
+                    "event": details.get("event"),
+                    "severity": details.get("severity"),
+                    "client_id": details.get("client_id"),
+                    "source_ip": details.get("source_ip"),
+                    "source_domain": details.get("source_domain"),
+                    "message": row.message,
+                    "details": details,
+                }
+            )
+
+        return {"total": len(events), "events": events}
+    except Exception as e:
+        logger.error(f"Failed to list defense events: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

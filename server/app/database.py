@@ -1,10 +1,16 @@
 import os
+import logging
 from pathlib import Path
 
 from .config import settings
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
+
+
+logger = logging.getLogger(__name__)
 
 
 # Ensure an async driver is used for sqlite when running async engine
@@ -28,12 +34,33 @@ if db_url.startswith("sqlite://") and "+aiosqlite" not in db_url:
         db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://")
 
 
+is_sqlite_async = db_url.startswith("sqlite+aiosqlite://")
+
+engine_kwargs = {
+    "echo": os.getenv("SQL_ECHO", "false").lower() == "true",
+    "future": True,
+}
+
+if is_sqlite_async:
+    # Avoid reusing stale/closed sqlite connections under async workloads.
+    # This also prevents rollback-on-checkin against already-closed handles.
+    engine_kwargs.update(
+        {
+            "poolclass": NullPool,
+            "connect_args": {"timeout": 30},
+        }
+    )
+else:
+    engine_kwargs.update(
+        {
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+        }
+    )
+
 engine = create_async_engine(
     db_url,
-    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
-    future=True,
-    pool_pre_ping=True,
-    pool_recycle=3600,
+    **engine_kwargs,
 )
 
 # Create async session factory
@@ -51,11 +78,19 @@ Base = declarative_base()
 
 async def get_db():
     """Get database session"""
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    finally:
         try:
-            yield session
-        finally:
             await session.close()
+        except (OperationalError, ValueError) as exc:
+            # Defensive guard for intermittent aiosqlite teardown race:
+            # ValueError("no active connection") wrapped as sqlite OperationalError.
+            if "no active connection" in str(exc).lower():
+                logger.debug("Suppressed sqlite close race in get_db: %s", exc)
+            else:
+                raise
 
 
 async def init_db():

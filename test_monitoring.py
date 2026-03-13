@@ -7,8 +7,9 @@ Run this AFTER starting the server to see activity monitoring in action
 import requests
 import time
 import json
+import os
 
-SERVER_URL = "http://localhost:5000"
+SERVER_URL = os.getenv("SENTINEL_SERVER_URL", "http://localhost:8000")
 
 print("=" * 80)
 print("🧪 SENTINEL-AI Monitoring Test Client")

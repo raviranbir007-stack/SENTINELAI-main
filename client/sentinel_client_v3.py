@@ -35,6 +35,14 @@ from scanner.prevention_system import PreventionSystem
 from scanner.threat_analyzer import ThreatAnalyzer
 from scanner.logging_config import configure_module_logger
 from scanner.minimal_cli import MinimalCLI
+from scanner.usb_monitor import USBMonitor
+from scanner.email_monitor import EmailMonitor
+from scanner.vulnerability_scanner import VulnerabilityScanner
+from scanner.behavioral_monitor import BehavioralMonitor
+from scanner.dns_monitor import DNSMonitor
+from scanner.network_scanner import NetworkScanner
+from scanner.process_scanner import ProcessScanner
+from scanner.file_scanner import FileScanner
 
 # Configuration
 CONFIG_FILE = Path("config.ini")
@@ -65,6 +73,8 @@ class SentinelClientV3:
             'virustotal': self.config.get("apis", {}).get("virustotal", ""),
             'abuseipdb': self.config.get("apis", {}).get("abuseipdb", ""),
             'urlscan': self.config.get("apis", {}).get("urlscan", ""),
+            'otx': self.config.get("apis", {}).get("otx", ""),
+            'ipqualityscore': self.config.get("apis", {}).get("ipqualityscore", ""),
             'shodan': self.config.get("apis", {}).get("shodan", ""),
             'hybrid_analysis': self.config.get("apis", {}).get("hybrid_analysis", "")
         }
@@ -105,6 +115,53 @@ class SentinelClientV3:
         
         # 5. Prevention System (blocking)
         self.prevention_system = PreventionSystem(callback=self._handle_prevention_event)
+
+        # 6+ Extended endpoint telemetry monitors
+        self.usb_monitor = USBMonitor(
+            callback=self._handle_extended_monitor_event,
+            threat_analyzer=self.threat_analyzer
+        )
+        self.email_monitor = EmailMonitor(
+            callback=self._handle_extended_monitor_event,
+            threat_analyzer=self.threat_analyzer,
+            # IMAP/POP are optional, can be left blank and local Thunderbird scan still works
+            imap_host=self.config.get("email", {}).get("imap_host", ""),
+            imap_port=int(self.config.get("email", {}).get("imap_port", 993)),
+            imap_user=self.config.get("email", {}).get("imap_user", ""),
+            imap_pass=self.config.get("email", {}).get("imap_pass", ""),
+            pop3_host=self.config.get("email", {}).get("pop3_host", ""),
+            pop3_port=int(self.config.get("email", {}).get("pop3_port", 995)),
+            pop3_user=self.config.get("email", {}).get("pop3_user", ""),
+            pop3_pass=self.config.get("email", {}).get("pop3_pass", ""),
+            scan_local_thunderbird=self.config.get("email", {}).get("scan_local_thunderbird", "true").lower() in ["1", "true", "yes", "on"],
+            poll_interval=int(self.config.get("email", {}).get("poll_interval", 60))
+        )
+        self.vulnerability_scanner = VulnerabilityScanner(
+            callback=self._handle_extended_monitor_event,
+            shodan_api_key=self.api_keys.get("shodan", ""),
+            scan_interval_hours=int(self.config.get("vulnerability", {}).get("scan_interval_hours", 6)),
+            full_scan_on_start=self.config.get("vulnerability", {}).get("full_scan_on_start", "true").lower() in ["1", "true", "yes", "on"]
+        )
+        self.behavioral_monitor = BehavioralMonitor(
+            callback=self._handle_extended_monitor_event,
+            poll_interval=int(self.config.get("behavior", {}).get("poll_interval", 5))
+        )
+        self.dns_monitor = DNSMonitor(
+            callback=self._handle_extended_monitor_event,
+            threat_analyzer=self.threat_analyzer,
+            use_scapy=self.config.get("dns", {}).get("use_scapy", "false").lower() in ["1", "true", "yes", "on"],
+            poll_interval=int(self.config.get("dns", {}).get("poll_interval", 5))
+        )
+        self.network_scanner = NetworkScanner(
+            callback=self._handle_extended_monitor_event,
+            threat_analyzer=self.threat_analyzer,
+            poll_interval=int(self.config.get("network", {}).get("poll_interval", 10))
+        )
+        self.process_scanner = ProcessScanner(
+            callback=self._handle_extended_monitor_event,
+            poll_interval=int(self.config.get("process", {}).get("poll_interval", 5))
+        )
+        self.file_scanner = FileScanner(threat_analyzer=self.threat_analyzer)
 
     def _load_config(self, config_path: Path) -> Dict:
         """Load configuration from file"""
@@ -319,18 +376,25 @@ class SentinelClientV3:
         """Send defense events to server"""
         try:
             event['client_id'] = self.client_id
-            
-            response = requests.post(
-                f"{self.server_url}/api/v1/defense/event",
-                headers=self._get_headers(),
-                json=event,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                logger.debug(f"Event sent")
-            else:
-                logger.error(f"Event send failed")
+
+            headers = self._get_headers()
+            endpoints = [
+                f"{self.server_url}/api/v1/network/event",  # current router prefix
+                f"{self.server_url}/api/v1/defense/event",  # backward compatibility
+            ]
+
+            for endpoint in endpoints:
+                response = requests.post(
+                    endpoint,
+                    headers=headers,
+                    json=event,
+                    timeout=10,
+                )
+                if response.status_code == 200:
+                    logger.debug("Event sent")
+                    return
+
+            logger.error("Event send failed")
                 
         except Exception as e:
             logger.error(f"Event send failed")
@@ -341,6 +405,41 @@ class SentinelClientV3:
         
         # Send to server
         self._send_defense_event_to_server(event)
+
+    def _handle_extended_monitor_event(self, event: Dict):
+        """Handle events from USB, email, DNS, behavioral and vulnerability monitors."""
+        try:
+            event_type = event.get('type', '')
+            risk = event.get('risk') or event.get('severity') or 'LOW'
+
+            if event_type in ['usb_insert', 'usb_file_quarantined', 'email_threat', 'dns_threat', 'behavioral_alert']:
+                if event_type == 'email_threat':
+                    logger.warning("📧 Threat email detected")
+                elif event_type == 'dns_threat':
+                    logger.warning("🌐 DNS threat detected")
+                elif event_type == 'behavioral_alert':
+                    logger.warning("🧠 Behavioral anomaly detected")
+                elif event_type == 'usb_file_quarantined':
+                    logger.warning("🔌 USB file quarantined")
+
+            # Forward high/critical events to defense pipeline
+            if str(risk).upper() in ['HIGH', 'CRITICAL']:
+                attack_payload = {
+                    'type': event_type or 'extended_monitor_alert',
+                    'severity': str(risk).upper(),
+                    'description': event.get('description') or event.get('reason') or event_type,
+                    'source_ip': event.get('source_ip') or event.get('remote_ip') or 'UNKNOWN',
+                    'timestamp': datetime.now()
+                }
+                self.defense_coordinator.handle_attack(attack_payload)
+
+            # Send raw event upstream too
+            self._send_defense_event_to_server({
+                'event': 'EXTENDED_MONITOR_EVENT',
+                'monitor_event': event
+            })
+        except Exception:
+            logger.debug("Extended monitor event handling failed")
 
     # ===== MONITORING LOOPS =====
 
@@ -353,7 +452,15 @@ class SentinelClientV3:
                     'intrusion_detector': self.intrusion_detector.get_statistics(),
                     'activity_logger': self.activity_logger.get_recent_activities(hours=1),
                     'defense_coordinator': self.defense_coordinator.get_status(),
-                    'prevention_system': self.prevention_system.get_statistics()
+                    'prevention_system': self.prevention_system.get_statistics(),
+                    'threat_analyzer': self.threat_analyzer.get_statistics(),
+                    'usb_monitor': self.usb_monitor.get_events_summary(),
+                    'email_monitor': self.email_monitor.get_summary(),
+                    'vulnerability_scanner': self.vulnerability_scanner.get_summary(),
+                    'behavioral_monitor': self.behavioral_monitor.get_summary(),
+                    'dns_monitor': self.dns_monitor.get_summary(),
+                    'network_scanner': self.network_scanner.get_summary(),
+                    'process_scanner': self.process_scanner.get_summary()
                 }
                 
                 response = requests.post(
@@ -430,6 +537,13 @@ class SentinelClientV3:
         self.activity_logger.start()
         self.defense_coordinator.start()
         self.prevention_system.start()
+        self.usb_monitor.start()
+        self.email_monitor.start()
+        self.vulnerability_scanner.start()
+        self.behavioral_monitor.start()
+        self.dns_monitor.start()
+        self.network_scanner.start()
+        self.process_scanner.start()
         
         # Start background tasks
         tasks = [
@@ -454,6 +568,13 @@ class SentinelClientV3:
         self.activity_logger.stop()
         self.defense_coordinator.stop()
         self.prevention_system.stop()
+        self.usb_monitor.stop()
+        self.email_monitor.stop()
+        self.vulnerability_scanner.stop()
+        self.behavioral_monitor.stop()
+        self.dns_monitor.stop()
+        self.network_scanner.stop()
+        self.process_scanner.stop()
         
         logger.info("✅ All security modules stopped")
 
@@ -543,6 +664,14 @@ class SentinelClientV3:
             'intrusion_detector': self.intrusion_detector.get_statistics(),
             'defense_coordinator': self.defense_coordinator.get_status(),
             'prevention_system': self.prevention_system.get_statistics(),
+            'threat_analyzer': self.threat_analyzer.get_statistics(),
+            'usb_monitor': self.usb_monitor.get_events_summary(),
+            'email_monitor': self.email_monitor.get_summary(),
+            'vulnerability_scanner': self.vulnerability_scanner.get_summary(),
+            'behavioral_monitor': self.behavioral_monitor.get_summary(),
+            'dns_monitor': self.dns_monitor.get_summary(),
+            'network_scanner': self.network_scanner.get_summary(),
+            'process_scanner': self.process_scanner.get_summary(),
             'activity_logger': {
                 'websites_logged': len(self.activity_logger.get_recent_activities(hours=24)['websites']),
                 'applications_logged': len(self.activity_logger.get_recent_activities(hours=24)['applications']),

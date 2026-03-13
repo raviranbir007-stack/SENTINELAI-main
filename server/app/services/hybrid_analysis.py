@@ -60,6 +60,17 @@ class HybridAnalysisService:
                         data = {"results": data}
                     set_cached(cache_key, data)
                     return data
+                elif response.status_code == 404:
+                    # Hash not present in Hybrid Analysis corpus is a valid
+                    # lookup outcome, not an integration failure.
+                    data = {
+                        "results": [],
+                        "count": 0,
+                        "status": "not_found",
+                        "message": "No Hybrid Analysis record for this hash",
+                    }
+                    set_cached(cache_key, data)
+                    return data
                 else:
                     logger.warning(
                         f"Hybrid Analysis API error: {response.status_code} for {file_hash}"

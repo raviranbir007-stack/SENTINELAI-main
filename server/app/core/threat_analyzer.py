@@ -391,6 +391,8 @@ class ThreatAnalyzer:
         if response.get("error"):
             error_message = str(response.get("error", ""))
 
+        previous_status = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
+
         if error_message:
             error_lower = error_message.lower()
             if "not configured" in error_lower:
@@ -399,6 +401,8 @@ class ThreatAnalyzer:
                 status = "not_authorized"
             elif "rate limit" in error_lower:
                 status = "rate_limited"
+            elif "not yet complete" in error_lower or "scan not found" in error_lower:
+                status = "pending"
             else:
                 status = "error"
         else:
@@ -409,7 +413,9 @@ class ThreatAnalyzer:
         api_status[api_key] = {
             "name": display_name,
             "status": status,
-            "configured": status != "not_configured",
+            "configured": previous_status.get("configured", status != "not_configured") and status != "not_configured",
+            "applicable": previous_status.get("applicable"),
+            "supported_inputs": previous_status.get("supported_inputs"),
             "error": error_message or None,
         }
 

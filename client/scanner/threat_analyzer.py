@@ -3,14 +3,13 @@ Threat Analysis Engine - Background scanning with 5 APIs
 Scans URLs, IPs, domains, files in background and reports verdict
 """
 
-import asyncio
-import json
 import logging
 import requests
+import socket
 import threading
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from urllib.parse import urlparse
 
 logger = logging.getLogger("ThreatAnalysis")
@@ -21,7 +20,7 @@ class ThreatAnalyzer:
     """Multi-API threat intelligence engine"""
     
     def __init__(self, api_keys: Dict[str, str] = None, callback=None, server_url: Optional[str] = None, request_timeout: int = 12):
-        self.api_keys = api_keys or {}
+        self.api_keys = self._normalize_api_keys(api_keys or {})
         self.callback = callback
         self.server_url = server_url.rstrip("/") if server_url else None
         self.request_timeout = request_timeout
@@ -44,8 +43,31 @@ class ThreatAnalyzer:
             'abuseipdb': 'https://api.abuseipdb.com/api/v2',
             'urlscan': 'https://urlscan.io/api/v1',
             'otx': 'https://otx.alienvault.com/api/v1',
-            'ipqualityscore': 'https://ipqualityscore.com/api/json'
+            'ipqualityscore': 'https://ipqualityscore.com/api/json',
+            'shodan': 'https://api.shodan.io',
+            'hybrid_analysis': 'https://www.hybrid-analysis.com/api/v2'
         }
+
+    def _normalize_api_keys(self, api_keys: Dict[str, str]) -> Dict[str, str]:
+        """Normalize config aliases so integrations can use consistent key names."""
+        normalized = dict(api_keys or {})
+        alias_map = {
+            'otx': ['alienvault_otx', 'alienvault', 'otx_key'],
+            'ipqualityscore': ['ipqs', 'ip_quality_score'],
+            'hybrid_analysis': ['hybridanalysis', 'hybrid'],
+            'virustotal': ['virus_total', 'vt'],
+            'abuseipdb': ['abuse_ip_db'],
+            'urlscan': ['urlscan_io'],
+            'shodan': ['shodan_api']
+        }
+        for target, aliases in alias_map.items():
+            if normalized.get(target):
+                continue
+            for alias in aliases:
+                if normalized.get(alias):
+                    normalized[target] = normalized.get(alias)
+                    break
+        return normalized
     
     def start(self):
         """Start background scanning thread"""
@@ -209,7 +231,7 @@ class ThreatAnalyzer:
     
     def _scan_url(self, url: str) -> Dict:
         """Scan URL across APIs"""
-        sources = []
+        sources: List[str] = []
         detections = 0
         
         # Parse domain for additional scanning
@@ -223,8 +245,9 @@ class ThreatAnalyzer:
             try:
                 vt_result = self._virustotal_scan_url(url)
                 sources.append('virustotal')
-                if vt_result['malicious'] > 0:
-                    detections += vt_result['malicious']
+                total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
+                if total_vt > 0:
+                    detections += min(total_vt, 3)
             except:
                 pass
         
@@ -245,7 +268,9 @@ class ThreatAnalyzer:
                 if ip:
                     aip_result = self._abuseipdb_check_ip(ip)
                     sources.append('abuseipdb')
-                    if aip_result['abuse_confidence'] > 25:
+                    if aip_result.get('abuse_confidence', 0) >= 75:
+                        detections += 2
+                    elif aip_result.get('abuse_confidence', 0) > 25:
                         detections += 1
             except:
                 pass
@@ -264,16 +289,32 @@ class ThreatAnalyzer:
             try:
                 iqs_result = self._ipqualityscore_check_url(url)
                 sources.append('ipqualityscore')
-                if iqs_result['is_malicious']:
+                if iqs_result.get('is_malicious'):
                     detections += 1
+            except:
+                pass
+
+        # Optional enrichment: Shodan host context for resolved IP
+        if self.api_keys.get('shodan'):
+            try:
+                ip = self._resolve_domain(domain)
+                if ip:
+                    shodan_result = self._shodan_check_ip(ip)
+                    sources.append('shodan')
+                    risky_ports = shodan_result.get('risky_ports', 0)
+                    vulns = shodan_result.get('vulns', 0)
+                    if vulns > 0:
+                        detections += 2
+                    elif risky_ports > 0:
+                        detections += 1
             except:
                 pass
         
         # Determine verdict
-        if detections >= 2:
+        if detections >= 4:
             verdict = 'MALICIOUS'
             risk = 'HIGH'
-        elif detections == 1:
+        elif detections >= 1:
             verdict = 'SUSPICIOUS'
             risk = 'MEDIUM'
         else:
@@ -289,7 +330,7 @@ class ThreatAnalyzer:
     
     def _scan_ip(self, ip: str) -> Dict:
         """Scan IP across APIs"""
-        sources = []
+        sources: List[str] = []
         detections = 0
         
         # API 1: AbuseIPDB
@@ -297,7 +338,9 @@ class ThreatAnalyzer:
             try:
                 aip_result = self._abuseipdb_check_ip(ip)
                 sources.append('abuseipdb')
-                if aip_result['abuse_confidence'] > 25:
+                if aip_result.get('abuse_confidence', 0) >= 75:
+                    detections += 2
+                elif aip_result.get('abuse_confidence', 0) > 25:
                     detections += 1
             except:
                 pass
@@ -307,8 +350,9 @@ class ThreatAnalyzer:
             try:
                 vt_result = self._virustotal_scan_ip(ip)
                 sources.append('virustotal')
-                if vt_result['malicious'] > 0:
-                    detections += vt_result['malicious']
+                total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
+                if total_vt > 0:
+                    detections += min(total_vt, 3)
             except:
                 pass
         
@@ -326,22 +370,30 @@ class ThreatAnalyzer:
             try:
                 iqs_result = self._ipqualityscore_check_ip(ip)
                 sources.append('ipqualityscore')
-                if iqs_result['is_malicious']:
+                if iqs_result.get('is_malicious'):
                     detections += 1
             except:
                 pass
         
-        # API 5: MaxMind/Generic Reputation
-        try:
+        # API 5: Shodan (if configured)
+        if self.api_keys.get('shodan'):
+            try:
+                shodan_result = self._shodan_check_ip(ip)
+                sources.append('shodan')
+                if shodan_result.get('vulns', 0) > 0:
+                    detections += 2
+                elif shodan_result.get('risky_ports', 0) > 0:
+                    detections += 1
+            except:
+                pass
+        else:
             sources.append('reputation_db')
-        except:
-            pass
         
         # Determine verdict
-        if detections >= 2:
+        if detections >= 4:
             verdict = 'MALICIOUS'
             risk = 'HIGH'
-        elif detections == 1:
+        elif detections >= 1:
             verdict = 'SUSPICIOUS'
             risk = 'MEDIUM'
         else:
@@ -370,17 +422,31 @@ class ThreatAnalyzer:
             try:
                 vt_result = self._virustotal_scan_hash(file_hash)
                 sources.append('virustotal')
-                if vt_result['malicious'] > 0:
-                    detections += vt_result['malicious']
+                total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
+                if total_vt > 0:
+                    detections += min(total_vt, 4)
+            except:
+                pass
+
+        # Optional: Hybrid Analysis hash lookup
+        if self.api_keys.get('hybrid_analysis'):
+            try:
+                ha_result = self._hybrid_analysis_check_hash(file_hash)
+                sources.append('hybrid_analysis')
+                if ha_result.get('is_malicious'):
+                    detections += 2
             except:
                 pass
         
         # API 2-5: Other sources
         sources.extend(['otx', 'urlscan', 'abuseipdb', 'ipqualityscore'])
         
-        if detections >= 1:
+        if detections >= 2:
             verdict = 'MALICIOUS'
             risk = 'HIGH'
+        elif detections == 1:
+            verdict = 'SUSPICIOUS'
+            risk = 'MEDIUM'
         else:
             verdict = 'SAFE'
             risk = 'LOW'
@@ -405,8 +471,23 @@ class ThreatAnalyzer:
                 data=data,
                 timeout=10
             )
-            if response.status_code == 200:
-                result = response.json()['data']['attributes']['last_analysis_stats']
+            if response.status_code in [200, 201]:
+                body = response.json().get('data', {})
+                analysis_id = body.get('id')
+                if analysis_id:
+                    analysis = requests.get(
+                        f"{self.apis['virustotal']}/analyses/{analysis_id}",
+                        headers=headers,
+                        timeout=10
+                    )
+                    if analysis.status_code == 200:
+                        stats = analysis.json().get('data', {}).get('attributes', {}).get('stats', {})
+                        return {
+                            'malicious': stats.get('malicious', 0),
+                            'suspicious': stats.get('suspicious', 0)
+                        }
+                # fallback for any alternate response shape
+                result = body.get('attributes', {}).get('last_analysis_stats', {})
                 return {
                     'malicious': result.get('malicious', 0),
                     'suspicious': result.get('suspicious', 0)
@@ -526,13 +607,19 @@ class ThreatAnalyzer:
         try:
             key = self.api_keys.get('ipqualityscore')
             response = requests.get(
-                f"{self.apis['ipqualityscore']}/ip/reputation",
-                params={'ip': ip, 'key': key},
+                f"{self.apis['ipqualityscore']}/ip/{key}/{ip}",
                 timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
-                return {'is_malicious': data.get('is_crawler') is False and data.get('fraud_score', 0) > 75}
+                return {
+                    'is_malicious': bool(
+                        data.get('proxy') or
+                        data.get('tor') or
+                        data.get('vpn') or
+                        data.get('fraud_score', 0) > 75
+                    )
+                }
         except:
             pass
         return {'is_malicious': False}
@@ -541,14 +628,63 @@ class ThreatAnalyzer:
         """IPQualityScore URL check"""
         try:
             key = self.api_keys.get('ipqualityscore')
+            encoded_url = requests.utils.quote(url, safe='')
             response = requests.get(
-                f"{self.apis['ipqualityscore']}/url/reputation",
-                params={'url': url, 'key': key},
+                f"{self.apis['ipqualityscore']}/url/{key}/{encoded_url}",
                 timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
-                return {'is_malicious': data.get('phishing', 0) > 0 or data.get('malware', 0) > 0}
+                return {
+                    'is_malicious': bool(
+                        data.get('phishing', 0) > 0 or
+                        data.get('malware', 0) > 0 or
+                        data.get('suspicious', False) or
+                        data.get('risk_score', 0) > 75
+                    )
+                }
+        except:
+            pass
+        return {'is_malicious': False}
+
+    def _shodan_check_ip(self, ip: str) -> Dict:
+        """Shodan host lookup for exposure/vulns"""
+        try:
+            key = self.api_keys.get('shodan')
+            response = requests.get(
+                f"{self.apis['shodan']}/shodan/host/{ip}",
+                params={'key': key},
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                ports = data.get('ports', []) or []
+                vulns = data.get('vulns', {}) or {}
+                risky = [p for p in ports if p in [23, 445, 2375, 3389, 6379, 27017]]
+                return {
+                    'risky_ports': len(risky),
+                    'vulns': len(vulns.keys()) if isinstance(vulns, dict) else len(vulns)
+                }
+        except:
+            pass
+        return {'risky_ports': 0, 'vulns': 0}
+
+    def _hybrid_analysis_check_hash(self, file_hash: str) -> Dict:
+        """Hybrid Analysis hash lookup"""
+        try:
+            key = self.api_keys.get('hybrid_analysis')
+            headers = {'api-key': key, 'User-Agent': 'Falcon Sandbox'}
+            response = requests.get(
+                f"{self.apis['hybrid_analysis']}/search/hash",
+                headers=headers,
+                params={'hash': file_hash},
+                timeout=12
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list) and data:
+                    max_score = max([int(item.get('threat_score', 0)) for item in data])
+                    return {'is_malicious': max_score >= 70}
         except:
             pass
         return {'is_malicious': False}
@@ -556,7 +692,6 @@ class ThreatAnalyzer:
     def _resolve_domain(self, domain: str) -> Optional[str]:
         """Resolve domain to IP"""
         try:
-            import socket
             return socket.gethostbyname(domain)
         except:
             return None
