@@ -173,6 +173,9 @@ class ScanHistory(Base):
     analyst_notes = Column(Text)  # Optional analyst comments
     analyst_verified = Column(Boolean, default=False)
     
+    # Scan source: 'manual' = user/API triggered, 'background' = auto-monitor, 'scheduled' = cron
+    scan_source = Column(String(20), default='manual', index=True)
+
     # Metadata
     scan_timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     client_id = Column(Integer, ForeignKey("client_installations.id"), nullable=True)

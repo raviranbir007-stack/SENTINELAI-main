@@ -20,13 +20,13 @@ import requests
 # Desktop notification libraries
 try:
     if platform.system() == "Windows":
-        from win10toast import ToastNotifier
+        ToastNotifier = __import__("win10toast", fromlist=["ToastNotifier"]).ToastNotifier
         toaster = ToastNotifier()
     elif platform.system() == "Linux":
-        import notify2
+        notify2 = __import__("notify2")
         notify2.init("SentinelAI")
     elif platform.system() == "Darwin":  # macOS
-        import pync
+        pync = __import__("pync")
 except ImportError:
     print("Warning: Desktop notification library not available. Install win10toast (Windows) or notify2 (Linux)")
 
@@ -154,7 +154,8 @@ class RealTimeDefenseSystem:
             
             payload = {
                 "target": target,
-                "client_id": self.client_id
+                "client_id": self.client_id,
+                "scan_source": "client_protection",
             }
             
             response = requests.post(

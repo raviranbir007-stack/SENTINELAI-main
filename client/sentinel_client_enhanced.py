@@ -18,8 +18,28 @@ from typing import Dict, List, Optional
 
 import psutil
 import requests
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+try:
+    FileSystemEventHandler = __import__("watchdog.events", fromlist=["FileSystemEventHandler"]).FileSystemEventHandler
+    Observer = __import__("watchdog.observers", fromlist=["Observer"]).Observer
+    _WATCHDOG_AVAILABLE = True
+except ImportError:
+    _WATCHDOG_AVAILABLE = False
+
+    class FileSystemEventHandler:  # Fallback no-op class
+        pass
+
+    class Observer:  # Fallback no-op observer
+        def schedule(self, *args, **kwargs):
+            return None
+
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+        def join(self, timeout=None):
+            return None
 
 # Configuration
 CONFIG_FILE = Path("config.ini")
@@ -62,6 +82,9 @@ class SentinelClient:
         # Monitoring configuration
         self.scan_interval = int(self.config.get("client", {}).get("scan_interval", 300))
         self.heartbeat_interval = int(self.config.get("client", {}).get("heartbeat_interval", 60))
+
+        if not _WATCHDOG_AVAILABLE:
+            logger.warning("watchdog package not available; filesystem realtime hooks are disabled")
 
     def _load_config(self, config_path: Path) -> Dict:
         """Load configuration from file"""
@@ -209,7 +232,11 @@ class SentinelClient:
             # Upload and scan
             with open(file_path, "rb") as f:
                 files = {"file": (file_path.name, f, "application/octet-stream")}
-                data = {"include_report": "false", "client_id": self.client_id}
+                data = {
+                    "include_report": "false",
+                    "client_id": self.client_id,
+                    "scan_source": "client_protection",
+                }
 
                 response = requests.post(
                     f"{self.server_url}/api/v1/scan/file",
@@ -244,7 +271,12 @@ class SentinelClient:
             response = requests.post(
                 f"{self.server_url}/api/v1/scan/url",
                 headers=self._get_headers(),
-                json={"target": url, "include_report": False, "client_id": self.client_id},
+                json={
+                    "target": url,
+                    "include_report": False,
+                    "client_id": self.client_id,
+                    "scan_source": "client_protection",
+                },
                 timeout=60,
             )
 
@@ -271,7 +303,12 @@ class SentinelClient:
             response = requests.post(
                 f"{self.server_url}/api/v1/scan/ip",
                 headers=self._get_headers(),
-                json={"target": ip_address, "include_report": False, "client_id": self.client_id},
+                json={
+                    "target": ip_address,
+                    "include_report": False,
+                    "client_id": self.client_id,
+                    "scan_source": "client_protection",
+                },
                 timeout=60,
             )
 
@@ -371,16 +408,31 @@ class SentinelClient:
 
             logger.warning(f"Blocking IP: {ip_address}")
 
-            # Linux/macOS: use iptables
-            if platform.system() in ["Linux", "Darwin"]:
-                subprocess.run(
-                    ["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True
-                )
+            system = platform.system()
+
+            # Linux: use iptables/ip6tables (both INPUT and OUTPUT)
+            if system == "Linux":
+                is_ipv6 = ":" in ip_address
+                fw_cmd = "ip6tables" if is_ipv6 else "iptables"
+                subprocess.run(["sudo", fw_cmd, "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
+                subprocess.run(["sudo", fw_cmd, "-A", "OUTPUT", "-d", ip_address, "-j", "DROP"], check=True)
+
+            # macOS: use pfctl table if available, fallback to route blackhole
+            elif system == "Darwin":
+                try:
+                    subprocess.run(["sudo", "pfctl", "-E"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["sudo", "pfctl", "-t", "blocklist", "-T", "add", ip_address], check=True)
+                except Exception:
+                    subprocess.run(["sudo", "route", "-n", "add", "-host", ip_address, "127.0.0.1"], check=True)
 
             # Windows: use netsh
-            elif platform.system() == "Windows":
+            elif system == "Windows":
                 subprocess.run(
                     ["netsh", "advfirewall", "firewall", "add", "rule", f"name=Block {ip_address}", "dir=in", f"remoteip={ip_address}", "action=block"],
+                    check=True,
+                )
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "add", "rule", f"name=Block {ip_address} OUT", "dir=out", f"remoteip={ip_address}", "action=block"],
                     check=True,
                 )
 
@@ -407,8 +459,19 @@ class SentinelClient:
             # Update hosts file
             hosts_file = Path("/etc/hosts") if platform.system() != "Windows" else Path("C:\\Windows\\System32\\drivers\\etc\\hosts")
 
-            with open(hosts_file, "a") as f:
-                f.write(f"\n127.0.0.1 {domain}\n")
+            existing = ""
+            try:
+                existing = hosts_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                existing = ""
+
+            entry = f"127.0.0.1 {domain}"
+            if entry not in existing:
+                with open(hosts_file, "a", encoding="utf-8") as f:
+                    marker = "# SentinelAI blocked domains"
+                    if marker not in existing:
+                        f.write(f"\n{marker}\n")
+                    f.write(f"{entry}\n")
 
             self.blocked_domains.add(domain)
             logger.info(f"Domain blocked successfully: {domain}")

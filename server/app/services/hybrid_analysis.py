@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -35,53 +36,64 @@ class HybridAnalysisService:
         if not rate_limit_allow("hybrid_analysis"):
             return {"error": "Hybrid Analysis rate limit reached"}
 
-        try:
-            headers = {
-                "api-key": settings.HYBRIDANALYSIS_API_KEY,
-                "user-agent": "Hybrid Analysis",
-                "Accept": "application/json",
-            }
-            params = {"hash": file_hash}
+        headers = {
+            "api-key": settings.HYBRIDANALYSIS_API_KEY,
+            "user-agent": "Hybrid Analysis",
+            "Accept": "application/json",
+        }
+        params = {"hash": file_hash}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{HybridAnalysisService.BASE_URL}/search/hash",
-                    headers=headers,
-                    params=params,
-                    follow_redirects=True,
-                )
-
-                if response.status_code == 200:
-                    logger.debug(f"HybridAnalysis result returned for {file_hash}")
-                    data = response.json()
-                    # Hybrid Analysis returns a raw JSON array for hash searches;
-                    # normalise to a dict so all callers can safely use .get().
-                    if isinstance(data, list):
-                        data = {"results": data}
-                    set_cached(cache_key, data)
-                    return data
-                elif response.status_code == 404:
-                    # Hash not present in Hybrid Analysis corpus is a valid
-                    # lookup outcome, not an integration failure.
-                    data = {
-                        "results": [],
-                        "count": 0,
-                        "status": "not_found",
-                        "message": "No Hybrid Analysis record for this hash",
-                    }
-                    set_cached(cache_key, data)
-                    return data
-                else:
-                    logger.warning(
-                        f"Hybrid Analysis API error: {response.status_code} for {file_hash}"
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"{HybridAnalysisService.BASE_URL}/search/hash",
+                        headers=headers,
+                        params=params,
+                        follow_redirects=True,
                     )
-                    return {
-                        "error": f"Hybrid Analysis API error: {response.status_code}"
-                    }
 
-        except httpx.TimeoutException:
-            logger.warning(f"Hybrid Analysis timeout for hash {file_hash}")
-            return {"error": "Hybrid Analysis API timeout"}
-        except Exception as e:
-            logger.error(f"Hybrid Analysis error for hash {file_hash}: {str(e)}")
-            return {"error": str(e)}
+                    if response.status_code == 200:
+                        logger.debug(f"HybridAnalysis result returned for {file_hash}")
+                        data = response.json()
+                        # Hybrid Analysis returns a raw JSON array for hash searches;
+                        # normalise to a dict so all callers can safely use .get().
+                        if isinstance(data, list):
+                            data = {"results": data}
+                        set_cached(cache_key, data, service="hybrid_analysis")
+                        return data
+                    elif response.status_code == 404:
+                        # Hash not present in Hybrid Analysis corpus is a valid
+                        # lookup outcome, not an integration failure.
+                        data = {
+                            "results": [],
+                            "count": 0,
+                            "status": "not_found",
+                            "message": "No Hybrid Analysis record for this hash",
+                        }
+                        set_cached(cache_key, data, service="hybrid_analysis")
+                        return data
+                    elif response.status_code == 429:
+                        logger.warning(f"Hybrid Analysis rate limit hit for {file_hash}")
+                        return {"error": "Hybrid Analysis rate limit reached (429)"}
+                    else:
+                        logger.warning(
+                            f"Hybrid Analysis API error: {response.status_code} for {file_hash}"
+                        )
+                        return {
+                            "error": f"Hybrid Analysis API error: {response.status_code}"
+                        }
+
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
+                logger.warning(f"Hybrid Analysis transient failure for hash {file_hash}: {err_text}")
+                return {"error": f"Hybrid Analysis API transient failure: {err_text}"}
+            except Exception as e:
+                err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
+                logger.error(f"Hybrid Analysis error for hash {file_hash}: {err_text}")
+                return {"error": err_text}
+
+        return {"error": "Hybrid Analysis lookup failed"}

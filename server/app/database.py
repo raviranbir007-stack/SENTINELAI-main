@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .config import settings
 
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -94,9 +95,30 @@ async def get_db():
 
 
 async def init_db():
-    """Initialize database"""
+    """Initialize database and apply safe column migrations"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Safe column migrations — add new columns that might not exist in older DBs
+        safe_migrations = [
+            "ALTER TABLE scan_history ADD COLUMN scan_source VARCHAR(20) DEFAULT 'manual'",
+            (
+                "UPDATE scan_history "
+                "SET scan_source = 'client_protection' "
+                "WHERE scan_source = 'manual' "
+                "AND client_id IS NULL "
+                "AND target_type = 'file_hash' "
+                "AND (scan_id LIKE 'SCAN_%' OR scan_id LIKE 'GEN_%')"
+            ),
+        ]
+        for stmt in safe_migrations:
+            try:
+                await conn.execute(text(stmt))
+                logger.info(f"Migration applied: {stmt[:60]}")
+            except Exception as e:
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    pass  # Column already present — ignore
+                else:
+                    logger.debug(f"Migration skipped ({stmt[:50]}): {e}")
 
 
 async def close_db():

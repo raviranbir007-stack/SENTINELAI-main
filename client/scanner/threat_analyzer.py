@@ -193,7 +193,11 @@ class ThreatAnalyzer:
 
         try:
             endpoint = f"{self.server_url}/api/v1/scan/scan"
-            payload = {"target": artifact_value, "include_report": False}
+            payload = {
+                "target": artifact_value,
+                "include_report": False,
+                "scan_source": "client_protection",
+            }
             response = requests.post(endpoint, json=payload, timeout=self.request_timeout)
             if response.status_code != 200:
                 return None

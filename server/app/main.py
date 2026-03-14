@@ -241,7 +241,10 @@ async def lifespan(app: FastAPI):
                 try:
                     started = time.perf_counter()
                     scan_timeout = float(os.getenv("SENTINEL_SCAN_TIMEOUT_SECONDS", "20"))
-                    result = await asyncio.wait_for(threat_analyzer.analyze(value), timeout=scan_timeout)
+                    result = await asyncio.wait_for(
+                        threat_analyzer.analyze(value, use_external_apis=False),
+                        timeout=scan_timeout,
+                    )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     
                     # Log to database

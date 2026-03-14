@@ -162,7 +162,10 @@ class PreventionSystem:
             
             # Add firewall rule
             self._add_firewall_rule(ip_address)
-            
+
+            # Persist to quarantine index so the dashboard shows this block
+            self._record_ip_block_event(ip_address, reason)
+
             logger.warning(f"🚫 Blocked IP: {ip_address} (Reason: {reason})")
             
             # Notify
@@ -599,7 +602,8 @@ Recommendations:
             records = []
             if self.quarantine_index.exists():
                 import json
-                records = json.loads(self.quarantine_index.read_text(encoding='utf-8'))
+                loaded = json.loads(self.quarantine_index.read_text(encoding='utf-8'))
+                records = loaded if isinstance(loaded, list) else []
 
             records.append({
                 'timestamp': datetime.now().isoformat(),
@@ -609,9 +613,51 @@ Recommendations:
             })
 
             import json
-            self.quarantine_index.write_text(json.dumps(records, indent=2), encoding='utf-8')
+            self.quarantine_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.quarantine_index.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(records, indent=2), encoding='utf-8')
+            tmp.replace(self.quarantine_index)
         except Exception as e:
             logger.error(f"Failed to record quarantine metadata: {e}")
+
+    def _record_ip_block_event(self, ip_address: str, reason: str):
+        """Persist a blocked IP to the quarantine index so the dashboard can see it."""
+        try:
+            import json as _json
+            self.quarantine_dir.mkdir(parents=True, exist_ok=True)
+            records = []
+            if self.quarantine_index.exists():
+                try:
+                    records = _json.loads(self.quarantine_index.read_text(encoding='utf-8'))
+                    if not isinstance(records, list):
+                        records = []
+                except Exception:
+                    records = []
+            ts = datetime.now()
+            entry = {
+                'quarantine_id': f"IPS_{ts.strftime('%Y%m%d%H%M%S')}_{ip_address.replace('.', '_')}",
+                'type': 'ip_block',
+                'source': 'prevention_system',
+                'source_ip': ip_address,
+                'reason': reason,
+                'timestamp': ts.isoformat(),
+                'action': 'ip_blocked',
+            }
+            # Avoid duplicate within same minute
+            already = any(
+                r.get('source_ip') == ip_address and
+                r.get('type') == 'ip_block' and
+                r.get('timestamp', '')[:16] == entry['timestamp'][:16]
+                for r in records
+            )
+            if not already:
+                records.append(entry)
+                tmp = self.quarantine_index.with_suffix('.json.tmp')
+                tmp.write_text(_json.dumps(records, indent=2), encoding='utf-8')
+                tmp.replace(self.quarantine_index)
+                logger.info(f"IP block recorded in quarantine index: {ip_address}")
+        except Exception as e:
+            logger.error(f"Failed to record IP block in quarantine index: {e}")
 
     def get_quarantine_inventory(self) -> List[Dict]:
         """Return quarantined item metadata."""

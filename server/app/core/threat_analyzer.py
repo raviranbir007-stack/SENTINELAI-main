@@ -362,6 +362,28 @@ class ThreatAnalyzer:
                 "error": None,
             }
 
+    def _mark_external_apis_skipped(self, result: Dict, reason: str = "External APIs disabled for local-only analysis") -> None:
+        """Mark expected external APIs as intentionally skipped.
+
+        This keeps scan metadata explicit without burning provider quota.
+        """
+        api_results = result.setdefault("api_results", {})
+        api_status = api_results.setdefault("api_status", {})
+        warnings = result.setdefault("warnings", [])
+
+        for api_key, meta in api_status.items():
+            if not isinstance(meta, dict):
+                continue
+            if meta.get("applicable") and meta.get("status") in {"pending", "not_applicable", "unknown"}:
+                meta["status"] = "skipped_local_mode"
+                meta["error"] = reason
+
+        api_results["apis_attempted"] = []
+        api_results["apis_called"] = []
+
+        if reason not in warnings:
+            warnings.append(reason)
+
     def _track_api_result(
         self,
         result: Dict,
@@ -429,12 +451,14 @@ class ThreatAnalyzer:
             if warning_text not in warnings:
                 warnings.append(warning_text)
 
-    async def analyze(self, value: str) -> Dict[str, Any]:
+    async def analyze(self, value: str, use_external_apis: bool | None = None) -> Dict[str, Any]:
         """
-        Main analysis method that orchestrates all threat detection
+        Main analysis method that orchestrates all threat detection.
 
         Args:
             value: Input to analyze (IP, URL, domain, file hash, etc.)
+            use_external_apis: Override external intelligence API usage.
+                None -> use settings.EXTERNAL_APIS_ENABLED
 
         Returns:
             Dict with threat analysis results
@@ -444,6 +468,8 @@ class ThreatAnalyzer:
 
         # Detect input type
         input_type, metadata = self.detector.detect(normalized_value)
+
+        effective_external_api_mode = settings.EXTERNAL_APIS_ENABLED if use_external_apis is None else bool(use_external_apis)
 
         analysis_result = {
             "input": value,
@@ -455,6 +481,7 @@ class ThreatAnalyzer:
             "verdict": ThreatLevel.CLEAN,
             "confidence": 0.0,
             "summary": "",
+            "use_external_apis": effective_external_api_mode,
         }
 
         try:
@@ -615,6 +642,11 @@ class ThreatAnalyzer:
         if heuristic_threats:
             threats.extend(heuristic_threats)
             logger.debug(f"IP heuristic analysis found {len(heuristic_threats)} indicator(s)")
+
+        if not result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
+            self._mark_external_apis_skipped(result)
+            result["threat_indicators"] = threats
+            return self._calculate_verdict(result)
 
         abuseipdb_result = None
         shodan_result = None
@@ -1103,6 +1135,11 @@ class ThreatAnalyzer:
             threats.extend(heuristic_threats)
             logger.debug(f"Heuristic analysis found {len(heuristic_threats)} threat indicator(s)")
 
+        if not result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
+            self._mark_external_apis_skipped(result)
+            result["threat_indicators"] = threats
+            return self._calculate_verdict(result)
+
         vt_result = None
         urlscan_result = None
 
@@ -1567,6 +1604,11 @@ class ThreatAnalyzer:
             threats.extend(heuristic_threats)
             logger.debug(f"File hash heuristic analysis found {len(heuristic_threats)} indicator(s)")
 
+        if not result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
+            self._mark_external_apis_skipped(result)
+            result["threat_indicators"] = threats
+            return self._calculate_verdict(result)
+
         vt_result = None
         ha_result = None
 
@@ -1619,8 +1661,9 @@ class ThreatAnalyzer:
                         )
 
         except Exception as e:
-            logger.warning(f"VirusTotal file scan failed: {str(e)}")
-            self._track_api_result(result, "virustotal", "VirusTotal", {"error": str(e)}, warnings)
+            err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
+            logger.warning(f"VirusTotal file scan failed: {err_text}")
+            self._track_api_result(result, "virustotal", "VirusTotal", {"error": err_text}, warnings)
 
         try:
             # Scan with Hybrid Analysis
@@ -1659,8 +1702,9 @@ class ThreatAnalyzer:
                             )
 
         except Exception as e:
-            logger.warning(f"Hybrid Analysis search failed: {str(e)}")
-            self._track_api_result(result, "hybrid_analysis", "Hybrid Analysis", {"error": str(e)}, warnings)
+            err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
+            logger.warning(f"Hybrid Analysis search failed: {err_text}")
+            self._track_api_result(result, "hybrid_analysis", "Hybrid Analysis", {"error": err_text}, warnings)
 
         result["threat_indicators"] = threats
         result = self._calculate_verdict(result)

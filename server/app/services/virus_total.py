@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 
@@ -6,6 +7,19 @@ from ..config import settings
 from .cache import get_cached, rate_limit_allow, set_cached
 
 logger = logging.getLogger(__name__)
+
+# Temporary cool-down state when provider returns quota errors.
+_VT_QUOTA_COOLDOWN_UNTIL = 0.0
+_VT_QUOTA_COOLDOWN_SECONDS = 15 * 60
+
+
+def _vt_in_quota_cooldown() -> bool:
+    return time.time() < _VT_QUOTA_COOLDOWN_UNTIL
+
+
+def _vt_start_quota_cooldown(seconds: int = _VT_QUOTA_COOLDOWN_SECONDS) -> None:
+    global _VT_QUOTA_COOLDOWN_UNTIL
+    _VT_QUOTA_COOLDOWN_UNTIL = max(_VT_QUOTA_COOLDOWN_UNTIL, time.time() + max(60, seconds))
 
 
 class VirusTotalService:
@@ -33,6 +47,9 @@ class VirusTotalService:
         if cached:
             return cached
 
+        if _vt_in_quota_cooldown():
+            return {"error": "VirusTotal quota cooldown active; retry later"}
+
         if not rate_limit_allow("virustotal"):
             return {"error": "VirusTotal rate limit reached"}
 
@@ -48,7 +65,7 @@ class VirusTotalService:
                 if response.status_code == 200:
                     data = response.json()
                     logger.debug(f"VirusTotal.scan_file success for {file_hash}")
-                    set_cached(cache_key, data)
+                    set_cached(cache_key, data, service="virustotal")
                     return data
                 elif response.status_code == 404:
                     data = {
@@ -64,9 +81,12 @@ class VirusTotalService:
                     }
                     set_cached(cache_key, data)
                     return data
+                elif response.status_code == 429:
+                    _vt_start_quota_cooldown()
+                    logger.warning("VirusTotal quota exceeded for hash lookup; entering cooldown")
+                    return {"error": "VirusTotal quota exceeded"}
                 else:
                     return {"error": f"VirusTotal API error: {response.status_code}"}
-
         except httpx.TimeoutException:
             logger.warning(f"VirusTotal timeout for hash {file_hash}")
             return {"error": "VirusTotal API timeout"}
@@ -94,6 +114,9 @@ class VirusTotalService:
         cached = get_cached(cache_key)
         if cached:
             return cached
+
+        if _vt_in_quota_cooldown():
+            return {"error": "VirusTotal quota cooldown active; retry later"}
 
         if not rate_limit_allow("virustotal"):
             return {"error": "VirusTotal rate limit reached"}
@@ -158,12 +181,16 @@ class VirusTotalService:
                         if url_response.status_code == 200:
                             logger.info(f"VirusTotal.url object retrieved for {url}")
                             data = url_response.json()
-                            set_cached(cache_key, data)
+                            set_cached(cache_key, data, service="virustotal")
                             return data
                     
-                    set_cached(cache_key, result)
+                    set_cached(cache_key, result, service="virustotal")
                     return result
                 else:
+                    if response.status_code == 429:
+                        _vt_start_quota_cooldown()
+                        logger.warning("VirusTotal quota exceeded for URL scan; entering cooldown")
+                        return {"error": "VirusTotal quota exceeded"}
                     logger.warning(f"VirusTotal scan error: {response.status_code} - {response.text}")
                     return {"error": f"VirusTotal scan error: {response.status_code}"}
 

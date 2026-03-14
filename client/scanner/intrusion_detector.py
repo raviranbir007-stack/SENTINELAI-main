@@ -3,17 +3,23 @@ Real-time Intrusion Detection System (IDS)
 Monitors incoming network traffic and detects attacks
 """
 
+import json
 import logging
+import os
 import socket
 import struct
 import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Set, Optional
 import psutil
 
 logger = logging.getLogger("IntrusionDetector")
+
+# Shared quarantine index path — same file read by /dashboard/quarantine-inventory
+_QUARANTINE_INDEX = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
 
 
 class IntrusionDetector:
@@ -39,15 +45,16 @@ class IntrusionDetector:
         # Listening port cache (refreshed every 30s)
         self._listening_ports_cache: Set[int] = set()
         self._listening_ports_cache_time: float = 0.0
-        
+        self._refresh_listening_ports()  # populate immediately
+
         # Detection thresholds (tuned to reduce false positives)
         # Soft limit: contributes one signal; hard limit: immediate block
-        self.MAX_CONNECTIONS_PER_MINUTE = 300   # Soft threshold per IP
-        self.FLOOD_HARD_THRESHOLD = 600         # Single-signal immediate block
-        self.MAX_FAILED_AUTH = 5
-        self.SUSPICIOUS_PORT_THRESHOLD = 10
-        self.TIME_WINDOW = 60  # seconds
-        self.ALERT_COOLDOWN = 300  # 5 minutes between alerts for same IP
+        self.MAX_CONNECTIONS_PER_MINUTE = self._env_int("SENTINEL_IDS_SOFT_FLOOD", 300, minimum=50)
+        self.FLOOD_HARD_THRESHOLD = self._env_int("SENTINEL_IDS_HARD_FLOOD", 600, minimum=100)
+        self.MAX_FAILED_AUTH = self._env_int("SENTINEL_IDS_MAX_FAILED_AUTH", 5, minimum=1)
+        self.SUSPICIOUS_PORT_THRESHOLD = self._env_int("SENTINEL_IDS_SUSPICIOUS_PORTS", 10, minimum=3)
+        self.TIME_WINDOW = self._env_int("SENTINEL_IDS_TIME_WINDOW", 60, minimum=10)
+        self.ALERT_COOLDOWN = self._env_int("SENTINEL_IDS_ALERT_COOLDOWN", 300, minimum=30)
         
         # Whitelisted IPs and networks
         self.WHITELISTED_IPS = self._load_ip_whitelist()
@@ -80,6 +87,51 @@ class IntrusionDetector:
             "Directory traversal"
         ]
 
+        # Ensure hard threshold is always higher than soft threshold.
+        if self.FLOOD_HARD_THRESHOLD <= self.MAX_CONNECTIONS_PER_MINUTE:
+            self.FLOOD_HARD_THRESHOLD = self.MAX_CONNECTIONS_PER_MINUTE + max(50, self.MAX_CONNECTIONS_PER_MINUTE // 2)
+
+        # Restore blocked IP memory from persisted quarantine inventory.
+        self._load_persisted_blocked_ips()
+
+    def _env_int(self, name: str, default: int, minimum: int = 1) -> int:
+        """Read an integer from environment with safe fallback and minimum clamp."""
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            value = int(raw.strip())
+            return value if value >= minimum else default
+        except Exception:
+            return default
+
+    def _load_persisted_blocked_ips(self):
+        """Restore blocked IPs from quarantine index to survive client restarts."""
+        try:
+            if not _QUARANTINE_INDEX.exists():
+                return
+
+            loaded = json.loads(_QUARANTINE_INDEX.read_text(encoding='utf-8'))
+            if not isinstance(loaded, list):
+                return
+
+            restored = 0
+            for item in loaded:
+                if not isinstance(item, dict):
+                    continue
+                if (item.get('type') or '').lower() != 'ip_block':
+                    continue
+                ip = item.get('source_ip') or item.get('ip')
+                if not ip or self._is_whitelisted_ip(ip):
+                    continue
+                self.blocked_ips.add(ip)
+                restored += 1
+
+            if restored:
+                logger.info(f"Restored {restored} blocked IP(s) from quarantine index")
+        except Exception as e:
+            logger.debug(f"Failed to restore blocked IPs: {e}")
+
     def _load_ip_whitelist(self) -> set:
         """Load whitelist of legitimate IP addresses and services"""
         return {
@@ -104,6 +156,77 @@ class IntrusionDetector:
             'fe80::/10'
         }
     
+    def _persist_ip_block(self, ip: str, attack_type: str, severity: str, description: str):
+        """Persist a blocked IP to the shared quarantine index so the dashboard shows it."""
+        try:
+            _QUARANTINE_INDEX.parent.mkdir(parents=True, exist_ok=True)
+            records = []
+            if _QUARANTINE_INDEX.exists():
+                try:
+                    records = json.loads(_QUARANTINE_INDEX.read_text(encoding='utf-8'))
+                    if not isinstance(records, list):
+                        records = []
+                except Exception:
+                    records = []
+            ts = datetime.now()
+            entry = {
+                'quarantine_id': f"IDS_{ts.strftime('%Y%m%d%H%M%S')}_{ip.replace('.', '_')}",
+                'type': 'ip_block',
+                'source': 'intrusion_detector',
+                'attack_type': attack_type,
+                'source_ip': ip,
+                'severity': severity,
+                'description': description,
+                'timestamp': ts.isoformat(),
+                'action': 'ip_blocked',
+            }
+            # Avoid duplicate entries for same IP within the same minute
+            already = any(
+                r.get('source_ip') == ip and
+                r.get('type') == 'ip_block' and
+                r.get('timestamp', '')[:16] == entry['timestamp'][:16]
+                for r in records
+            )
+            if not already:
+                records.append(entry)
+                tmp = _QUARANTINE_INDEX.with_suffix('.json.tmp')
+                tmp.write_text(json.dumps(records, indent=2), encoding='utf-8')
+                tmp.replace(_QUARANTINE_INDEX)
+                logger.info(f"IP block persisted to quarantine index: {ip} ({attack_type})")
+        except Exception as e:
+            logger.error(f"Failed to persist IP block to quarantine index: {e}")
+
+    def _refresh_listening_ports(self):
+        """Refresh the cache of ports this machine is actively listening on.
+        Only connections TO these ports are inbound (potential attacks).
+        Outbound connections use ephemeral ports and must NOT be counted.
+        """
+        now = time.time()
+        if now - self._listening_ports_cache_time < 30:
+            return  # cache still fresh
+        try:
+            listening = set()
+            for conn in psutil.net_connections(kind='inet'):
+                if getattr(conn, 'status', '') == 'LISTEN' and conn.laddr:
+                    listening.add(conn.laddr.port)
+            self._listening_ports_cache = listening
+            self._listening_ports_cache_time = now
+            logger.debug(f"Listening ports refreshed: {sorted(listening)}")
+        except Exception as e:
+            logger.debug(f"Could not refresh listening ports: {e}")
+
+    def _is_inbound_connection(self, local_port: int) -> bool:
+        """Return True if the local port is a listening port (inbound connection).
+        Outbound connections use ephemeral ports (>1023) that are NOT in the
+        listening set — those represent connections WE initiated, not attacks.
+        """
+        # Port 0 or negative = unknown, treat conservatively
+        if local_port <= 0:
+            return False
+        # Well-known service ports (1-1023) that are NOT in LISTEN state
+        # are still likely inbound, but we play safe and only count LISTEN ports
+        return local_port in self._listening_ports_cache
+
     def _is_whitelisted_ip(self, ip: str) -> bool:
         """Check if IP is whitelisted or in private/local range"""
         if not ip:
@@ -230,6 +353,7 @@ class IntrusionDetector:
                         if conn.raddr:  # Remote address exists
                             connections.append({
                                 'local_addr': f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "unknown",
+                                'local_port': conn.laddr.port if conn.laddr else 0,
                                 'remote_addr': f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "unknown",
                                 'remote_ip': conn.raddr.ip,
                                 'remote_port': conn.raddr.port,
@@ -251,21 +375,40 @@ class IntrusionDetector:
         return connections
 
     def _analyze_connection(self, conn: Dict):
-        """Analyze a connection for suspicious activity"""
+        """Analyze a connection for suspicious activity.
+
+        IMPORTANT: Only INBOUND connections count toward flood/attack detection.
+        An inbound connection is one where our local port is a listening (server)
+        port.  Outbound connections (where WE are the client, using an ephemeral
+        local port) must be ignored — otherwise legitimate outbound traffic to any
+        remote server inflates that server's "attack" counter and causes false
+        positives.
+        """
         remote_ip = conn['remote_ip']
         remote_port = conn['remote_port']
+        local_port = conn.get('local_port', 0)
         timestamp = conn['timestamp']
-        
+
         # Skip whitelisted IPs
         if self._is_whitelisted_ip(remote_ip):
             return
-        
-        # Track connection attempts
+
+        # Refresh listening port cache if stale
+        self._refresh_listening_ports()
+
+        # Only count as a potential attack if the remote IP connected TO us
+        # (inbound connection on a listening port).  Outbound connections mean
+        # we are the client — the remote IP is a server, not an attacker.
+        if not self._is_inbound_connection(local_port):
+            return
+
+        # Track inbound connection attempts from this IP
         self.connection_attempts[remote_ip].append(timestamp)
-        
-        # Track suspicious ports
-        if remote_port in self.COMMON_ATTACK_PORTS:
-            self.suspicious_ports[remote_ip].append(remote_port)
+
+        # Track suspicious target ports (attacker hitting known attack ports on us)
+        # NOTE: local_port is the destination port on this machine.
+        if local_port in self.COMMON_ATTACK_PORTS:
+            self.suspicious_ports[remote_ip].append(local_port)
 
     def _detect_attacks(self) -> List[Dict]:
         """Detect various attack patterns"""
@@ -289,34 +432,60 @@ class IntrusionDetector:
             # Count recent connections
             recent = [t for t in timestamps if (current_time - t).seconds < self.TIME_WINDOW]
             
-            # Detect connection flooding (DDoS/Port Scan) with higher threshold
-            if len(recent) > self.MAX_CONNECTIONS_PER_MINUTE:
+            # Detect connection flooding (DDoS/Port Scan) — INBOUND connections only.
+            # Hard threshold: single overwhelming burst → immediate alert+block.
+            # Soft threshold: first signal; only raise alert once multi-signal
+            # threshold is also met to reduce false positives.
+            if len(recent) > self.FLOOD_HARD_THRESHOLD:
+                # Extreme burst — block immediately without waiting for 2nd signal
+                desc = f'Severe connection flood: {len(recent)} inbound connections in {self.TIME_WINDOW}s'
                 attacks.append({
                     'type': 'CONNECTION_FLOOD',
-                    'severity': 'HIGH',  # Changed from CRITICAL
+                    'severity': 'CRITICAL',
                     'source_ip': ip,
-                    'description': f'Connection flood detected: {len(recent)} connections in {self.TIME_WINDOW}s',
+                    'description': desc,
                     'count': len(recent),
                     'timestamp': current_time,
                     'action_required': True
                 })
                 self.blocked_ips.add(ip)
-                self.attack_cooldown[ip] = time.time()  # Set cooldown
+                self._persist_ip_block(ip, 'CONNECTION_FLOOD', 'CRITICAL', desc)
+                self.attack_cooldown[ip] = time.time()
+            elif len(recent) > self.MAX_CONNECTIONS_PER_MINUTE:
+                # Soft threshold hit — record signal, only alert if multi-signal confirmed
+                self.attack_signals[ip].add('CONNECTION_FLOOD')
+                if len(self.attack_signals[ip]) >= self.MULTI_SIGNAL_THRESHOLD:
+                    desc = f'Connection flood detected: {len(recent)} inbound connections in {self.TIME_WINDOW}s (multi-signal confirmed)'
+                    attacks.append({
+                        'type': 'CONNECTION_FLOOD',
+                        'severity': 'HIGH',
+                        'source_ip': ip,
+                        'description': desc,
+                        'count': len(recent),
+                        'signals': list(self.attack_signals[ip]),
+                        'timestamp': current_time,
+                        'action_required': True
+                    })
+                    self.blocked_ips.add(ip)
+                    self._persist_ip_block(ip, 'CONNECTION_FLOOD', 'HIGH', desc)
+                    self.attack_cooldown[ip] = time.time()
             
             # Detect port scanning
             if ip in self.suspicious_ports:
                 unique_ports = set(self.suspicious_ports[ip])
                 if len(unique_ports) > self.SUSPICIOUS_PORT_THRESHOLD:
+                    desc = f'Port scan detected: {len(unique_ports)} different ports scanned'
                     attacks.append({
                         'type': 'PORT_SCAN',
                         'severity': 'HIGH',
                         'source_ip': ip,
-                        'description': f'Port scan detected: {len(unique_ports)} different ports scanned',
+                        'description': desc,
                         'ports': list(unique_ports)[:20],  # First 20 ports
                         'timestamp': current_time,
                         'action_required': True
                     })
                     self.blocked_ips.add(ip)
+                    self._persist_ip_block(ip, 'PORT_SCAN', 'HIGH', desc)
                     self.attack_cooldown[ip] = time.time()  # Set cooldown
                 
                 # Detect specific attack types based on ports

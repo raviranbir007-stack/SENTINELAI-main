@@ -48,9 +48,11 @@ class DefenseCoordinator:
         self.quarantine_start_time = None
         self.quarantine_reason = None
         
-        # Quarantine log
-        self.quarantine_log_path = Path("quarantine_log.json")
-        
+        # Quarantine log — must match the path read by the dashboard
+        # endpoint /dashboard/quarantine-inventory
+        self.quarantine_log_path = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
+        self.quarantine_log_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Notification methods
         self.notification_methods = []
         self._setup_notification_methods()
@@ -529,8 +531,9 @@ class DefenseCoordinator:
         # Mark attack as quarantined
         attack['auto_quarantined'] = True
         
-        # Log quarantine
-        self._log_quarantine(attack_id, attack, user_initiated)
+        # Log quarantine (compat path)
+        reason = "User-initiated quarantine" if user_initiated else "Auto-quarantine (legacy flow)"
+        self._log_quarantine(attack_id, attack, reason)
         
         logger.critical(f"""
 ╔══════════════════════════════════════════════════════════════╗
@@ -658,8 +661,8 @@ class DefenseCoordinator:
             except Exception as e:
                 logger.error(f"Failed to send quarantine notification: {e}")
 
-    def _log_quarantine(self, attack_id: str, attack: Dict, user_initiated: bool):
-        """Log quarantine event"""
+    def _log_quarantine_legacy(self, attack_id: str, attack: Dict, user_initiated: bool):
+        """Legacy quarantine logger retained for backward compatibility."""
         try:
             log_entry = {
                 'quarantine_id': f"Q_{datetime.now().strftime('%Y%m%d%H%M%S')}",

@@ -53,7 +53,7 @@ class URLScanService:
                 if response.status_code in [200, 201]:
                     logger.debug(f"URLScan scan submitted for {url}")
                     data = response.json()
-                    set_cached(cache_key, data)
+                    set_cached(cache_key, data, service="urlscan")
                     return data
                 elif response.status_code == 400:
                     # Handle scan prevention (rate limit, blocked domain, etc.)
@@ -65,6 +65,9 @@ class URLScanService:
                         "status": "blocked",
                         "details": error_data
                     }
+                elif response.status_code == 429:
+                    logger.warning(f"URLScan rate limit hit for {url}")
+                    return {"error": "URLScan rate limit reached (429)"}
                 else:
                     return {"error": f"URLScan API error: {response.status_code}"}
 
@@ -110,10 +113,13 @@ class URLScanService:
 
                 if response.status_code == 200:
                     data = response.json()
-                    set_cached(cache_key, data)
+                    set_cached(cache_key, data, service="urlscan")
                     return data
                 elif response.status_code == 404:
                     return {"error": "Scan not found or not yet complete"}
+                elif response.status_code == 429:
+                    logger.warning(f"URLScan rate limit hit for UUID {uuid}")
+                    return {"error": "URLScan rate limit reached (429)"}
                 else:
                     return {"error": f"URLScan API error: {response.status_code}"}
 

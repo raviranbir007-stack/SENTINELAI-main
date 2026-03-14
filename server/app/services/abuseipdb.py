@@ -50,8 +50,11 @@ class AbuseIPDBService:
                 if response.status_code == 200:
                     logger.debug(f"AbuseIPDB result received for {ip_address}")
                     data = response.json()
-                    set_cached(cache_key, data)
+                    set_cached(cache_key, data, service="abuseipdb")
                     return data
+                elif response.status_code == 429:
+                    logger.warning(f"AbuseIPDB rate limit hit for {ip_address}")
+                    return {"error": "AbuseIPDB rate limit reached (429)"}
                 else:
                     logger.warning(f"AbuseIPDB API error {response.status_code} for {ip_address}")
                     return {"error": f"AbuseIPDB API error: {response.status_code}"}
@@ -60,5 +63,6 @@ class AbuseIPDBService:
             logger.warning(f"AbuseIPDB timeout for {ip_address}")
             return {"error": "AbuseIPDB API timeout"}
         except Exception as e:
-            logger.error(f"AbuseIPDB error for {ip_address}: {str(e)}")
-            return {"error": str(e)}
+            err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
+            logger.error(f"AbuseIPDB error for {ip_address}: {err_text}")
+            return {"error": err_text}

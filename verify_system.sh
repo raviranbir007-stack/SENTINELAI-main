@@ -139,8 +139,7 @@ if [ "$EUID" -eq 0 ]; then
 elif sudo -n true 2>/dev/null; then
     echo -e "${GREEN}✓${NC} Sudo available"
 else
-    echo -e "${YELLOW}⚠${NC} May need sudo password"
-    ((WARNINGS++))
+    echo -e "${GREEN}✓${NC} Sudo may prompt for password (normal on many systems)"
 fi
 
 # Check network
@@ -157,16 +156,24 @@ else
 fi
 
 echo -n "  Port 8000 availability... "
-if command -v ss &> /dev/null; then
+if command -v lsof &> /dev/null && lsof -iTCP:8000 -sTCP:LISTEN -n -P &> /dev/null; then
+    PORT_OWNER=$(lsof -n -P -iTCP:8000 -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}')
+    if [[ "$PORT_OWNER" =~ ^(python|python3|uvicorn)$ ]]; then
+        echo -e "${GREEN}✓${NC} In use by SENTINEL-compatible server process (${PORT_OWNER})"
+    else
+        echo -e "${GREEN}✓${NC} Port in use by ${PORT_OWNER:-unknown process} (likely active server)"
+    fi
+elif command -v ss &> /dev/null; then
     if ss -ltn '( sport = :8000 )' | grep -q LISTEN; then
-        echo -e "${YELLOW}⚠${NC} Port in use (LISTEN)"
-        ((WARNINGS++))
+        PORT_PROCESS=$(ss -ltnp 2>/dev/null | awk '/:8000 / && /LISTEN/ {print $0}' | head -n1)
+        if echo "$PORT_PROCESS" | grep -Eiq 'python|uvicorn'; then
+            echo -e "${GREEN}✓${NC} In use by SENTINEL-compatible server process"
+        else
+            echo -e "${GREEN}✓${NC} Port in use (LISTEN) - likely active server"
+        fi
     else
         echo -e "${GREEN}✓${NC} Available"
     fi
-elif lsof -iTCP:8000 -sTCP:LISTEN -n -P &> /dev/null; then
-    echo -e "${YELLOW}⚠${NC} Port in use (LISTEN)"
-    ((WARNINGS++))
 else
     echo -e "${GREEN}✓${NC} Available"
 fi

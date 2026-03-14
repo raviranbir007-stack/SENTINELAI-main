@@ -47,7 +47,7 @@ class ShodanService:
                 if response.status_code == 200:
                     logger.debug(f"Shodan search successful for {ip_address}")
                     result = response.json()
-                    set_cached(cache_key, result)
+                    set_cached(cache_key, result, service="shodan")
                     # Ensure we always return a dict with consistent format
                     if isinstance(result, dict):
                         return result

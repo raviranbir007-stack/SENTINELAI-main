@@ -6,11 +6,14 @@ Handles threat analysis for IPs, URLs, domains, and file hashes
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -26,13 +29,73 @@ router = APIRouter()
 # In-memory scan history (in production, use database)
 _scan_history = []
 
+# Compiled regex patterns for input validation
+_RE_HASH   = re.compile(r'^[a-fA-F0-9]{32,64}$')
+_RE_IP     = re.compile(
+    r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})$'
+)
+_RE_DOMAIN = re.compile(r'^[a-zA-Z0-9\-\.]{1,253}$')
+_ALLOWED_SCAN_SOURCES = {"manual", "client_protection", "background", "scheduled"}
+
+
+def _generate_scan_id(prefix: str) -> str:
+    """Generate a collision-resistant scan ID suitable for DB unique constraints."""
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    return f"{prefix}_{ts}_{uuid4().hex[:8]}"
+
+
+def _validate_target(target: str, max_len: int = 2048) -> str:
+    """Sanitise and basic-validate a scan target string."""
+    target = target.strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Target must not be empty")
+    if len(target) > max_len:
+        raise HTTPException(status_code=400, detail=f"Target exceeds maximum length ({max_len})")
+    # Reject obvious shell-injection attempts
+    for bad in (";", "&&", "||", "`", "$(",):
+        if bad in target:
+            raise HTTPException(status_code=400, detail="Invalid characters in target")
+    return target
+
+
+def _normalize_scan_source(scan_source: Optional[str]) -> str:
+    """Normalize request scan source to a supported value."""
+    if not scan_source:
+        return "manual"
+    value = scan_source.strip().lower()
+    if value not in _ALLOWED_SCAN_SOURCES:
+        return "manual"
+    return value
+
 
 class ThreatScanRequest(BaseModel):
     """Request model for threat scanning"""
 
     target: str
     include_report: bool = False
+    include_external_apis: Optional[bool] = None  # None -> settings.EXTERNAL_APIS_ENABLED
     client_id: Optional[str] = None  # Optional client ID for tracking
+    scan_source: Optional[str] = None  # manual | client_protection | background | scheduled
+
+    @field_validator("target")
+    @classmethod
+    def target_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("target must not be empty")
+        if len(v) > 2048:
+            raise ValueError("target exceeds maximum length of 2048 characters")
+        return v
+
+    @field_validator("scan_source")
+    @classmethod
+    def validate_scan_source(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip().lower()
+        if value not in _ALLOWED_SCAN_SOURCES:
+            raise ValueError("scan_source must be one of: manual, client_protection, background, scheduled")
+        return value
 
 
 class ScanResponse(BaseModel):
@@ -91,7 +154,7 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
     if len(_scan_history) > 100:
         _scan_history = _scan_history[:100]
     
-    # Store in database
+    # Store in database (retry once if scan_id collides)
     try:
         client_id_fk = None
         if scan_data.get("client_id"):
@@ -100,49 +163,81 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
             client = result.scalar_one_or_none()
             if client:
                 client_id_fk = client.id
-        
-        scan_record = ScanHistory(
-            scan_id=scan_data["scan_id"],
-            target=scan_data.get("target", scan_data.get("filename", "")),
-            target_type=scan_data.get("target_type", "unknown"),
-            threat_level=scan_data.get("threat_level", "unknown"),
-            confidence=scan_data.get("confidence", 0.0),
-            threats_detected=scan_data.get("threats_detected", 0),
-            analysis_data=scan_data.get("analysis", {}),
-            client_id=client_id_fk,
-            report_generated=scan_data.get("report_url") is not None,
-            # Forensic Reliability Fields
-            evidence_sources=scan_data.get("forensic_metadata", {}).get("evidence_sources", []),
-            corroboration_count=scan_data.get("forensic_metadata", {}).get("corroboration_count", 0),
-        )
-        
-        db.add(scan_record)
-        db.add(SystemLog(
-            log_level="INFO",
-            component="scanner",
-            message=f"Scan completed: {scan_data['scan_id']} - {scan_data.get('target', '')}",
-            details={
-                "scan_id": scan_data.get("scan_id"),
-                "target": scan_data.get("target", scan_data.get("filename", "")),
-                "threat_level": scan_data.get("threat_level"),
-                "target_type": scan_data.get("target_type"),
-                "threats_detected": scan_data.get("threats_detected", 0),
-                "confidence": scan_data.get("confidence", 0.0),
-            },
-        ))
-        await db.commit()
-        logger.debug(f"Scan {scan_data['scan_id']} stored in database")
+
+        current_scan_id = scan_data["scan_id"]
+        id_prefix = current_scan_id.split("_", 1)[0] if "_" in current_scan_id else "SCAN"
+
+        for attempt in range(2):
+            try:
+                scan_record = ScanHistory(
+                    scan_id=current_scan_id,
+                    target=scan_data.get("target", scan_data.get("filename", "")),
+                    target_type=scan_data.get("target_type", "unknown"),
+                    threat_level=scan_data.get("threat_level", "unknown"),
+                    confidence=scan_data.get("confidence", 0.0),
+                    threats_detected=scan_data.get("threats_detected", 0),
+                    analysis_data=scan_data.get("analysis", {}),
+                    client_id=client_id_fk,
+                    report_generated=scan_data.get("report_url") is not None,
+                    # Scan origin: 'manual' = user/API, 'background' = auto-monitor
+                    scan_source=scan_data.get("scan_source", "manual"),
+                    # Forensic Reliability Fields
+                    evidence_sources=scan_data.get("forensic_metadata", {}).get("evidence_sources", []),
+                    corroboration_count=scan_data.get("forensic_metadata", {}).get("corroboration_count", 0),
+                )
+
+                db.add(scan_record)
+                db.add(SystemLog(
+                    log_level="INFO",
+                    component="scanner",
+                    message=f"Scan completed: {current_scan_id} - {scan_data.get('target', '')}",
+                    details={
+                        "scan_id": current_scan_id,
+                        "target": scan_data.get("target", scan_data.get("filename", "")),
+                        "threat_level": scan_data.get("threat_level"),
+                        "target_type": scan_data.get("target_type"),
+                        "threats_detected": scan_data.get("threats_detected", 0),
+                        "confidence": scan_data.get("confidence", 0.0),
+                    },
+                ))
+                await db.commit()
+                scan_data["scan_id"] = current_scan_id
+                logger.debug(f"Scan {current_scan_id} stored in database")
+                return
+            except IntegrityError as ie:
+                await db.rollback()
+                if attempt == 0 and "scan_history.scan_id" in str(ie):
+                    current_scan_id = _generate_scan_id(id_prefix)
+                    logger.warning(
+                        "scan_id collision detected; retrying with regenerated id %s",
+                        current_scan_id,
+                    )
+                    continue
+                raise
     except Exception as e:
         logger.error(f"Failed to store scan in database: {str(e)}")
         await db.rollback()
 
 
 @router.get("/history")
-async def get_scan_history():
-    """Get recent scan history"""
+async def get_scan_history(
+    source: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    Get recent scan history from in-memory cache.
+    source=manual (default) | all
+    Background auto-monitor scans are NOT stored here — they live in activity_monitoring.db.
+    Use GET /api/v1/monitoring/activity for background scan records.
+    """
+    items = _scan_history
+    if source != "all":
+        items = [s for s in items if s.get("scan_source", "manual") == "manual"]
     return {
-        "total": len(_scan_history),
-        "scans": _scan_history
+        "total": len(items),
+        "source_filter": source or "manual",
+        "note": "Background scans are tracked at /api/v1/monitoring/activity",
+        "scans": items[:limit],
     }
 
 
@@ -150,7 +245,9 @@ async def get_scan_history():
 async def scan_file(
     file: UploadFile = File(...),
     include_report: bool = False,
+    include_external_apis: Optional[bool] = None,
     client_id: Optional[str] = None,
+    scan_source: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -179,7 +276,10 @@ async def scan_file(
         logger.debug(f"SCAN FILE started | target={file.filename}")
 
         # Run threat analysis on file hash
-        analysis_result = await threat_analyzer.analyze(file_hash)
+        analysis_result = await threat_analyzer.analyze(
+            file_hash,
+            use_external_apis=include_external_apis,
+        )
 
         # Add file metadata
         analysis_result["file_info"] = {
@@ -189,7 +289,7 @@ async def scan_file(
             "sha256": file_hash,
         }
 
-        scan_id = f"FILE_{int(datetime.now().timestamp())}"
+        scan_id = _generate_scan_id("FILE")
         
         # Generate PDF report if requested
         report_url = None
@@ -219,6 +319,7 @@ async def scan_file(
             "target_type": "file",
             "target_name": file.filename,
             "client_id": client_id,
+            "scan_source": _normalize_scan_source(scan_source),
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -248,19 +349,22 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
         Threat analysis results
     """
     try:
-        url = request.target.strip()
+        url = _validate_target(request.target)
         include_report = request.include_report
 
-        # Validate URL
+        # Ensure URL scheme is present
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
 
         logger.debug(f"SCAN URL started | target={url}")
 
         # Run threat analysis
-        analysis_result = await threat_analyzer.analyze(url)
+        analysis_result = await threat_analyzer.analyze(
+            url,
+            use_external_apis=request.include_external_apis,
+        )
 
-        scan_id = f"URL_{int(datetime.now().timestamp())}"
+        scan_id = _generate_scan_id("URL")
         
         # Generate PDF report if requested
         report_url = None
@@ -289,6 +393,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "target_type": "url",
             "target_name": url,
             "client_id": request.client_id,
+            "scan_source": _normalize_scan_source(request.scan_source),
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -316,15 +421,21 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
         Threat analysis results
     """
     try:
-        ip = request.target.strip()
+        ip = _validate_target(request.target, max_len=45)
+        # Basic IP format check
+        if not _RE_IP.match(ip):
+            raise HTTPException(status_code=400, detail="Invalid IP address format")
         include_report = request.include_report
 
         logger.debug(f"SCAN IP started | target={ip}")
 
         # Run threat analysis
-        analysis_result = await threat_analyzer.analyze(ip)
+        analysis_result = await threat_analyzer.analyze(
+            ip,
+            use_external_apis=request.include_external_apis,
+        )
 
-        scan_id = f"IP_{int(datetime.now().timestamp())}"
+        scan_id = _generate_scan_id("IP")
         
         # Generate PDF report if requested
         report_url = None
@@ -353,6 +464,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "target_type": "ip",
             "target_name": ip,
             "client_id": request.client_id,
+            "scan_source": _normalize_scan_source(request.scan_source),
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -380,15 +492,21 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
         Threat analysis results
     """
     try:
-        file_hash = request.target.strip()
+        file_hash = _validate_target(request.target, max_len=128)
+        # Accept MD5 (32), SHA1 (40), SHA256 (64) hex strings
+        if not _RE_HASH.match(file_hash):
+            raise HTTPException(status_code=400, detail="Invalid hash format — expected MD5 (32), SHA1 (40), or SHA256 (64) hex string")
         include_report = request.include_report
 
         logger.debug(f"SCAN HASH started | target={file_hash[:16]}...")
 
         # Run threat analysis
-        analysis_result = await threat_analyzer.analyze(file_hash)
+        analysis_result = await threat_analyzer.analyze(
+            file_hash,
+            use_external_apis=request.include_external_apis,
+        )
 
-        scan_id = f"HASH_{int(datetime.now().timestamp())}"
+        scan_id = _generate_scan_id("HASH")
         
         # Generate PDF report if requested
         report_url = None
@@ -416,6 +534,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "target_type": "hash",
             "target_name": file_hash,
             "client_id": request.client_id,
+            "scan_source": _normalize_scan_source(request.scan_source),
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -452,9 +571,12 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
         logger.debug(f"SCAN started | detected_type={input_type.value} | target={target}")
 
         # Run threat analysis
-        analysis_result = await threat_analyzer.analyze(target)
+        analysis_result = await threat_analyzer.analyze(
+            target,
+            use_external_apis=request.include_external_apis,
+        )
 
-        scan_id = f"SCAN_{int(datetime.now().timestamp())}"
+        scan_id = _generate_scan_id("SCAN")
         
         # Generate PDF report if requested
         report_url = None
@@ -483,6 +605,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "target_type": input_type.value,
             "target_name": target,
             "client_id": request.client_id,
+            "scan_source": _normalize_scan_source(request.scan_source),
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
             # Include AI analysis if available

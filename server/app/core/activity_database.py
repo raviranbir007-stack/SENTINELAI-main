@@ -548,6 +548,161 @@ class ActivityDatabase:
         except Exception as e:
             logger.error(f"Error getting recent threats: {e}")
             return []
+
+    def get_scan_trends(self, hours: int = 24, interval_minutes: int = 60) -> List[Dict]:
+        """Return scan counts bucketed into time intervals for trend charts."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute(
+                "SELECT scan_time, verdict FROM threat_scans WHERE scan_time > ? ORDER BY scan_time ASC",
+                (cutoff_str,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+
+            buckets: Dict[str, Dict] = {}
+            for (scan_time_str, verdict) in rows:
+                try:
+                    if isinstance(scan_time_str, str):
+                        dt = datetime.fromisoformat(scan_time_str.replace("Z", "+00:00"))
+                    else:
+                        dt = scan_time_str
+                    # Truncate to interval
+                    minutes = (dt.minute // interval_minutes) * interval_minutes
+                    bucket_dt = dt.replace(minute=minutes, second=0, microsecond=0)
+                    bucket_key = bucket_dt.strftime('%Y-%m-%dT%H:%M:00')
+                    if bucket_key not in buckets:
+                        buckets[bucket_key] = {"timestamp": bucket_key, "total": 0, "threats": 0, "clean": 0}
+                    buckets[bucket_key]["total"] += 1
+                    if verdict in ("malicious", "suspicious", "critical"):
+                        buckets[bucket_key]["threats"] += 1
+                    else:
+                        buckets[bucket_key]["clean"] += 1
+                except Exception:
+                    continue
+
+            return sorted(buckets.values(), key=lambda x: x["timestamp"])
+        except Exception as e:
+            logger.error(f"Error getting scan trends: {e}")
+            return []
+
+    def get_threat_distribution(self, hours: int = 24) -> Dict:
+        """Return threat type and verdict distribution for the given period."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute(
+                "SELECT artifact_type, COUNT(*) FROM threat_scans WHERE scan_time > ? GROUP BY artifact_type",
+                (cutoff_str,)
+            )
+            by_type = {row[0]: row[1] for row in cursor.fetchall()}
+
+            cursor.execute(
+                "SELECT verdict, COUNT(*) FROM threat_scans WHERE scan_time > ? GROUP BY verdict",
+                (cutoff_str,)
+            )
+            by_verdict = {(row[0] or "unknown"): row[1] for row in cursor.fetchall()}
+
+            cursor.execute(
+                "SELECT artifact_type, artifact_value, verdict, confidence, scan_time "
+                "FROM threat_scans WHERE scan_time > ? AND verdict IN ('malicious','suspicious','critical') "
+                "ORDER BY scan_time DESC LIMIT 20",
+                (cutoff_str,)
+            )
+            top_threats = [
+                {"type": r[0], "value": r[1], "verdict": r[2], "confidence": r[3], "time": r[4]}
+                for r in cursor.fetchall()
+            ]
+
+            conn.close()
+            return {"by_type": by_type, "by_verdict": by_verdict, "top_threats": top_threats}
+        except Exception as e:
+            logger.error(f"Error getting threat distribution: {e}")
+            return {"by_type": {}, "by_verdict": {}, "top_threats": []}
+
+    def get_background_stats(self, hours: int = 24) -> Dict:
+        """Return comprehensive background monitoring statistics."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute("SELECT COUNT(*) FROM threat_scans WHERE scan_time > ? AND is_automated=1", (cutoff_str,))
+            auto_scans = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM threat_scans WHERE scan_time > ? AND is_automated=1 AND verdict IN ('malicious','suspicious','critical')",
+                (cutoff_str,)
+            )
+            auto_threats = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM websites WHERE visit_time > ?", (cutoff_str,))
+            sites_visited = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM network_connections WHERE connection_time > ?", (cutoff_str,))
+            net_conns = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(DISTINCT artifact_value) FROM threat_scans WHERE scan_time > ? AND is_automated=1",
+                (cutoff_str,)
+            )
+            unique_artifacts = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT artifact_type, COUNT(*) FROM threat_scans WHERE scan_time > ? AND is_automated=1 GROUP BY artifact_type",
+                (cutoff_str,)
+            )
+            by_type = {row[0]: row[1] for row in cursor.fetchall()}
+
+            conn.close()
+            return {
+                "period_hours": hours,
+                "automated_scans": auto_scans,
+                "automated_threats_found": auto_threats,
+                "unique_artifacts_scanned": unique_artifacts,
+                "websites_monitored": sites_visited,
+                "network_connections_observed": net_conns,
+                "breakdown_by_type": by_type,
+                "threat_detection_rate": round(auto_threats / auto_scans * 100, 1) if auto_scans else 0.0,
+            }
+        except Exception as e:
+            logger.error(f"Error getting background stats: {e}")
+            return {}
+
+    def get_recent_activity(self, limit: int = 50) -> List[Dict]:
+        """Return the most recent background activity entries across all monitored artifact types."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT artifact_type, artifact_value, verdict, confidence, scan_time, is_automated, threat_indicators "
+                "FROM threat_scans ORDER BY scan_time DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            return [
+                {
+                    "type": r[0],
+                    "value": r[1],
+                    "verdict": r[2],
+                    "confidence": r[3],
+                    "time": r[4],
+                    "automated": bool(r[5]),
+                    "indicator_count": len(json.loads(r[6] or "[]")) if r[6] else 0,
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error getting recent activity: {e}")
+            return []
     
     def get_full_report_data(self, hours: int = 24) -> Dict:
         """Get comprehensive data for report generation"""

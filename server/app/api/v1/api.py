@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from .endpoints import advanced_reports, ai_threat_prediction, analyze, auth, dashboard, defense, network_defense, reports, scan, threats
+from .endpoints import advanced_reports, ai_threat_prediction, analyze, auth, dashboard, defense, monitoring, network_defense, reports, scan, threats
 
 api_router = APIRouter()
 
@@ -15,6 +15,9 @@ api_router.include_router(threats.router, prefix="/threats", tags=["threats"])
 
 # Dashboard routes
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+
+# Background Monitoring routes
+api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monitoring"])
 
 # Reports routes
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
@@ -33,3 +36,4 @@ api_router.include_router(defense.router, prefix="/defense", tags=["defense"])
 
 # AI Activity Analysis routes (NEW v3.0)
 api_router.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
+

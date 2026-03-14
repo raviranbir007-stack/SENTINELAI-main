@@ -1,120 +1,106 @@
+"""
+Dashboard API Endpoints — SENTINEL-AI v3
+Provides comprehensive scan statistics, threat intelligence, monitoring data,
+system health, and real-time log streaming for the operator dashboard.
+
+Scan source semantics:
+  manual     — operator-triggered via API endpoints (/scan/*)
+    client_protection — automated endpoint/client-side protection scans
+  background — auto-monitor (browser/network activity surveillance)
+  scheduled  — cron / periodic jobs
+"""
+
 import asyncio
 import json
+import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, desc
+from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
 from ....config import settings
 from ....models import ScanHistory, SystemLog
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 STARTUP_REPORT_PATH = Path.home() / ".sentinelai_startup_assessment.json"
 QUARANTINE_INDEX_PATH = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _hours_from_range(time_range: str) -> int:
+    return {"24h": 24, "7d": 168, "30d": 720}.get(time_range, 24)
+
 
 def _get_time_threshold(time_range: str) -> datetime:
-    now = datetime.utcnow()
-    if time_range == "7d":
-        return now - timedelta(days=7)
-    if time_range == "30d":
-        return now - timedelta(days=30)
-    return now - timedelta(hours=24)
+    return datetime.utcnow() - timedelta(hours=_hours_from_range(time_range))
+
+
+def _label(time_range: str) -> str:
+    return {"24h": "Last 24 Hours", "7d": "Last 7 Days", "30d": "Last 30 Days"}.get(
+        time_range, "Last 24 Hours"
+    )
 
 
 def _map_severity(threat_level: str) -> str:
     level = (threat_level or "unknown").lower()
-    if level in ["malicious", "critical"]:
+    if level in ("malicious", "critical"):
         return "critical"
-    if level in ["suspicious", "high"]:
+    if level in ("suspicious", "high"):
         return "high"
-    if level in ["safe", "clean", "low"]:
+    if level in ("safe", "clean", "low"):
         return "low"
     return "medium"
 
 
-# Add OPTIONS handlers for CORS preflight
-@router.options("/summary")
-async def options_summary():
-    """Handle CORS preflight for /summary endpoint."""
+def _activity_db():
+    """Return the activity database singleton (gracefully handles import errors)."""
+    try:
+        from ....core.activity_database import activity_db
+        return activity_db
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Catch-all OPTIONS for CORS preflight
+# ---------------------------------------------------------------------------
+
+@router.options("/{path:path}")
+async def options_catch_all(path: str):
     return {}
 
 
-@router.options("/threats")
-async def options_dashboard_threats():
-    """Handle CORS preflight for /threats endpoint."""
-    return {}
-
-
-@router.options("/stats")
-async def options_stats():
-    """Handle CORS preflight for /stats endpoint."""
-    return {}
-
-
-@router.options("/security-posture")
-async def options_security_posture():
-    """Handle CORS preflight for /security-posture endpoint."""
-    return {}
-
-
-@router.options("/quarantine-inventory")
-async def options_quarantine_inventory():
-    """Handle CORS preflight for /quarantine-inventory endpoint."""
-    return {}
-
+# ---------------------------------------------------------------------------
+# /summary  — primary KPI card data
+# ---------------------------------------------------------------------------
 
 @router.get("/summary")
 async def get_dashboard_summary(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get dashboard summary with recent activity"""
+    """
+    Primary dashboard KPI summary.
 
-    time_range_label = {
-        "24h": "Last 24 Hours",
-        "7d": "Last 7 Days",
-        "30d": "Last 30 Days",
-    }.get(time_range, "Last 24 Hours")
+    Returns separate counts for:
+    - total_scans        : operator-triggered (manual) scans only
+    - background.*       : automated activity-monitor scans from activity_monitoring.db
 
+    Background surveillance scans do NOT count in total_scans so they cannot
+    inflate the operator daily quota display.
+    """
     threshold = _get_time_threshold(time_range)
-    result = await db.execute(
-        select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold).order_by(desc(ScanHistory.scan_timestamp))
-    )
-    scans = result.scalars().all()
 
-    total_scans = len(scans)
-    threats_detected = len([s for s in scans if (s.threat_level or "").lower() in ["malicious", "suspicious", "critical", "high"]])
-    critical_threats = len([s for s in scans if (s.threat_level or "").lower() in ["malicious", "critical"]])
-    last_scan = scans[0].scan_timestamp.isoformat() if scans else None
-
-    return {
-        "time_range": time_range_label,
-        "total_scans": total_scans,
-        "threats_detected": threats_detected,
-        "critical_threats": critical_threats,
-        "last_scan": last_scan,
-        "system_status": "active",
-    }
-
-
-@router.get("/threats")
-async def get_dashboard_threats(
-    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
-    severity: Optional[str] = Query(
-        None, description="Filter by severity: critical, high, medium, low"
-    ),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get recent threats detected with filtering"""
-
-    threshold = _get_time_threshold(time_range)
     result = await db.execute(
         select(ScanHistory)
         .where(ScanHistory.scan_timestamp >= threshold)
@@ -122,140 +108,621 @@ async def get_dashboard_threats(
     )
     scans = result.scalars().all()
 
-    threats = []
-    for scan in scans:
-        level = (scan.threat_level or "").lower()
-        if level in ["safe", "clean", "unknown"]:
-            continue
-        sev = _map_severity(level)
-        if severity and sev != severity:
-            continue
+    manual_scans = [s for s in scans if (s.scan_source or "manual") == "manual"]
+    all_manual   = len(manual_scans)
 
-        analysis = scan.analysis_data or {}
-        summary = analysis.get("summary") or "Threat detected"
+    threats_detected = sum(
+        1 for s in manual_scans
+        if (s.threat_level or "").lower() in ("malicious", "suspicious", "critical", "high")
+    )
+    critical_threats = sum(
+        1 for s in manual_scans
+        if (s.threat_level or "").lower() in ("malicious", "critical")
+    )
+    last_scan = manual_scans[0].scan_timestamp.isoformat() if manual_scans else None
 
-        threats.append({
-            "threat_id": scan.scan_id,
-            "name": f"{scan.target_type.upper()} Threat",
-            "type": scan.target_type,
-            "details": summary,
-            "severity": sev,
-            "timestamp": scan.scan_timestamp.isoformat(),
-            "source": scan.target,
-            "location": "Unknown",
-        })
+    type_counts: dict = {}
+    verdict_counts: dict = {}
+    for s in manual_scans:
+        t = (s.target_type or "unknown").lower()
+        type_counts[t] = type_counts.get(t, 0) + 1
+        v = _map_severity(s.threat_level or "unknown")
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
 
-    return threats
+    bg_stats: dict = {}
+    adb = _activity_db()
+    if adb:
+        hours = _hours_from_range(time_range)
+        try:
+            bg_stats = adb.get_background_stats(hours=hours) or {}
+        except Exception as exc:
+            logger.debug("background stats unavailable: %s", exc)
 
+    return {
+        "time_range": _label(time_range),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "total_scans": all_manual,
+        "threats_detected": threats_detected,
+        "critical_threats": critical_threats,
+        "clean_scans": all_manual - threats_detected,
+        "last_scan": last_scan,
+        "by_type": type_counts,
+        "by_severity": verdict_counts,
+        "background": {
+            "automated_scans": bg_stats.get("automated_scans", 0),
+            "automated_threats_found": bg_stats.get("automated_threats_found", 0),
+            "unique_artifacts": bg_stats.get("unique_artifacts_scanned", 0),
+            "websites_monitored": bg_stats.get("websites_monitored", 0),
+            "network_connections_observed": bg_stats.get("network_connections_observed", 0),
+            "threat_detection_rate_pct": bg_stats.get("threat_detection_rate", 0.0),
+        },
+        "system_status": "active",
+        "external_apis_enabled": settings.EXTERNAL_APIS_ENABLED,
+    }
+
+
+# ---------------------------------------------------------------------------
+# /stats  — numeric breakdown for chart widgets
+# ---------------------------------------------------------------------------
 
 @router.get("/stats")
 async def get_dashboard_stats(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    source: Optional[str] = Query(None, description="Filter: manual | background | all"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get dashboard statistics with breakdown by severity"""
-
+    """Numeric stat breakdown — manual scans by default, filterable by source."""
     threshold = _get_time_threshold(time_range)
-    result = await db.execute(
-        select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold)
-    )
+    query = select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold)
+    if source and source != "all":
+        query = query.where(ScanHistory.scan_source == source)
+    result = await db.execute(query)
     scans = result.scalars().all()
 
     stats = {
-        "critical_threats": 0,
-        "high_threats": 0,
-        "medium_threats": 0,
-        "low_threats": 0,
-        "files_scanned": 0,
-        "urls_scanned": 0,
-        "ips_scanned": 0,
+        "critical_threats": 0, "high_threats": 0,
+        "medium_threats": 0,   "low_threats": 0,
+        "clean_scans": 0,
+        "files_scanned": 0,    "urls_scanned": 0,
+        "ips_scanned": 0,      "hashes_scanned": 0,
+        "domains_scanned": 0,  "total": len(scans),
     }
-
     for scan in scans:
         sev = _map_severity(scan.threat_level or "unknown")
-        if sev == "critical":
-            stats["critical_threats"] += 1
-        elif sev == "high":
-            stats["high_threats"] += 1
-        elif sev == "medium":
-            stats["medium_threats"] += 1
-        else:
-            stats["low_threats"] += 1
+        if sev == "critical":   stats["critical_threats"] += 1
+        elif sev == "high":     stats["high_threats"]     += 1
+        elif sev == "medium":   stats["medium_threats"]   += 1
+        elif sev == "low":      stats["low_threats"]      += 1
+
+        if (scan.threat_level or "").lower() in ("safe", "clean"):
+            stats["clean_scans"] += 1
 
         t = (scan.target_type or "").lower()
-        if t in ["file", "hash"]:
-            stats["files_scanned"] += 1
-        elif t in ["url", "domain"]:
-            stats["urls_scanned"] += 1
-        elif t in ["ip"]:
-            stats["ips_scanned"] += 1
+        if   t == "file":   stats["files_scanned"]   += 1
+        elif t == "hash":   stats["hashes_scanned"]  += 1
+        elif t == "url":    stats["urls_scanned"]    += 1
+        elif t == "domain": stats["domains_scanned"] += 1
+        elif t == "ip":     stats["ips_scanned"]     += 1
 
     return stats
 
 
+# ---------------------------------------------------------------------------
+# /threats  — threat list for the threats panel
+# ---------------------------------------------------------------------------
+
+@router.get("/threats")
+async def get_dashboard_threats(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    severity: Optional[str] = Query(None, description="Filter: critical | high | medium | low"),
+    source: Optional[str] = Query(None, description="Filter: manual | background | all"),
+    limit: int = Query(100, ge=1, le=500, description="Max results"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent threats with severity / source filtering."""
+    threshold = _get_time_threshold(time_range)
+    query = (
+        select(ScanHistory)
+        .where(ScanHistory.scan_timestamp >= threshold)
+        .order_by(desc(ScanHistory.scan_timestamp))
+        .limit(limit)
+    )
+    if source and source != "all":
+        query = query.where(ScanHistory.scan_source == source)
+
+    result = await db.execute(query)
+    scans = result.scalars().all()
+
+    threats = []
+    for scan in scans:
+        level = (scan.threat_level or "").lower()
+        if level in ("safe", "clean", "unknown"):
+            continue
+        sev = _map_severity(level)
+        if severity and sev != severity:
+            continue
+        analysis = scan.analysis_data or {}
+        indicators = analysis.get("threat_indicators") or []
+        threats.append({
+            "threat_id": scan.scan_id,
+            "name": f"{(scan.target_type or 'unknown').upper()} Threat",
+            "type": scan.target_type,
+            "target": scan.target,
+            "details": analysis.get("summary") or f"Threat detected in {scan.target_type}",
+            "severity": sev,
+            "confidence": round((scan.confidence or 0.0) * 100, 1),
+            "indicator_count": len(indicators),
+            "timestamp": scan.scan_timestamp.isoformat(),
+            "source": scan.scan_source or "manual",
+            "analyst_verified": scan.analyst_verified,
+            "corroboration_count": scan.corroboration_count or 0,
+        })
+
+    if not source or source in ("background", "all"):
+        adb = _activity_db()
+        if adb:
+            try:
+                for t in adb.get_recent_threats(limit=50):
+                    sev = _map_severity(t.get("verdict", "unknown"))
+                    if severity and sev != severity:
+                        continue
+                    threats.append({
+                        "threat_id": f"BG-{t.get('type','?')}-{abs(hash(t.get('value','')))}",
+                        "name": f"Background {(t.get('type','?') or '').upper()} Detection",
+                        "type": t.get("type"),
+                        "target": t.get("value"),
+                        "details": f"Auto-detected {t.get('verdict','unknown')} artifact",
+                        "severity": sev,
+                        "confidence": round((t.get("confidence") or 0.0) * 100, 1),
+                        "indicator_count": 0,
+                        "timestamp": str(t.get("time", "")),
+                        "source": "background",
+                        "analyst_verified": False,
+                        "corroboration_count": t.get("sources") or 0,
+                    })
+            except Exception as exc:
+                logger.debug("bg threat fetch error: %s", exc)
+
+    threats.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return threats[:limit]
+
+
+# ---------------------------------------------------------------------------
+# /trends  — time-series for chart visualisations
+# ---------------------------------------------------------------------------
+
+@router.get("/trends")
+async def get_scan_trends(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    interval: Optional[int] = Query(None, description="Bucket size in minutes (auto if omitted)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Time-series scan trend data.
+    Each point: { timestamp, manual_scans, background_scans, total_threats }
+    """
+    hours = _hours_from_range(time_range)
+    interval_min = interval or (60 if hours <= 48 else 360 if hours <= 168 else 1440)
+    threshold = _get_time_threshold(time_range)
+
+    result = await db.execute(
+        select(ScanHistory)
+        .where(ScanHistory.scan_timestamp >= threshold)
+        .order_by(ScanHistory.scan_timestamp)
+    )
+    scans = result.scalars().all()
+
+    manual_buckets: dict = {}
+    for s in scans:
+        if not s.scan_timestamp:
+            continue
+        dt = s.scan_timestamp
+        minutes = (dt.minute // interval_min) * interval_min
+        bk = dt.replace(minute=minutes, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:00")
+        if bk not in manual_buckets:
+            manual_buckets[bk] = {"manual_scans": 0, "manual_threats": 0}
+        manual_buckets[bk]["manual_scans"] += 1
+        if (s.threat_level or "").lower() in ("malicious", "suspicious", "critical", "high"):
+            manual_buckets[bk]["manual_threats"] += 1
+
+    bg_buckets: dict = {}
+    adb = _activity_db()
+    if adb:
+        try:
+            for point in adb.get_scan_trends(hours=hours, interval_minutes=interval_min):
+                bk = point["timestamp"]
+                bg_buckets[bk] = {
+                    "background_scans": point.get("total", 0),
+                    "background_threats": point.get("threats", 0),
+                }
+        except Exception as exc:
+            logger.debug("bg trend error: %s", exc)
+
+    all_keys = sorted(set(list(manual_buckets.keys()) + list(bg_buckets.keys())))
+    merged = []
+    for bk in all_keys:
+        m = manual_buckets.get(bk, {"manual_scans": 0, "manual_threats": 0})
+        b = bg_buckets.get(bk, {"background_scans": 0, "background_threats": 0})
+        merged.append({
+            "timestamp": bk,
+            "manual_scans": m["manual_scans"],
+            "manual_threats": m["manual_threats"],
+            "background_scans": b["background_scans"],
+            "background_threats": b["background_threats"],
+            "total_scans": m["manual_scans"] + b["background_scans"],
+            "total_threats": m["manual_threats"] + b["background_threats"],
+        })
+
+    return {
+        "time_range": _label(time_range),
+        "interval_minutes": interval_min,
+        "data_points": len(merged),
+        "series": merged,
+    }
+
+
+# ---------------------------------------------------------------------------
+# /monitoring-stats  — background monitor activity summary
+# ---------------------------------------------------------------------------
+
+@router.get("/monitoring-stats")
+async def get_monitoring_stats(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+):
+    """
+    Background activity-monitor statistics.
+    These scans run silently and do NOT consume external API quota.
+    """
+    hours = _hours_from_range(time_range)
+    adb = _activity_db()
+    if not adb:
+        return {"available": False, "message": "Activity database not initialised"}
+    try:
+        bg      = adb.get_background_stats(hours=hours)
+        dist    = adb.get_threat_distribution(hours=hours)
+        recent  = adb.get_recent_activity(limit=20)
+        return {
+            "available": True,
+            "time_range": _label(time_range),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "stats": bg,
+            "threat_distribution": dist,
+            "recent_activity": recent,
+        }
+    except Exception as exc:
+        logger.error("monitoring-stats error: %s", exc)
+        return {"available": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# /top-threats  — top threat patterns across manual & background
+# ---------------------------------------------------------------------------
+
+@router.get("/top-threats")
+async def get_top_threats(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Top threat patterns combining manual scan history + background detections."""
+    threshold = _get_time_threshold(time_range)
+    hours     = _hours_from_range(time_range)
+
+    result = await db.execute(
+        select(ScanHistory)
+        .where(
+            and_(
+                ScanHistory.scan_timestamp >= threshold,
+                ScanHistory.threat_level.in_(["malicious", "suspicious", "critical", "high"]),
+            )
+        )
+        .order_by(desc(ScanHistory.scan_timestamp))
+    )
+    top = []
+    for s in result.scalars().all()[:limit]:
+        analysis = s.analysis_data or {}
+        top.append({
+            "scan_id": s.scan_id,
+            "target": s.target,
+            "target_type": s.target_type,
+            "verdict": s.threat_level,
+            "severity": _map_severity(s.threat_level or ""),
+            "confidence": round((s.confidence or 0.0) * 100, 1),
+            "indicators": len(analysis.get("threat_indicators") or []),
+            "timestamp": s.scan_timestamp.isoformat(),
+            "source": s.scan_source or "manual",
+            "corroboration": s.corroboration_count or 0,
+            "summary": analysis.get("summary") or "",
+        })
+
+    adb = _activity_db()
+    if adb:
+        try:
+            for t in (adb.get_threat_distribution(hours=hours).get("top_threats") or []):
+                top.append({
+                    "scan_id": None,
+                    "target": t.get("value"),
+                    "target_type": t.get("type"),
+                    "verdict": t.get("verdict"),
+                    "severity": _map_severity(t.get("verdict", "")),
+                    "confidence": round((t.get("confidence") or 0.0) * 100, 1),
+                    "indicators": 0,
+                    "timestamp": str(t.get("time", "")),
+                    "source": "background",
+                    "corroboration": 0,
+                    "summary": f"Auto-detected {t.get('verdict','unknown')} {t.get('type','artifact')}",
+                })
+        except Exception as exc:
+            logger.debug("top-threats bg error: %s", exc)
+
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    top.sort(key=lambda x: (sev_rank.get(x["severity"], 0), x.get("confidence", 0)), reverse=True)
+    return {"time_range": _label(time_range), "threats": top[:limit]}
+
+
+# ---------------------------------------------------------------------------
+# /system-health  — all system component status
+# ---------------------------------------------------------------------------
+
+@router.get("/system-health")
+async def get_system_health(db: AsyncSession = Depends(get_db)):
+    """Comprehensive system health — APIs, databases, ML models, background monitor."""
+    now = datetime.utcnow()
+
+    api_defs = [
+        {"name": "VirusTotal",      "key": settings.VIRUSTOTAL_API_KEY,      "inputs": ["url","file_hash"]},
+        {"name": "AbuseIPDB",       "key": settings.ABUSEIPDB_API_KEY,       "inputs": ["ip"]},
+        {"name": "Shodan",          "key": settings.SHODAN_API_KEY,          "inputs": ["ip"]},
+        {"name": "URLScan.io",      "key": settings.URLSCAN_API_KEY,         "inputs": ["url","domain"]},
+        {"name": "Hybrid Analysis", "key": settings.HYBRIDANALYSIS_API_KEY,  "inputs": ["file_hash"]},
+    ]
+    svc_health = []
+    configured_count = 0
+    for svc in api_defs:
+        ok = bool(svc["key"])
+        if ok:
+            configured_count += 1
+        svc_health.append({"name": svc["name"], "status": "configured" if ok else "no_key",
+                            "configured": ok, "inputs": svc["inputs"]})
+
+    try:
+        from ....services.virus_total import _vt_in_quota_cooldown
+        vt = next((s for s in svc_health if s["name"] == "VirusTotal"), None)
+        if vt and _vt_in_quota_cooldown():
+            vt["status"] = "quota_cooldown"
+    except Exception:
+        pass
+
+    db_ok = True
+    db_scan_count = 0
+    try:
+        r = await db.execute(select(func.count(ScanHistory.id)))
+        db_scan_count = r.scalar() or 0
+    except Exception as exc:
+        db_ok = False
+        logger.warning("DB health check failed: %s", exc)
+
+    adb_ok = False
+    adb = _activity_db()
+    if adb:
+        try:
+            adb.get_activity_summary(hours=1)
+            adb_ok = True
+        except Exception:
+            pass
+
+    gemini_status = "unconfigured"
+    try:
+        if settings.GEMINI_API_KEY:
+            from ....gemini_integration import get_gemini_client
+            gemini_status = "ready" if get_gemini_client().is_available() else "unavailable"
+    except Exception:
+        gemini_status = "error"
+
+    ml_ok = False
+    try:
+        from ....ml_models import AnomalyDetectionModel, ThreatPredictionModel  # noqa: F401
+        ml_ok = True
+    except Exception:
+        pass
+
+    checks = [db_ok, adb_ok, ml_ok, configured_count > 0]
+    score  = round(sum(checks) / len(checks) * 100)
+    overall = "healthy" if score >= 75 else "degraded" if score >= 40 else "critical"
+
+    return {
+        "status": overall,
+        "health_score": score,
+        "timestamp": now.isoformat() + "Z",
+        "components": {
+            "database": {"status": "healthy" if db_ok else "error", "total_scans_stored": db_scan_count},
+            "activity_database": {"status": "healthy" if adb_ok else "unavailable"},
+            "external_apis": {
+                "status": "healthy" if configured_count > 0 else "no_keys",
+                "configured_count": configured_count,
+                "total_count": len(api_defs),
+                "enabled": settings.EXTERNAL_APIS_ENABLED,
+                "services": svc_health,
+            },
+            "ai_engine": {
+                "gemini": gemini_status,
+                "ml_models": "loaded" if ml_ok else "unavailable",
+            },
+            "background_monitor": {
+                "status": "active" if os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "false").lower()
+                           in ("1", "true", "yes", "on") else "standby",
+                "activity_db": "healthy" if adb_ok else "unavailable",
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# /security-posture
+# ---------------------------------------------------------------------------
+
 @router.get("/security-posture")
 async def get_security_posture():
-    """Return the latest startup hardening report and summarized posture."""
-    report = {}
+    """Return the latest startup hardening report and summarised posture."""
+    report: dict = {}
     if STARTUP_REPORT_PATH.exists():
         try:
             report = json.loads(STARTUP_REPORT_PATH.read_text(encoding="utf-8"))
         except Exception:
             report = {}
-
     findings = report.get("findings", {}) if isinstance(report, dict) else {}
-    summary = report.get("summary", {}) if isinstance(report, dict) else {}
+    summary  = report.get("summary",  {}) if isinstance(report, dict) else {}
     return {
         "available": bool(report),
         "timestamp": report.get("timestamp") if isinstance(report, dict) else None,
         "host": report.get("host", {}) if isinstance(report, dict) else {},
         "summary": {
-            "total_findings": summary.get("total_findings", 0),
+            "total_findings":    summary.get("total_findings", 0),
             "critical_findings": summary.get("critical_findings", 0),
-            "high_findings": summary.get("high_findings", 0),
-            "actions_taken": summary.get("actions_taken", 0),
+            "high_findings":     summary.get("high_findings", 0),
+            "actions_taken":     summary.get("actions_taken", 0),
         },
         "categories": {
-            "processes": len(findings.get("processes", [])),
-            "files": len(findings.get("files", [])),
+            "processes":       len(findings.get("processes", [])),
+            "files":           len(findings.get("files", [])),
             "vulnerabilities": len(findings.get("vulnerabilities", [])),
-            "firewall": len(findings.get("firewall", [])),
+            "firewall":        len(findings.get("firewall", [])),
         },
         "report": report,
     }
 
 
+# ---------------------------------------------------------------------------
+# /quarantine-inventory
+# ---------------------------------------------------------------------------
+
+# Legacy quarantine log written by defense_coordinator before path fix
+_LEGACY_QUARANTINE_LOG = Path(__file__).resolve().parents[5] / "quarantine_log.json"
+
+
 @router.get("/quarantine-inventory")
 async def get_quarantine_inventory():
-    """Return local quarantine inventory for the unified protection host."""
-    inventory = []
-    if QUARANTINE_INDEX_PATH.exists():
+    """Return local quarantine inventory.
+
+    Merges entries from:
+      1. ~/.sentinelai_quarantine/quarantine_index.json  — current primary store
+         (written by prevention_system, defense_coordinator, intrusion_detector)
+      2. <project_root>/quarantine_log.json              — legacy fallback
+         (written by defense_coordinator before the path was fixed)
+    """
+    inventory: list = []
+    seen_ids: set = set()
+
+    def _normalize_item(item: dict, source_hint: str) -> dict:
+        """Normalize legacy and new quarantine records into one schema."""
+        attack = item.get("attack") if isinstance(item.get("attack"), dict) else {}
+        source_ip = (
+            item.get("source_ip")
+            or item.get("ip")
+            or attack.get("source_ip")
+            or "UNKNOWN"
+        )
+        severity = (
+            item.get("severity")
+            or attack.get("severity")
+            or "unknown"
+        )
+        action_type = (item.get("type") or "").lower()
+        if not action_type:
+            if item.get("quarantine_path"):
+                action_type = "file_quarantine"
+            elif source_ip and source_ip != "UNKNOWN":
+                action_type = "ip_block"
+            else:
+                action_type = "quarantine"
+
+        return {
+            "quarantine_id": item.get("quarantine_id") or item.get("attack_id") or item.get("timestamp"),
+            "timestamp": item.get("timestamp") or datetime.utcnow().isoformat(),
+            "source": item.get("source") or source_hint,
+            "type": action_type,
+            "source_ip": source_ip,
+            "severity": str(severity).lower(),
+            "reason": item.get("reason") or item.get("description") or attack.get("description") or "",
+            "attack_id": item.get("attack_id"),
+            "attack_type": item.get("attack_type") or attack.get("type"),
+            "original_path": item.get("original_path"),
+            "quarantine_path": item.get("quarantine_path"),
+            "sha256": item.get("sha256"),
+            "raw": item,
+        }
+
+    def _load_file(path: Path) -> list:
+        if not path.exists():
+            return []
         try:
-            loaded = json.loads(QUARANTINE_INDEX_PATH.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                inventory = loaded
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            return loaded if isinstance(loaded, list) else []
         except Exception:
-            inventory = []
+            return []
+
+    # Primary store
+    for item in _load_file(QUARANTINE_INDEX_PATH):
+        qid = item.get("quarantine_id") or item.get("timestamp", "") + str(item)
+        if qid not in seen_ids:
+            seen_ids.add(qid)
+            inventory.append(_normalize_item(item, "primary"))
+
+    # Legacy fallback — include entries not already in the primary store
+    for item in _load_file(_LEGACY_QUARANTINE_LOG):
+        qid = item.get("quarantine_id") or item.get("timestamp", "") + str(item)
+        if qid not in seen_ids:
+            seen_ids.add(qid)
+            inventory.append(_normalize_item(item, "legacy"))
+
+    # Sort newest-first
+    inventory.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    by_type: dict = {}
+    by_source: dict = {}
+    by_severity: dict = {}
+    for item in inventory:
+        t = (item.get("type") or "unknown").lower()
+        s = (item.get("source") or "unknown").lower()
+        sev = (item.get("severity") or "unknown").lower()
+        by_type[t] = by_type.get(t, 0) + 1
+        by_source[s] = by_source.get(s, 0) + 1
+        by_severity[sev] = by_severity.get(sev, 0) + 1
 
     return {
         "total": len(inventory),
         "items": inventory,
+        "summary": {
+            "by_type": by_type,
+            "by_source": by_source,
+            "by_severity": by_severity,
+        },
         "quarantine_path": str(QUARANTINE_INDEX_PATH.parent),
     }
 
 
+# ---------------------------------------------------------------------------
+# /logs  — system log viewer
+# ---------------------------------------------------------------------------
+
 @router.get("/logs")
 async def get_dashboard_logs(
-    limit: int = Query(50, description="Max log entries"),
+    limit: int = Query(50, ge=1, le=500),
+    level: Optional[str] = Query(None, description="INFO | WARNING | ERROR | CRITICAL"),
+    component: Optional[str] = Query(None, description="e.g. scanner"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get recent system logs for dashboard"""
-    result = await db.execute(
-        select(SystemLog).order_by(desc(SystemLog.timestamp)).limit(limit)
-    )
+    """Recent system logs with optional filtering."""
+    query = select(SystemLog).order_by(desc(SystemLog.timestamp)).limit(limit)
+    if level:
+        query = query.where(SystemLog.log_level == level.upper())
+    if component:
+        query = query.where(SystemLog.component == component.lower())
+    result = await db.execute(query)
     logs = result.scalars().all()
     return [
         {
+            "id": log.id,
             "level": log.log_level,
             "component": log.component,
             "message": log.message,
@@ -266,15 +733,28 @@ async def get_dashboard_logs(
     ]
 
 
+# ---------------------------------------------------------------------------
+# /api-status
+# ---------------------------------------------------------------------------
+
 @router.get("/api-status")
 async def get_api_status():
-    """Return API configuration status for dashboard."""
-    return [
+    """External service key configuration and quota status."""
+    vt_quota_ok = True
+    try:
+        from ....services.virus_total import _vt_in_quota_cooldown
+        vt_quota_ok = not _vt_in_quota_cooldown()
+    except Exception:
+        pass
+
+    services = [
         {
             "name": "VirusTotal",
             "key_configured": bool(settings.VIRUSTOTAL_API_KEY),
             "enabled": bool(settings.VIRUSTOTAL_API_KEY),
-            "status": "ready" if settings.VIRUSTOTAL_API_KEY else "missing_key",
+            "status": ("quota_cooldown" if not vt_quota_ok and settings.VIRUSTOTAL_API_KEY
+                       else ("ready" if settings.VIRUSTOTAL_API_KEY else "missing_key")),
+            "rate_limit": "4/min (free tier)",
             "supported_inputs": ["url", "domain", "file_hash"],
         },
         {
@@ -282,6 +762,7 @@ async def get_api_status():
             "key_configured": bool(settings.ABUSEIPDB_API_KEY),
             "enabled": bool(settings.ABUSEIPDB_API_KEY),
             "status": "ready" if settings.ABUSEIPDB_API_KEY else "missing_key",
+            "rate_limit": "20/min",
             "supported_inputs": ["ip"],
         },
         {
@@ -289,6 +770,7 @@ async def get_api_status():
             "key_configured": bool(settings.SHODAN_API_KEY),
             "enabled": bool(settings.SHODAN_API_KEY),
             "status": "ready" if settings.SHODAN_API_KEY else "missing_key",
+            "rate_limit": "10/min",
             "supported_inputs": ["ip"],
         },
         {
@@ -296,6 +778,7 @@ async def get_api_status():
             "key_configured": bool(settings.URLSCAN_API_KEY),
             "enabled": bool(settings.URLSCAN_API_KEY),
             "status": "ready" if settings.URLSCAN_API_KEY else "missing_key",
+            "rate_limit": "15/min",
             "supported_inputs": ["url", "domain"],
         },
         {
@@ -303,14 +786,25 @@ async def get_api_status():
             "key_configured": bool(settings.HYBRIDANALYSIS_API_KEY),
             "enabled": bool(settings.HYBRIDANALYSIS_API_KEY),
             "status": "ready" if settings.HYBRIDANALYSIS_API_KEY else "missing_key",
+            "rate_limit": "3/min",
             "supported_inputs": ["file_hash"],
         },
     ]
+    return {
+        "external_apis_enabled": settings.EXTERNAL_APIS_ENABLED,
+        "services": services,
+        "configured_count": sum(1 for s in services if s["key_configured"]),
+        "ready_count": sum(1 for s in services if s["status"] == "ready"),
+    }
 
+
+# ---------------------------------------------------------------------------
+# /logs/stream  — SSE real-time log stream
+# ---------------------------------------------------------------------------
 
 @router.get("/logs/stream")
 async def stream_logs(db: AsyncSession = Depends(get_db)):
-    """Stream recent logs using Server-Sent Events (SSE)."""
+    """Stream new system log entries via Server-Sent Events."""
 
     async def event_generator():
         last_ts = datetime.utcnow() - timedelta(minutes=5)
@@ -322,10 +816,10 @@ async def stream_logs(db: AsyncSession = Depends(get_db)):
                 .limit(100)
             )
             logs = result.scalars().all()
-
             for log in logs:
                 last_ts = log.timestamp or last_ts
                 payload = {
+                    "id": log.id,
                     "level": log.log_level,
                     "component": log.component,
                     "message": log.message,
@@ -333,7 +827,6 @@ async def stream_logs(db: AsyncSession = Depends(get_db)):
                     "timestamp": log.timestamp.isoformat() if log.timestamp else None,
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
-
             await asyncio.sleep(2)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
     API_CACHE_TTL: int = int(os.getenv("API_CACHE_TTL", "300"))
 
+    # External intelligence API policy
+    # Default local-only analysis to protect third-party API quotas.
+    EXTERNAL_APIS_ENABLED: bool = os.getenv("EXTERNAL_APIS_ENABLED", "False").lower() == "true"
+
     # File upload
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_FILE_TYPES: List[str] = [
