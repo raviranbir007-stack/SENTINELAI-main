@@ -320,7 +320,7 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             "ai_analysis": analysis_result.get("ai_analysis", {}),
             "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
-        if threat_level in {"suspicious", "malicious", "critical"} or threats_detected > 0:
+        if threat_level in {"malicious", "critical"} or threats_detected > 1:
             logger.info(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")
         else:
             logger.debug(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")

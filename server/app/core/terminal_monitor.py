@@ -226,7 +226,8 @@ class TerminalActivityMonitor:
             return
 
         now = datetime.now(timezone.utc)
-        uptime_str = str(now - self.start_time).split('.')[0]
+        uptime_delta = now - self.start_time
+        uptime_str = self._compact_duration(uptime_delta)
 
         last_str = "–"
         if self.stats['last_activity_time']:
@@ -243,22 +244,22 @@ class TerminalActivityMonitor:
         latest = ""
         if self.recent_attacks:
             a = self.recent_attacks[-1]
-            latest = f"  ·  {a['type'].replace('_', ' ').title()} / {a['severity'].upper()}"
+            latest = f" · {a['type'].replace('_', ' ').title()}"
         elif self.recent_threats:
             t = self.recent_threats[-1]
-            latest = f"  ·  {t['type'].upper()} / {t['verdict'].upper()}"
+            latest = f" · {t['type'].upper()}"
         elif self.recent_websites:
             site = self.recent_websites[-1].split(' [')[0]
-            latest = f"  ·  {site}"
+            latest = f" · {self._compact_target(site)}"
 
         status_parts = [
             f"◈ up {uptime_str}",
-            f"scans {self.stats['scans_performed']} (+{delta_scans})",
+            f"s{self.stats['scans_performed']}+{delta_scans}",
         ]
         if self.stats['threats_detected'] > 0:
-            status_parts.append(f"threats {self.stats['threats_detected']}")
+            status_parts.append(f"t{self.stats['threats_detected']}")
         if self.stats['attack_events'] > 0:
-            status_parts.append(f"attacks {self.stats['attack_events']}")
+            status_parts.append(f"a{self.stats['attack_events']}")
         status_parts.append(f"Δ{last_str}")
 
         status = " · ".join(status_parts)
@@ -266,6 +267,28 @@ class TerminalActivityMonitor:
             status = f"{status}{latest}"
         print(status, flush=True)
         sys.stdout.flush()
+
+    @staticmethod
+    def _compact_duration(delta: timedelta) -> str:
+        total_seconds = max(0, int(delta.total_seconds()))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours > 0:
+            return f"{hours}h{minutes:02d}m"
+        if minutes > 0:
+            return f"{minutes}m{seconds:02d}s"
+        return f"{seconds}s"
+
+    @staticmethod
+    def _compact_target(value: str) -> str:
+        text = str(value or '').strip()
+        if not text:
+            return 'activity'
+        text = text.replace('https://', '').replace('http://', '')
+        text = text.rstrip('/')
+        if '/' in text:
+            text = text.split('/', 1)[0]
+        return text[:36]
     
     def print_summary(self):
         """Print final summary"""

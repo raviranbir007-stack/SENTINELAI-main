@@ -73,7 +73,7 @@ def _log_scan_completion(scan_id: str, scan_type: str, result: dict) -> None:
     level = str(result.get("threat_level", "unknown")).lower()
     indicators = int(result.get("threats_detected", 0) or 0)
     message = f"SCAN {scan_id} | type={scan_type} | lvl={level} | ind={indicators}"
-    if level in {"suspicious", "malicious", "critical"} or indicators > 0:
+    if level in {"malicious", "critical"} or indicators > 1:
         logger.info(message)
     else:
         logger.debug(message)
