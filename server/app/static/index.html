@@ -268,6 +268,18 @@
             gap: 0.75rem;
             max-width: 28rem;
             margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .scan-form .btn {
+            justify-content: center;
+            min-width: 140px;
+        }
+
+        .scan-helper {
+            margin-top: 0.85rem;
+            font-size: 0.8rem;
+            color: var(--muted-foreground);
         }
 
         .scan-input {
@@ -378,19 +390,19 @@
             border-style: solid;
             border-color: var(--card) transparent transparent transparent;
         }
-        
+
         .tooltip:hover .tooltiptext {
             visibility: visible;
             opacity: 1;
         }
-        
+
         /* Eye icon pulse effect on click */
         @keyframes eyePulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.3); }
             100% { transform: scale(1); }
         }
-        
+
         .btn-ghost.clicked {
             animation: eyePulse 0.3s ease;
         }
@@ -399,6 +411,7 @@
             display: flex;
             gap: 2rem;
             margin-top: 2rem;
+            flex-wrap: wrap;
         }
 
         .stat {
@@ -428,6 +441,145 @@
             border: 1px solid rgba(45, 212, 191, 0.2);
             border-radius: 12px;
             backdrop-filter: blur(8px);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        }
+
+        .dashboard-overview {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 1rem;
+            margin-top: 1.75rem;
+        }
+
+        .live-signal-strip {
+            margin-top: 1rem;
+            border: 1px solid rgba(45, 212, 191, 0.22);
+            border-radius: 12px;
+            padding: 0.75rem 0.85rem;
+            background: linear-gradient(160deg, rgba(7, 19, 34, 0.82), rgba(4, 14, 28, 0.9));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+            display: grid;
+            gap: 0.55rem;
+        }
+
+        .live-signal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .live-signal-title {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: rgba(162, 227, 218, 0.92);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .freshness-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.38rem;
+            font-size: 0.71rem;
+            font-weight: 600;
+            padding: 0.22rem 0.5rem;
+            border-radius: 999px;
+            border: 1px solid rgba(45, 212, 191, 0.28);
+            background: rgba(45, 212, 191, 0.12);
+            color: rgba(216, 253, 247, 0.96);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .freshness-pill.normal,
+        .freshness-pill.live {
+            border-color: rgba(16, 185, 129, 0.4);
+            background: rgba(16, 185, 129, 0.14);
+            color: #d1fae5;
+        }
+
+        .freshness-pill.delayed {
+            border-color: rgba(245, 158, 11, 0.45);
+            background: rgba(245, 158, 11, 0.16);
+            color: #fef3c7;
+        }
+
+        .freshness-pill.stale,
+        .freshness-pill.offline,
+        .freshness-pill.unavailable {
+            border-color: rgba(239, 68, 68, 0.5);
+            background: rgba(239, 68, 68, 0.18);
+            color: #fecaca;
+        }
+
+        .live-signal-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .live-signal-item {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 8px;
+            padding: 0.45rem 0.55rem;
+            background: rgba(10, 24, 40, 0.55);
+            min-height: 54px;
+        }
+
+        .live-signal-label {
+            font-size: 0.66rem;
+            color: rgba(167, 216, 210, 0.9);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .live-signal-value {
+            margin-top: 0.22rem;
+            font-size: 0.83rem;
+            font-weight: 600;
+            color: #dcfdf8;
+            line-height: 1.3;
+        }
+
+        .overview-card {
+            padding: 1rem 1.1rem;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        .overview-label {
+            font-size: 0.74rem;
+            color: var(--muted-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.45rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .overview-value {
+            font-size: 1.35rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .overview-value.primary { color: var(--primary); }
+        .overview-value.success { color: var(--success); }
+        .overview-value.warning { color: var(--warning); }
+        .overview-value.destructive { color: var(--destructive); }
+
+        .table-shell {
+            width: 100%;
+            overflow-x: auto;
+            border-radius: 12px;
+        }
+
+        .table-shell .threats-table {
+            min-width: 760px;
         }
 
         .scan-line {
@@ -522,6 +674,725 @@
         .status-footer-row span {
             font-size: 0.75rem;
             color: var(--muted-foreground);
+        }
+
+        .heartbeat-panel {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            display: grid;
+            gap: 0.85rem;
+            background:
+                linear-gradient(180deg, rgba(45, 212, 191, 0.12), rgba(45, 212, 191, 0.02)),
+                repeating-linear-gradient(
+                    90deg,
+                    rgba(45, 212, 191, 0.045) 0,
+                    rgba(45, 212, 191, 0.045) 1px,
+                    transparent 1px,
+                    transparent 28px
+                ),
+                linear-gradient(160deg, rgba(8, 18, 34, 0.86), rgba(4, 12, 24, 0.92));
+            border-radius: 14px;
+            padding: 1rem;
+            border: 1px solid rgba(45, 212, 191, 0.22);
+            box-shadow:
+                inset 0 0 0 1px rgba(255,255,255,0.04),
+                0 10px 30px rgba(0, 0, 0, 0.35),
+                0 0 22px rgba(45, 212, 191, 0.11);
+        }
+
+        .heartbeat-overview {
+            display: grid;
+            grid-template-columns: 220px minmax(0, 1fr);
+            gap: 0.85rem;
+            align-items: stretch;
+        }
+
+        .heartbeat-side {
+            border: 1px solid rgba(45, 212, 191, 0.24);
+            border-radius: 12px;
+            background: rgba(6, 18, 32, 0.72);
+            padding: 0.85rem;
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        .heartbeat-side-title {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: rgba(164, 231, 221, 0.9);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .pulse-meter {
+            --pulse: 92;
+            width: 116px;
+            height: 116px;
+            margin: 0 auto;
+            border-radius: 50%;
+            position: relative;
+            background:
+                radial-gradient(circle at 50% 50%, rgba(7, 20, 36, 0.98) 59%, transparent 60%),
+                conic-gradient(
+                    rgba(45, 212, 191, 1) 0 calc(var(--pulse) * 1%),
+                    rgba(36, 58, 72, 0.65) calc(var(--pulse) * 1%) 100%
+                );
+            box-shadow: 0 0 24px rgba(45, 212, 191, 0.22), inset 0 0 16px rgba(45, 212, 191, 0.18);
+            transition: background 0.35s ease;
+        }
+
+        .pulse-meter.warning {
+            background:
+                radial-gradient(circle at 50% 50%, rgba(7, 20, 36, 0.98) 59%, transparent 60%),
+                conic-gradient(
+                    rgba(245, 158, 11, 0.98) 0 calc(var(--pulse) * 1%),
+                    rgba(58, 46, 26, 0.6) calc(var(--pulse) * 1%) 100%
+                );
+            box-shadow: 0 0 24px rgba(245, 158, 11, 0.2), inset 0 0 16px rgba(245, 158, 11, 0.14);
+        }
+
+        .pulse-meter.danger {
+            background:
+                radial-gradient(circle at 50% 50%, rgba(7, 20, 36, 0.98) 59%, transparent 60%),
+                conic-gradient(
+                    rgba(239, 68, 68, 0.98) 0 calc(var(--pulse) * 1%),
+                    rgba(62, 31, 31, 0.62) calc(var(--pulse) * 1%) 100%
+                );
+            box-shadow: 0 0 24px rgba(239, 68, 68, 0.22), inset 0 0 16px rgba(239, 68, 68, 0.15);
+        }
+
+        .pulse-meter::after {
+            content: "";
+            position: absolute;
+            inset: 10px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.07);
+        }
+
+        .pulse-meter-text {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            text-align: center;
+            z-index: 2;
+            color: #d9fefa;
+        }
+
+        .pulse-meter-value {
+            font-size: 1.55rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1;
+        }
+
+        .pulse-meter-label {
+            margin-top: 0.2rem;
+            font-size: 0.72rem;
+            color: rgba(178, 223, 216, 0.9);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .heartbeat-vitals {
+            display: grid;
+            gap: 0.38rem;
+        }
+
+        .vital-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.65rem;
+            font-size: 0.75rem;
+            color: rgba(196, 231, 226, 0.94);
+        }
+
+        .vital-row strong {
+            color: #dffef9;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.76rem;
+        }
+
+        .heartbeat-main {
+            display: grid;
+            gap: 0.8rem;
+        }
+
+        .heartbeat-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .heartbeat-title {
+            font-size: 0.73rem;
+            color: rgba(153, 230, 220, 0.9);
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.11em;
+            text-shadow: 0 0 10px rgba(45, 212, 191, 0.28);
+        }
+
+        .heartbeat-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.79rem;
+            font-weight: 600;
+            padding: 0.25rem 0.6rem;
+            border-radius: 999px;
+            border: 1px solid rgba(45, 212, 191, 0.3);
+            background: rgba(45, 212, 191, 0.1);
+        }
+
+        .heartbeat-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+            animation: heartbeatDot 1.8s ease-in-out infinite;
+        }
+
+        .heartbeat-status.warning .heartbeat-dot {
+            background: var(--warning);
+            box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5);
+        }
+
+        .heartbeat-status.warning {
+            border-color: rgba(245, 158, 11, 0.42);
+            background: rgba(245, 158, 11, 0.12);
+        }
+
+        .heartbeat-status.danger .heartbeat-dot {
+            background: var(--destructive);
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55);
+        }
+
+        .heartbeat-status.danger {
+            border-color: rgba(239, 68, 68, 0.5);
+            background: rgba(239, 68, 68, 0.14);
+        }
+
+        @keyframes heartbeatDot {
+            0% { transform: scale(1); }
+            20% { transform: scale(1.2); }
+            40% { transform: scale(0.95); }
+            60% { transform: scale(1.25); }
+            100% { transform: scale(1); }
+        }
+
+        .heartbeat-wave {
+            position: relative;
+            height: 88px;
+            padding: 0.35rem 0.55rem;
+            border-radius: 11px;
+            background:
+                linear-gradient(180deg, rgba(15, 41, 56, 0.78), rgba(4, 16, 28, 0.82));
+            border: 1px solid rgba(45, 212, 191, 0.24);
+            overflow: hidden;
+        }
+
+        .heartbeat-wave::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(45, 212, 191, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(45, 212, 191, 0.05) 1px, transparent 1px);
+            background-size: 100% 18px, 28px 100%;
+            opacity: 0.45;
+        }
+
+        .heartbeat-waveform {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        .heartbeat-trace-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .heartbeat-trace-glow,
+        .heartbeat-trace-line {
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+        }
+
+        .heartbeat-trace-glow {
+            stroke: rgba(45, 212, 191, 0.35);
+            stroke-width: 8;
+            filter: blur(4px);
+            opacity: 0.85;
+        }
+
+        .heartbeat-trace-line {
+            stroke: rgba(94, 234, 212, 0.98);
+            stroke-width: 3.2;
+            stroke-dasharray: 720;
+            stroke-dashoffset: 0;
+            animation: heartbeatTraceFlow var(--heartbeat-speed, 2.8s) linear infinite;
+        }
+
+        .heartbeat-wave.warning .heartbeat-trace-glow {
+            stroke: rgba(245, 158, 11, 0.34);
+        }
+
+        .heartbeat-wave.warning .heartbeat-trace-line {
+            stroke: rgba(251, 191, 36, 0.98);
+        }
+
+        .heartbeat-wave.danger .heartbeat-trace-glow {
+            stroke: rgba(239, 68, 68, 0.36);
+        }
+
+        .heartbeat-wave.danger .heartbeat-trace-line {
+            stroke: rgba(248, 113, 113, 0.98);
+        }
+
+        .heartbeat-wave.stale .heartbeat-trace-line {
+            stroke: rgba(251, 191, 36, 0.96);
+            stroke-dasharray: 360 12;
+        }
+
+        .heartbeat-wave.offline .heartbeat-trace-line {
+            stroke: rgba(156, 163, 175, 0.85);
+            stroke-dasharray: 140 28;
+            opacity: 0.72;
+        }
+
+        .heartbeat-scanline {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 18%;
+            left: -22%;
+            background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.22), transparent);
+            filter: blur(2px);
+            animation: heartbeatSweep var(--heartbeat-speed, 2.8s) linear infinite;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .heartbeat-wave.warning .heartbeat-scanline {
+            background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.22), transparent);
+        }
+
+        .heartbeat-wave.danger .heartbeat-scanline {
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.24), transparent);
+        }
+
+        .heartbeat-wave.stale .heartbeat-scanline {
+            background: linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.2), transparent);
+        }
+
+        .heartbeat-wave.offline .heartbeat-scanline {
+            background: linear-gradient(90deg, transparent, rgba(156, 163, 175, 0.18), transparent);
+        }
+
+        @keyframes heartbeatTraceFlow {
+            0% { stroke-dashoffset: 720; opacity: 0.88; }
+            55% { opacity: 1; }
+            100% { stroke-dashoffset: 0; opacity: 0.9; }
+        }
+
+        @keyframes heartbeatSweep {
+            0% { left: -22%; opacity: 0; }
+            15% { opacity: 1; }
+            100% { left: 104%; opacity: 0; }
+        }
+
+        .heartbeat-message {
+            font-size: 0.82rem;
+            color: rgba(212, 252, 245, 0.96);
+            line-height: 1.45;
+            text-shadow: 0 0 8px rgba(45, 212, 191, 0.14);
+        }
+
+        .heartbeat-anomalies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            min-height: 22px;
+        }
+
+        .anomaly-chip {
+            border-radius: 999px;
+            border: 1px solid rgba(45, 212, 191, 0.25);
+            padding: 0.16rem 0.46rem;
+            font-size: 0.66rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: rgba(204, 248, 241, 0.95);
+            background: rgba(45, 212, 191, 0.1);
+        }
+
+        .anomaly-chip.warning {
+            border-color: rgba(245, 158, 11, 0.45);
+            color: #fef3c7;
+            background: rgba(245, 158, 11, 0.14);
+        }
+
+        .anomaly-chip.danger {
+            border-color: rgba(239, 68, 68, 0.5);
+            color: #fecaca;
+            background: rgba(239, 68, 68, 0.16);
+        }
+
+        .service-pulse-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.75rem;
+        }
+
+        .health-pulse-card {
+            border: 1px solid rgba(45, 212, 191, 0.2);
+            border-radius: 10px;
+            padding: 0.85rem;
+            background: rgba(8, 22, 37, 0.62);
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        .service-pulse-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 rgba(16, 185, 129, 0.5);
+            animation: servicePulse 1.8s ease-in-out infinite;
+        }
+
+        .service-pulse-indicator.warning {
+            background: var(--warning);
+            box-shadow: 0 0 0 rgba(245, 158, 11, 0.45);
+        }
+
+        .service-pulse-indicator.danger {
+            background: var(--destructive);
+            box-shadow: 0 0 0 rgba(239, 68, 68, 0.45);
+        }
+
+        .service-pulse-indicator.offline {
+            background: #9ca3af;
+            box-shadow: none;
+            animation-duration: 2.6s;
+            opacity: 0.75;
+        }
+
+        @keyframes servicePulse {
+            0% { box-shadow: 0 0 0 0 currentColor; transform: scale(1); }
+            50% { box-shadow: 0 0 0 7px rgba(255,255,255,0); transform: scale(1.06); }
+            100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+        }
+
+        .flow-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.65rem;
+        }
+
+        .flow-card {
+            padding: 0.8rem;
+            border-radius: 10px;
+            background: rgba(9, 24, 39, 0.6);
+            border: 1px solid rgba(45, 212, 191, 0.2);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        .flow-label {
+            font-size: 0.72rem;
+            color: rgba(157, 214, 207, 0.88);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .flow-value {
+            margin-top: 0.35rem;
+            font-size: 1rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #d8fef8;
+        }
+
+        .flow-subtext {
+            margin-top: 0.2rem;
+            font-size: 0.72rem;
+            color: rgba(172, 214, 207, 0.82);
+        }
+
+        .flow-action-btn {
+            margin-top: 0.55rem;
+            border: 1px solid rgba(45, 212, 191, 0.5);
+            background: rgba(45, 212, 191, 0.1);
+            color: var(--primary);
+            border-radius: 8px;
+            padding: 0.35rem 0.6rem;
+            font-size: 0.72rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .flow-action-btn:hover {
+            background: rgba(45, 212, 191, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .flow-action-btn.warning {
+            border-color: rgba(245, 158, 11, 0.6);
+            color: var(--warning);
+            background: rgba(245, 158, 11, 0.12);
+        }
+
+        .flow-action-btn.danger {
+            border-color: rgba(239, 68, 68, 0.65);
+            color: #fecaca;
+            background: rgba(239, 68, 68, 0.16);
+        }
+
+        .heartbeat-quick-actions {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .heartbeat-quick-btn {
+            border: 1px solid rgba(45, 212, 191, 0.28);
+            background: rgba(45, 212, 191, 0.08);
+            color: rgba(220, 255, 249, 0.96);
+            border-radius: 8px;
+            padding: 0.42rem 0.55rem;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .heartbeat-quick-btn:hover {
+            transform: translateY(-1px);
+            background: rgba(45, 212, 191, 0.18);
+            border-color: rgba(45, 212, 191, 0.46);
+        }
+
+        .task-monitor-shell {
+            display: grid;
+            gap: 0.85rem;
+            padding: 0.95rem;
+            border: 1px solid rgba(45, 212, 191, 0.2);
+            border-radius: 12px;
+            background: linear-gradient(155deg, rgba(6, 17, 31, 0.86), rgba(4, 12, 22, 0.92));
+        }
+
+        .task-usage-strip {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .task-usage-card {
+            border: 1px solid rgba(45, 212, 191, 0.2);
+            border-radius: 9px;
+            padding: 0.52rem 0.58rem;
+            background: rgba(9, 24, 40, 0.7);
+        }
+
+        .task-usage-label {
+            font-size: 0.64rem;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: rgba(166, 221, 215, 0.88);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .task-usage-value {
+            margin-top: 0.2rem;
+            font-size: 0.9rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #defcf8;
+        }
+
+        .task-usage-sub {
+            margin-top: 0.15rem;
+            font-size: 0.67rem;
+            color: rgba(164, 203, 198, 0.82);
+        }
+
+        .task-mini-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .task-mini-card {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 9px;
+            padding: 0.5rem;
+            background: rgba(8, 19, 34, 0.62);
+        }
+
+        .task-mini-title {
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: rgba(155, 220, 212, 0.88);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 0.4rem;
+        }
+
+        .task-sparkline {
+            display: grid;
+            grid-template-columns: repeat(24, minmax(0, 1fr));
+            align-items: end;
+            gap: 2px;
+            height: 44px;
+            padding: 0.25rem;
+            border-radius: 7px;
+            background: rgba(4, 14, 24, 0.88);
+            border: 1px solid rgba(45, 212, 191, 0.14);
+        }
+
+        .task-spark-bar {
+            border-radius: 3px 3px 1px 1px;
+            min-height: 3px;
+            background: linear-gradient(180deg, rgba(45, 212, 191, 0.35), rgba(45, 212, 191, 0.95));
+        }
+
+        .task-sparkline.warning .task-spark-bar {
+            background: linear-gradient(180deg, rgba(245, 158, 11, 0.3), rgba(245, 158, 11, 0.92));
+        }
+
+        .task-sparkline.danger .task-spark-bar {
+            background: linear-gradient(180deg, rgba(239, 68, 68, 0.35), rgba(239, 68, 68, 0.95));
+        }
+
+        .task-mini-foot {
+            margin-top: 0.35rem;
+            font-size: 0.69rem;
+            color: rgba(166, 206, 201, 0.86);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .task-table-wrap {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 10px;
+            overflow: auto;
+            background: rgba(5, 17, 29, 0.74);
+        }
+
+        .task-table {
+            width: 100%;
+            min-width: 980px;
+            border-collapse: collapse;
+        }
+
+        .task-table th,
+        .task-table td {
+            padding: 0.56rem 0.6rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            text-align: left;
+            font-size: 0.74rem;
+        }
+
+        .task-table th {
+            color: rgba(168, 212, 206, 0.9);
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            background: rgba(8, 22, 36, 0.88);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .task-table td {
+            color: rgba(220, 252, 247, 0.93);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .task-table tr:hover td {
+            background: rgba(45, 212, 191, 0.06);
+        }
+
+        .task-state-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            border-radius: 999px;
+            border: 1px solid rgba(45, 212, 191, 0.32);
+            padding: 0.12rem 0.45rem;
+            font-size: 0.63rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #d6fbf7;
+            background: rgba(45, 212, 191, 0.14);
+        }
+
+        .task-state-pill.warning {
+            border-color: rgba(245, 158, 11, 0.46);
+            color: #fef3c7;
+            background: rgba(245, 158, 11, 0.16);
+        }
+
+        .task-state-pill.danger {
+            border-color: rgba(239, 68, 68, 0.48);
+            color: #fecaca;
+            background: rgba(239, 68, 68, 0.16);
+        }
+
+        .task-state-pill.muted {
+            border-color: rgba(148, 163, 184, 0.44);
+            color: rgba(203, 213, 225, 0.95);
+            background: rgba(71, 85, 105, 0.24);
+        }
+
+        .task-ops-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .task-op-card {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 8px;
+            padding: 0.45rem 0.5rem;
+            background: rgba(7, 20, 33, 0.66);
+        }
+
+        .task-op-name {
+            font-size: 0.63rem;
+            color: rgba(157, 214, 207, 0.88);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .task-op-value {
+            margin-top: 0.2rem;
+            font-size: 0.86rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #d8fef8;
+        }
+
+        .task-op-note {
+            margin-top: 0.14rem;
+            font-size: 0.67rem;
+            color: rgba(169, 202, 199, 0.84);
         }
 
         /* API Section */
@@ -1032,10 +1903,24 @@
             .footer-grid { grid-template-columns: 1fr 1fr; }
             .nav { display: none; }
             .search-input { display: none; }
+            .dashboard-overview { grid-template-columns: 1fr 1fr; }
+            .live-signal-grid { grid-template-columns: 1fr 1fr; }
+            .quick-stats { gap: 1rem; }
+            .status-grid { grid-template-columns: 1fr; }
+            .flow-grid { grid-template-columns: 1fr; }
+            .heartbeat-overview { grid-template-columns: 1fr; }
+            .heartbeat-quick-actions { grid-template-columns: 1fr; }
+            .service-pulse-grid { grid-template-columns: 1fr; }
+            .task-usage-strip { grid-template-columns: 1fr 1fr; }
+            .task-mini-grid { grid-template-columns: 1fr 1fr; }
+            .task-ops-grid { grid-template-columns: 1fr 1fr; }
         }
 
         @media (max-width: 480px) {
             .api-grid { grid-template-columns: 1fr; }
+            .dashboard-overview { grid-template-columns: 1fr; }
+            .scan-form .btn { width: 100%; }
+            .container, .header-container { padding-left: 1rem; padding-right: 1rem; }
         }
     </style>
 </head>
@@ -1084,30 +1969,75 @@
             <div class="container">
                 <div class="hero-grid">
                     <div>
-                        <span class="badge">⚡ SYSTEM ACTIVE</span>
+                        <span class="badge">⚡ LIVE PROTECTION</span>
                         <h1>
-                            Threat Intelligence<br>
-                            <span class="glow-text">Detection, Prevention & Response System</span>
+                            SENTINEL-AI<br>
+                            <span class="glow-text">Threat Detection, Prevention &amp; Response System</span>
                         </h1>
-                        <p>Real-time vulnerability detection powered by VirusTotal, Shodan, URLScan, AbuseIPDB, and Hybrid Analysis. AI-generated threat reports at your fingertips.</p>
+                        <p>Monitor threats, review posture, scan targets, and investigate incidents from one clean operational console powered by 5 threat intelligence APIs with based AI and ML analysis.</p>
                         
                         <div class="scan-form">
                             <input type="text" class="scan-input" id="scanInput" placeholder="Enter IP, URL, or hash to scan...">
                             <button class="btn btn-cyber" id="scanBtn">⚡ SCAN</button>
                         </div>
+                        <div class="scan-helper">Supports IPs, domains, URLs, and hashes. Results appear below and in scan history.</div>
                         
                         <div class="quick-stats">
                             <div class="stat">
-                                <div class="stat-value primary font-mono" id="scansToday">12.4K</div>
-                                <div class="stat-label">Scans Today</div>
+                                <div class="stat-value primary font-mono" id="scansToday">0</div>
+                                <div class="stat-label">Total Scans</div>
                             </div>
                             <div class="stat">
-                                <div class="stat-value destructive font-mono" id="threatsFound">47</div>
+                                <div class="stat-value destructive font-mono" id="threatsFound">0</div>
                                 <div class="stat-label">Threats Found</div>
                             </div>
                             <div class="stat">
                                 <div class="stat-value success font-mono" id="detectionRate">0%</div>
                                 <div class="stat-label">Detection Rate</div>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-overview">
+                            <div class="overview-card">
+                                <div class="overview-label">Critical</div>
+                                <div class="overview-value destructive" id="overviewCritical">0</div>
+                            </div>
+                            <div class="overview-card">
+                                <div class="overview-label">High</div>
+                                <div class="overview-value warning" id="overviewHigh">0</div>
+                            </div>
+                            <div class="overview-card">
+                                <div class="overview-label">Clean</div>
+                                <div class="overview-value success" id="overviewClean">0</div>
+                            </div>
+                            <div class="overview-card">
+                                <div class="overview-label">Assets Covered</div>
+                                <div class="overview-value primary" id="overviewAssets">0</div>
+                            </div>
+                        </div>
+
+                        <div class="live-signal-strip" id="liveSignalStrip">
+                            <div class="live-signal-head">
+                                <div class="live-signal-title">Continuous Heartbeat Security Monitoring</div>
+                                <span class="freshness-pill normal" id="globalFreshnessPill">NORMAL</span>
+                            </div>
+                            <div class="live-signal-grid">
+                                <div class="live-signal-item">
+                                    <div class="live-signal-label">Platform Health</div>
+                                    <div class="live-signal-value" id="heroPlatformHealth">Awaiting telemetry</div>
+                                </div>
+                                <div class="live-signal-item">
+                                    <div class="live-signal-label">Telemetry Age</div>
+                                    <div class="live-signal-value" id="heroTelemetryAge">No data</div>
+                                </div>
+                                <div class="live-signal-item">
+                                    <div class="live-signal-label">Service Condition</div>
+                                    <div class="live-signal-value" id="heroServiceCondition">Unknown</div>
+                                </div>
+                                <div class="live-signal-item">
+                                    <div class="live-signal-label">Backend Signal</div>
+                                    <div class="live-signal-value" id="heroBackendSignal">Unavailable</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1116,7 +2046,10 @@
                         <div class="scan-line"></div>
                         <div class="status-header">
                             <h3>SYSTEM STATUS</h3>
-                            <span class="badge badge-safe">OPERATIONAL</span>
+                            <div style="display:flex; align-items:center; gap:0.45rem;">
+                                <span class="freshness-pill normal" id="statusFreshnessPill">NORMAL</span>
+                                <span class="badge badge-safe" id="systemStatusBadge">OPERATIONAL</span>
+                            </div>
                         </div>
                         <div class="status-grid">
                             <div class="status-item">
@@ -1153,6 +2086,77 @@
                             <div class="status-footer-row">
                                 <code id="statusLastScanTarget">N/A</code>
                                 <span id="statusLastScanTime">No scans yet</span>
+                            </div>
+                        </div>
+
+                        <div class="heartbeat-panel">
+                            <div class="heartbeat-overview">
+                                <div class="heartbeat-side">
+                                    <div class="heartbeat-side-title">Overall Security Pulse</div>
+                                    <div class="pulse-meter" id="pulseMeter">
+                                        <div class="pulse-meter-text">
+                                            <div>
+                                                <div class="pulse-meter-value" id="pulseMeterValue">98%</div>
+                                                <div class="pulse-meter-label" id="pulseMeterLabel">Stable</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="heartbeat-vitals">
+                                        <div class="vital-row"><span>API Health</span><strong id="pulseApiHealth">0%</strong></div>
+                                        <div class="vital-row"><span>Alert Load</span><strong id="pulseAlertLoad">Low</strong></div>
+                                        <div class="vital-row"><span>Traffic Intensity</span><strong id="pulseTrafficLoad">Calm</strong></div>
+                                        <div class="vital-row"><span>Task Completion</span><strong id="pulseTaskDone">0%</strong></div>
+                                    </div>
+                                </div>
+
+                                <div class="heartbeat-main">
+                                    <div class="heartbeat-head">
+                                        <div class="heartbeat-title">System Heartbeat</div>
+                                        <div class="heartbeat-status" id="heartbeatStatus">
+                                            <span class="heartbeat-dot"></span>
+                                            <span id="heartbeatStatusText">Normal</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="heartbeat-wave" id="heartbeatWave" aria-hidden="true">
+                                        <div class="heartbeat-waveform">
+                                            <svg class="heartbeat-trace-svg" viewBox="0 0 600 120" preserveAspectRatio="none" role="presentation">
+                                                <polyline class="heartbeat-trace-glow" id="heartbeatTraceGlow" points="0,78 70,78 110,78 138,80 154,60 168,20 184,94 202,76 244,78 286,78 330,78 354,82 370,58 386,24 402,98 420,78 468,78 520,78 600,78"></polyline>
+                                                <polyline class="heartbeat-trace-line" id="heartbeatTraceLine" points="0,78 70,78 110,78 138,80 154,60 168,20 184,94 202,76 244,78 286,78 330,78 354,82 370,58 386,24 402,98 420,78 468,78 520,78 600,78"></polyline>
+                                            </svg>
+                                        </div>
+                                        <div class="heartbeat-scanline"></div>
+                                    </div>
+
+                                    <div class="heartbeat-message" id="heartbeatMessage">Normal flow · continue monitoring.</div>
+
+                                    <div class="heartbeat-anomalies" id="heartbeatAnomalyMarkers"></div>
+
+                                    <div class="flow-grid">
+                                        <div class="flow-card">
+                                            <div class="flow-label">Traffic Flow</div>
+                                            <div class="flow-value" id="flowTrafficValue">0 events</div>
+                                            <div class="flow-subtext" id="flowTrafficSubtext">Waiting for telemetry</div>
+                                        </div>
+                                        <div class="flow-card">
+                                            <div class="flow-label">Threat Pressure</div>
+                                            <div class="flow-value" id="flowThreatValue">Low</div>
+                                            <div class="flow-subtext" id="flowThreatSubtext">No active escalation</div>
+                                        </div>
+                                        <div class="flow-card">
+                                            <div class="flow-label">Operator Action</div>
+                                            <div class="flow-value" id="flowActionValue">Observe</div>
+                                            <button class="flow-action-btn" id="flowActionBtn" onclick="executeHeartbeatAction()">Refresh Overview</button>
+                                            <div class="flow-subtext" id="flowActionSubtext">No immediate response</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="heartbeat-quick-actions">
+                                        <button class="heartbeat-quick-btn" onclick="fetchThreats(); showToast('Threat feed refreshed', 'info');">Refresh Threat Feed</button>
+                                        <button class="heartbeat-quick-btn" onclick="executeIncidentFeedAction();">Open Incident Feed</button>
+                                        <button class="heartbeat-quick-btn" onclick="generateReportForInterval('24h');">Generate 24h Snapshot</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1193,6 +2197,7 @@
                     </div>
                 </div>
                 <div class="card card-glass" id="recentThreatsCard">
+                    <div class="table-shell">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -1210,6 +2215,7 @@
                             <!-- Threats will be inserted here -->
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1226,6 +2232,88 @@
                 </div>
                 <div class="card card-glass" id="recentLogsCard" style="padding: 1rem;">
                     <div id="logsList"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- System Health Pulse Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>⚙️ System Health Pulse</h2>
+                        <p>API, database, ingestion and AI/ML readiness from live backend checks</p>
+                    </div>
+                    <button id="refreshSystemHealthBtn" class="btn btn-outline btn-sm" onclick="fetchSystemHealth()" title="Refresh system health">↺ Refresh</button>
+                </div>
+                <div id="systemHealthCard" class="card card-glass" style="padding: 1.25rem;">
+                    <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading system health...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Security Task Monitor Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🖥️ Security Task Monitor</h2>
+                        <p>Compact real-time SOC task view inspired by Kali/Linux system monitors</p>
+                    </div>
+                    <button id="refreshTaskMonitorBtn" class="btn btn-outline btn-sm" onclick="refreshSecurityTaskMonitor()" title="Refresh security task monitor">↺ Refresh</button>
+                </div>
+                <div id="securityTaskMonitorCard" class="card card-glass" style="padding: 0.95rem;">
+                    <div class="task-monitor-shell">
+                        <div class="task-usage-strip" id="taskUsageStrip"></div>
+
+                        <div class="task-mini-grid">
+                            <div class="task-mini-card">
+                                <div class="task-mini-title">CPU Load Trend</div>
+                                <div class="task-sparkline" id="taskChartCpu"></div>
+                                <div class="task-mini-foot" id="taskChartCpuNote">Awaiting telemetry</div>
+                            </div>
+                            <div class="task-mini-card">
+                                <div class="task-mini-title">Scan Activity Trend</div>
+                                <div class="task-sparkline" id="taskChartScan"></div>
+                                <div class="task-mini-foot" id="taskChartScanNote">Awaiting telemetry</div>
+                            </div>
+                            <div class="task-mini-card">
+                                <div class="task-mini-title">Detection Activity Trend</div>
+                                <div class="task-sparkline" id="taskChartThreat"></div>
+                                <div class="task-mini-foot" id="taskChartThreatNote">Awaiting telemetry</div>
+                            </div>
+                            <div class="task-mini-card">
+                                <div class="task-mini-title">Telemetry Freshness Trend</div>
+                                <div class="task-sparkline" id="taskChartFreshness"></div>
+                                <div class="task-mini-foot" id="taskChartFreshnessNote">Awaiting telemetry</div>
+                            </div>
+                        </div>
+
+                        <div class="task-table-wrap">
+                            <table class="task-table">
+                                <thead>
+                                    <tr>
+                                        <th>Task/Service</th>
+                                        <th>Identifier</th>
+                                        <th>State</th>
+                                        <th>Load/CPU</th>
+                                        <th>Memory</th>
+                                        <th>Events</th>
+                                        <th>Last Seen</th>
+                                        <th>Alert</th>
+                                        <th>Current Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="securityTaskTableBody">
+                                    <tr>
+                                        <td colspan="9" style="text-align:center; color:var(--muted-foreground); padding:1.2rem;">Awaiting telemetry</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="task-ops-grid" id="taskOperationsGrid"></div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1261,6 +2349,7 @@
                     </div>
                 </div>
                 <div class="card card-glass" id="quarantineCard">
+                    <div class="table-shell">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -1274,6 +2363,7 @@
                             <tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted-foreground);">Loading quarantine inventory...</td></tr>
                         </tbody>
                     </table>
+                    </div>
                     <div id="quarantineStats" style="display:flex; gap:2rem; padding:1rem 1.5rem; border-top:1px solid var(--border); font-size:0.875rem; color:var(--muted-foreground);"></div>
                 </div>
             </div>
@@ -1412,6 +2502,7 @@
                         <h3 style="margin: 0;">Scan History</h3>
                     </div>
                     <div class="card card-glass">
+                        <div class="table-shell">
                         <table class="threats-table">
                             <thead>
                                 <tr>
@@ -1429,6 +2520,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1446,6 +2538,7 @@
                     </div>
                 </div>
                 <div class="card card-glass">
+                    <div class="table-shell">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -1462,6 +2555,7 @@
                             <!-- All threats will be inserted here -->
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1584,6 +2678,7 @@
                 <button onclick="closeAllThreats()" class="icon-btn">✖️</button>
             </div>
             <div id="allThreatsContent">
+                <div class="table-shell">
                 <table class="threats-table">
                     <thead>
                         <tr>
@@ -1601,6 +2696,7 @@
                         <!-- All threats will be inserted here -->
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>
@@ -1762,6 +2858,16 @@
         let previousConfiguredApis = null;
         let currentSearchQuery = '';
         let lastScanMeta = { target: 'N/A', time: null };
+        let latestDashboardStats = null;
+        let latestSecurityPosture = null;
+        let latestSystemHealth = null;
+        let latestMonitoringStats = null;
+        let securityTaskHistory = {
+            cpu: [],
+            scans: [],
+            threats: [],
+            freshness: [],
+        };
         let uiState = {
             activePage: 'dashboard',
             selectedReportType: 'executive_summary',
@@ -1774,12 +2880,34 @@
             quarantineCollapsed: false,
         };
         let quarantineData = null;
+        const SOURCE_SIGNALS = {
+            stats: { label: 'Dashboard Stats', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            threats: { label: 'Threat Feed', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            logs: { label: 'Log Feed', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            apis: { label: 'API Status', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            posture: { label: 'Security Posture', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            quarantine: { label: 'Quarantine', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            health: { label: 'System Health', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            monitor: { label: 'Monitoring Stats', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+        };
+
+        const FRESHNESS_THRESHOLDS_MS = {
+            live: 45 * 1000,
+            normal: 2 * 60 * 1000,
+            delayed: 4 * 60 * 1000,
+            stale: 7 * 60 * 1000,
+        };
+        const CORE_SIGNAL_KEYS = ['stats', 'threats', 'logs', 'apis'];
 
         const API_ENDPOINTS = {
             // Dashboard
             dashboardStats: '/api/dashboard/stats',
             dashboardLogs: '/api/logs',
             dashboardApiStatus: '/api/dashboard/api-status',
+            dashboardSystemHealth: '/api/v1/dashboard/system-health',
+            dashboardMonitoringStats: '/api/v1/dashboard/monitoring-stats',
+            dashboardSecurityPosture: '/api/v1/dashboard/security-posture',
+            dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
             
             // Scans
             scan: '/api/scan',
@@ -1803,27 +2931,16 @@
         // Static Data (Replace with API calls)
         // =============================================
         const apis = [
-            { name: "VirusTotal", description: "Multi-antivirus file and URL scanning", icon: "🛡️", status: "online", lastCheck: "12s ago", queriesUsed: 842, queriesLimit: 1000 },
-            { name: "Shodan", description: "Internet-connected device intelligence", icon: "🌐", status: "online", lastCheck: "34s ago", queriesUsed: 156, queriesLimit: 500 },
-            { name: "URLScan.io", description: "Website security analysis & screenshots", icon: "🔍", status: "online", lastCheck: "1m ago", queriesUsed: 234, queriesLimit: 1000 },
-            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "🚨", status: "limited", lastCheck: "45s ago", queriesUsed: 890, queriesLimit: 1000 },
-            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "🔬", status: "online", lastCheck: "2m ago", queriesUsed: 67, queriesLimit: 200 }
+            { name: "VirusTotal", description: "Multi-antivirus file and URL scanning", icon: "🛡️", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000 },
+            { name: "Shodan", description: "Internet-connected device intelligence", icon: "🌐", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 500 },
+            { name: "URLScan.io", description: "Website security analysis & screenshots", icon: "🔍", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000 },
+            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "🚨", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000 },
+            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "🔬", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 200 }
         ];
 
-        const threats = [
-            { id: "THR-001", type: "malware", icon: "🦠", target: "185.234.72.14", severity: "critical", source: "VirusTotal", location: "Russia", timestamp: "2 min ago" },
-            { id: "THR-002", type: "phishing", icon: "🎣", target: "login-secure-bank.com", severity: "high", source: "URLScan", location: "Netherlands", timestamp: "5 min ago" },
-            { id: "THR-003", type: "exploit", icon: "💥", target: "45.33.32.156", severity: "high", source: "Shodan", location: "United States", timestamp: "8 min ago" },
-            { id: "THR-004", type: "botnet", icon: "🤖", target: "103.25.44.78", severity: "medium", source: "AbuseIPDB", location: "China", timestamp: "12 min ago" },
-            { id: "THR-005", type: "suspicious", icon: "🔎", target: "update-check.exe", severity: "medium", source: "Hybrid Analysis", location: "Unknown", timestamp: "15 min ago" }
-        ];
+        const threats = [];
 
-        const recentReports = [
-            { title: "Weekly Threat Summary", date: "Dec 23, 2024", threats: 47 },
-            { title: "Malware Analysis - THR-001", date: "Dec 23, 2024", threats: 1 },
-            { title: "Network Vulnerability Scan", date: "Dec 22, 2024", threats: 12 },
-            { title: "Monthly Security Overview", date: "Dec 20, 2024", threats: 156 }
-        ];
+        const recentReports = [];
 
         let recentLogs = [];
         let allReports = [];
@@ -1832,6 +2949,8 @@
         let lastToastTimestamp = 0;
         let notificationSignals = {};
         const seenThreatIds = new Set();
+        let threatFeedPrimed = false;
+        let heartbeatActionRunning = false;
 
         const REPORT_TYPE_DETAILS = {
             executive_summary: {
@@ -1943,6 +3062,477 @@
             }
         }
 
+        function asObject(payload) {
+            return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+        }
+
+        function asArray(payload) {
+            return Array.isArray(payload) ? payload : [];
+        }
+
+        function toFiniteNumber(value, fallback = 0) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        }
+
+        function toEpochMs(value) {
+            if (!value || typeof value !== 'string') return null;
+            const ms = Date.parse(value);
+            return Number.isFinite(ms) ? ms : null;
+        }
+
+        function classifyFreshnessAge(ageMs) {
+            if (ageMs === null || ageMs === undefined) return 'unavailable';
+            if (ageMs <= FRESHNESS_THRESHOLDS_MS.live) return 'live';
+            if (ageMs <= FRESHNESS_THRESHOLDS_MS.normal) return 'normal';
+            if (ageMs <= FRESHNESS_THRESHOLDS_MS.delayed) return 'delayed';
+            if (ageMs <= FRESHNESS_THRESHOLDS_MS.stale) return 'stale';
+            return 'offline';
+        }
+
+        function formatAge(ageMs) {
+            if (ageMs === null || ageMs === undefined) return 'No data';
+            if (ageMs < 1000) return 'now';
+            const seconds = Math.floor(ageMs / 1000);
+            if (seconds < 60) return `${seconds}s ago`;
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+            const hours = Math.floor(minutes / 60);
+            return `${hours}h ago`;
+        }
+
+        function updateSourceSignal(name, updates = {}) {
+            const signal = SOURCE_SIGNALS[name];
+            if (!signal) return;
+            const now = Date.now();
+            if (updates.ok === true) {
+                signal.lastSuccessAt = now;
+                signal.error = null;
+            }
+            if (updates.ok === false) {
+                signal.lastFailureAt = now;
+                signal.error = updates.error || 'request_failed';
+            }
+            if (updates.dataTimestamp !== undefined) {
+                signal.dataTimestamp = updates.dataTimestamp;
+            }
+        }
+
+        function getSourceRuntimeState(name) {
+            const signal = SOURCE_SIGNALS[name];
+            if (!signal) return { state: 'unavailable', ageMs: null, dataAgeMs: null, signal };
+            const now = Date.now();
+            if (!signal.lastSuccessAt) {
+                return {
+                    state: signal.error ? 'unavailable' : 'awaiting',
+                    ageMs: null,
+                    dataAgeMs: null,
+                    signal,
+                };
+            }
+
+            const ageMs = now - signal.lastSuccessAt;
+            const fetchState = classifyFreshnessAge(ageMs);
+            const dataAgeMs = signal.dataTimestamp ? Math.max(0, now - signal.dataTimestamp) : null;
+            const dataState = classifyFreshnessAge(dataAgeMs);
+
+            let state = fetchState;
+            if (dataState === 'offline' || dataState === 'stale') {
+                state = dataState;
+            }
+            if (fetchState === 'offline' || signal.error) {
+                state = fetchState === 'offline' ? 'offline' : state;
+            }
+            return { state, ageMs, dataAgeMs, signal };
+        }
+
+        function getGlobalFreshnessState() {
+            const coreStates = CORE_SIGNAL_KEYS.map((name) => getSourceRuntimeState(name));
+            const coreLabels = coreStates.map(s => s.state);
+            const coreOfflineCount = coreLabels.filter(s => s === 'offline').length;
+            const coreUnavailableCount = coreLabels.filter(s => s === 'unavailable').length;
+            const coreStaleCount = coreLabels.filter(s => s === 'stale').length;
+            const coreDelayedCount = coreLabels.filter(s => s === 'delayed').length;
+            const coreAwaitingCount = coreLabels.filter(s => s === 'awaiting').length;
+            const coreLiveCount = coreLabels.filter(s => s === 'live').length;
+            const coreNormalCount = coreLabels.filter(s => s === 'normal').length;
+
+            // Startup grace: if core feeds are still warming up, don't mark offline.
+            if (coreAwaitingCount >= 2 && (coreLiveCount + coreNormalCount) === 0) {
+                return 'normal';
+            }
+
+            // Treat as unavailable only when most core feeds are unavailable.
+            if (coreUnavailableCount >= 2) return 'unavailable';
+
+            // Treat as offline only when multiple core feeds are offline.
+            if (coreOfflineCount >= 2) return 'offline';
+
+            // Stale when multiple core feeds are stale/offline.
+            if ((coreStaleCount + coreOfflineCount) >= 2) return 'stale';
+
+            // Delayed when any core feed is degraded.
+            if (coreDelayedCount > 0 || coreStaleCount > 0 || coreOfflineCount > 0) return 'delayed';
+
+            if (coreLiveCount > 0) return 'live';
+            return 'normal';
+        }
+
+        function setFreshnessPill(el, state, text) {
+            if (!el) return;
+            el.classList.remove('live', 'normal', 'delayed', 'stale', 'offline', 'unavailable');
+            el.classList.add(state || 'normal');
+            el.textContent = text || String(state || 'normal').toUpperCase();
+        }
+
+        function renderLiveSignalStrip(heartbeat = null) {
+            const freshState = getGlobalFreshnessState();
+            const globalPill = document.getElementById('globalFreshnessPill');
+            const statusPill = document.getElementById('statusFreshnessPill');
+            setFreshnessPill(globalPill, freshState);
+            setFreshnessPill(statusPill, freshState);
+
+            const healthState = getSourceRuntimeState('health');
+            const threatsState = getSourceRuntimeState('threats');
+            const backendState = getSourceRuntimeState('stats');
+
+            const heroPlatformHealthEl = document.getElementById('heroPlatformHealth');
+            const heroTelemetryAgeEl = document.getElementById('heroTelemetryAge');
+            const heroServiceConditionEl = document.getElementById('heroServiceCondition');
+            const heroBackendSignalEl = document.getElementById('heroBackendSignal');
+
+            if (heroPlatformHealthEl) {
+                const status = latestSystemHealth?.status || 'awaiting telemetry';
+                const score = toFiniteNumber(latestSystemHealth?.health_score, null);
+                heroPlatformHealthEl.textContent = score === null ? String(status).toUpperCase() : `${String(status).toUpperCase()} · ${score}%`;
+            }
+            if (heroTelemetryAgeEl) {
+                heroTelemetryAgeEl.textContent = formatAge(threatsState.dataAgeMs ?? threatsState.ageMs);
+            }
+            if (heroServiceConditionEl) {
+                const condition = heartbeat?.serviceCondition || String(freshState).toUpperCase();
+                heroServiceConditionEl.textContent = condition;
+            }
+            if (heroBackendSignalEl) {
+                const label = backendState.state === 'awaiting' ? 'Awaiting telemetry' : String(backendState.state).toUpperCase();
+                heroBackendSignalEl.textContent = `${label} · ${formatAge(backendState.ageMs)}`;
+            }
+        }
+
+        function pushSecurityTaskHistory(key, value, limit = 24) {
+            if (!securityTaskHistory[key] || !Number.isFinite(Number(value))) return;
+            const arr = securityTaskHistory[key];
+            arr.push(Number(value));
+            while (arr.length > limit) arr.shift();
+        }
+
+        function taskStateClassFromLabel(label) {
+            const val = String(label || '').toLowerCase();
+            if (['healthy', 'ready', 'live', 'running', 'active', 'normal', 'ok', 'configured'].includes(val)) return '';
+            if (['degraded', 'delayed', 'stale', 'standby', 'warning', 'limited', 'unavailable'].includes(val)) return 'warning';
+            if (['offline', 'critical', 'error', 'failed'].includes(val)) return 'danger';
+            return 'muted';
+        }
+
+        function renderTaskSparkline(containerId, series, options = {}) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const values = asArray(series).map(v => toFiniteNumber(v, 0));
+            if (!values.length) {
+                el.classList.remove('warning', 'danger');
+                el.innerHTML = '<div class="task-spark-bar" style="height:4px; opacity:0.35;"></div>'.repeat(24);
+                return;
+            }
+            const bars = values.slice(-24);
+            const maxValue = Math.max(1, ...bars);
+            const tone = options.tone || (maxValue > (options.dangerAt ?? 80) ? 'danger' : maxValue > (options.warnAt ?? 50) ? 'warning' : 'normal');
+            el.classList.remove('warning', 'danger');
+            if (tone === 'warning') el.classList.add('warning');
+            if (tone === 'danger') el.classList.add('danger');
+            el.innerHTML = bars.map(v => {
+                const pct = Math.max(7, Math.min(100, Math.round((v / maxValue) * 100)));
+                return `<span class="task-spark-bar" style="height:${pct}%;"></span>`;
+            }).join('');
+        }
+
+        function renderTaskUsageStrip(snapshot) {
+            const strip = document.getElementById('taskUsageStrip');
+            if (!strip) return;
+            const cards = [
+                { label: 'CPU', value: snapshot.cpuValue, sub: snapshot.cpuSub },
+                { label: 'Memory', value: snapshot.memoryValue, sub: snapshot.memorySub },
+                { label: 'Network Flow', value: snapshot.networkValue, sub: snapshot.networkSub },
+                { label: 'Detection Rate', value: snapshot.detectRateValue, sub: snapshot.detectRateSub },
+                { label: 'Scan Rate', value: snapshot.scanRateValue, sub: snapshot.scanRateSub },
+                { label: 'Uptime', value: snapshot.uptimeValue, sub: snapshot.uptimeSub },
+            ];
+
+            strip.innerHTML = cards.map(card => `
+                <div class="task-usage-card">
+                    <div class="task-usage-label">${card.label}</div>
+                    <div class="task-usage-value">${card.value}</div>
+                    <div class="task-usage-sub">${card.sub}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderTaskOperations(snapshot) {
+            const grid = document.getElementById('taskOperationsGrid');
+            if (!grid) return;
+            const operations = [
+                { name: 'Active scans', value: snapshot.activeScans, note: 'manual + automated' },
+                { name: 'Attack detections', value: snapshot.attackDetections, note: 'high/critical currently visible' },
+                { name: 'Suspicious events', value: snapshot.suspiciousEvents, note: 'warning activity' },
+                { name: 'Quarantine actions', value: snapshot.quarantineActions, note: 'inventory total' },
+                { name: 'Telemetry state', value: snapshot.telemetryState, note: snapshot.telemetryNote },
+            ];
+
+            grid.innerHTML = operations.map(op => `
+                <div class="task-op-card">
+                    <div class="task-op-name">${op.name}</div>
+                    <div class="task-op-value">${op.value}</div>
+                    <div class="task-op-note">${op.note}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderSecurityTaskTable(rows) {
+            const tbody = document.getElementById('securityTaskTableBody');
+            if (!tbody) return;
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--muted-foreground); padding:1.2rem;">No task telemetry available.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(row => {
+                const stateClass = taskStateClassFromLabel(row.state);
+                const alertClass = taskStateClassFromLabel(row.alert);
+                return `
+                    <tr>
+                        <td>${row.name}</td>
+                        <td>${row.identifier}</td>
+                        <td><span class="task-state-pill ${stateClass}">${row.state}</span></td>
+                        <td>${row.load}</td>
+                        <td>${row.memory}</td>
+                        <td>${row.events}</td>
+                        <td>${row.lastSeen}</td>
+                        <td><span class="task-state-pill ${alertClass}">${row.alert}</span></td>
+                        <td>${row.action}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function formatDurationSeconds(sec) {
+            const s = Math.max(0, Math.floor(toFiniteNumber(sec, 0)));
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            if (h > 0) return `${h}h ${m}m`;
+            return `${m}m`;
+        }
+
+        function refreshSecurityTaskMonitor() {
+            return Promise.allSettled([
+                fetchSystemHealth(),
+                fetchMonitoringStats(),
+                fetchDashboardStats(),
+                fetchThreats(),
+                fetchLogs(),
+                fetchQuarantineInventory(),
+            ]).then(() => {
+                renderSecurityTaskMonitor();
+            });
+        }
+
+        function renderSecurityTaskMonitor() {
+            const card = document.getElementById('securityTaskMonitorCard');
+            if (!card) return;
+            const stats = asObject(latestDashboardStats) || {};
+            const health = asObject(latestSystemHealth) || {};
+            const monitorPayload = asObject(latestMonitoringStats) || {};
+            const monitorStats = asObject(monitorPayload.stats) || {};
+            const runtime = asObject(health.runtime) || {};
+            const components = asObject(health.components) || {};
+
+            const cpu = runtime.available ? toFiniteNumber(runtime.cpu_percent, null) : null;
+            const memory = runtime.available ? toFiniteNumber(runtime.memory_percent, null) : null;
+            const processCount = runtime.available ? toFiniteNumber(runtime.process_count, null) : null;
+            const uptimeSec = runtime.available ? toFiniteNumber(runtime.uptime_seconds, null) : null;
+
+            const totalScans = toFiniteNumber(
+                stats.total ?? stats.total_scans,
+                toFiniteNumber(stats.files_scanned, 0) + toFiniteNumber(stats.urls_scanned, 0) + toFiniteNumber(stats.ips_scanned, 0) + toFiniteNumber(stats.hashes_scanned, 0) + toFiniteNumber(stats.domains_scanned, 0)
+            );
+            const activeThreats = toFiniteNumber(stats.active_threats, toFiniteNumber(stats.high_threats, 0) + toFiniteNumber(stats.critical_threats, 0));
+            const suspiciousEvents = toFiniteNumber(stats.medium_threats, 0) + toFiniteNumber(stats.high_threats, 0);
+            const detectionsRate = totalScans > 0 ? ((activeThreats / totalScans) * 100) : 0;
+
+            const automatedScans = toFiniteNumber(monitorStats.automated_scans, 0);
+            const periodHours = Math.max(1, toFiniteNumber(monitorStats.period_hours, 24));
+            const scansPerHour = automatedScans / periodHours;
+            const observedLinks = toFiniteNumber(monitorStats.network_connections_observed, 0);
+            const websitesMonitored = toFiniteNumber(monitorStats.websites_monitored, 0);
+            const quarantineTotal = toFiniteNumber(quarantineData?.total, 0);
+
+            const freshState = getGlobalFreshnessState();
+            const freshSample = freshState === 'live' ? 100 : freshState === 'normal' ? 80 : freshState === 'delayed' ? 55 : freshState === 'stale' ? 30 : 10;
+
+            if (cpu !== null) pushSecurityTaskHistory('cpu', cpu);
+            pushSecurityTaskHistory('scans', scansPerHour);
+            pushSecurityTaskHistory('threats', activeThreats);
+            pushSecurityTaskHistory('freshness', freshSample);
+
+            renderTaskUsageStrip({
+                cpuValue: cpu === null ? 'Unsupported' : `${cpu.toFixed(1)}%`,
+                cpuSub: cpu === null ? 'runtime metric unavailable' : `host processes ${processCount ?? 'N/A'}`,
+                memoryValue: memory === null ? 'Unsupported' : `${memory.toFixed(1)}%`,
+                memorySub: memory === null ? 'runtime metric unavailable' : 'host memory pressure',
+                networkValue: `${observedLinks}`,
+                networkSub: `${websitesMonitored} websites monitored`,
+                detectRateValue: `${detectionsRate.toFixed(1)}%`,
+                detectRateSub: `${activeThreats} active / ${totalScans} scans`,
+                scanRateValue: `${scansPerHour.toFixed(2)}/h`,
+                scanRateSub: `${automatedScans} automated (${periodHours}h)`,
+                uptimeValue: uptimeSec === null ? 'Unsupported' : formatDurationSeconds(uptimeSec),
+                uptimeSub: uptimeSec === null ? 'runtime metric unavailable' : 'host uptime',
+            });
+
+            renderTaskSparkline('taskChartCpu', securityTaskHistory.cpu, { warnAt: 65, dangerAt: 85 });
+            renderTaskSparkline('taskChartScan', securityTaskHistory.scans, { warnAt: 5, dangerAt: 12 });
+            renderTaskSparkline('taskChartThreat', securityTaskHistory.threats, { warnAt: 3, dangerAt: 8 });
+            renderTaskSparkline('taskChartFreshness', securityTaskHistory.freshness, {
+                tone: freshState === 'offline' || freshState === 'unavailable' ? 'danger' : freshState === 'stale' || freshState === 'delayed' ? 'warning' : 'normal'
+            });
+
+            const cpuNote = document.getElementById('taskChartCpuNote');
+            const scanNote = document.getElementById('taskChartScanNote');
+            const threatNote = document.getElementById('taskChartThreatNote');
+            const freshNote = document.getElementById('taskChartFreshnessNote');
+            if (cpuNote) cpuNote.textContent = cpu === null ? 'Unsupported metric' : `Current ${cpu.toFixed(1)}%`;
+            if (scanNote) scanNote.textContent = `Current ${scansPerHour.toFixed(2)} scans/h`;
+            if (threatNote) threatNote.textContent = `${activeThreats} active detections`;
+            if (freshNote) freshNote.textContent = `Signal ${String(freshState).toUpperCase()}`;
+
+            const dbComp = asObject(components.database) || {};
+            const apiComp = asObject(components.external_apis) || {};
+            const bgComp = asObject(components.background_monitor) || {};
+            const aiComp = asObject(components.ai_engine) || {};
+            const activityComp = asObject(components.activity_database) || {};
+
+            const rows = [
+                {
+                    name: 'API Gateway',
+                    identifier: 'svc:api_gateway',
+                    state: getSourceRuntimeState('stats').state,
+                    load: cpu === null ? 'Unsupported' : `${cpu.toFixed(1)}% host`,
+                    memory: memory === null ? 'Unsupported' : `${memory.toFixed(1)}% host`,
+                    events: `${totalScans} scans`,
+                    lastSeen: formatAge(getSourceRuntimeState('stats').ageMs),
+                    alert: apiComp.status || 'unknown',
+                    action: 'Serve scan/dash APIs',
+                },
+                {
+                    name: 'Background Monitor',
+                    identifier: 'mod:auto_monitor',
+                    state: bgComp.status || 'unknown',
+                    load: scansPerHour > 0 ? `${scansPerHour.toFixed(2)} scans/h` : 'idle',
+                    memory: 'Unsupported',
+                    events: `${automatedScans} automated scans`,
+                    lastSeen: formatAge(getSourceRuntimeState('monitor').dataAgeMs ?? getSourceRuntimeState('monitor').ageMs),
+                    alert: monitorPayload.available ? 'normal' : 'unavailable',
+                    action: 'Continuous telemetry analysis',
+                },
+                {
+                    name: 'Threat Detector (IDS)',
+                    identifier: 'mod:ids',
+                    state: activeThreats > 0 ? 'active' : 'normal',
+                    load: `${activeThreats} active`,
+                    memory: 'Unsupported',
+                    events: `${suspiciousEvents} suspicious/high`,
+                    lastSeen: formatAge(getSourceRuntimeState('threats').dataAgeMs ?? getSourceRuntimeState('threats').ageMs),
+                    alert: activeThreats > 0 ? 'warning' : 'ok',
+                    action: 'Correlate detections',
+                },
+                {
+                    name: 'Prevention / Quarantine',
+                    identifier: 'mod:ips_quarantine',
+                    state: quarantineTotal > 0 ? 'active' : 'normal',
+                    load: quarantineTotal > 0 ? `${quarantineTotal} items` : 'idle',
+                    memory: 'Unsupported',
+                    events: `${quarantineTotal} isolated`,
+                    lastSeen: formatAge(getSourceRuntimeState('quarantine').dataAgeMs ?? getSourceRuntimeState('quarantine').ageMs),
+                    alert: quarantineTotal > 0 ? 'warning' : 'ok',
+                    action: 'Containment / inventory',
+                },
+                {
+                    name: 'AI Report Engine',
+                    identifier: 'mod:gemini_reports',
+                    state: aiComp.gemini || 'unknown',
+                    load: 'On-demand',
+                    memory: 'Unsupported',
+                    events: `${allReports.length} reports listed`,
+                    lastSeen: formatAge(getSourceRuntimeState('health').dataAgeMs ?? getSourceRuntimeState('health').ageMs),
+                    alert: aiComp.gemini || 'unavailable',
+                    action: 'Generate narrative reports',
+                },
+                {
+                    name: 'ML Analyzer',
+                    identifier: 'mod:ml_models',
+                    state: aiComp.ml_models || 'unknown',
+                    load: monitorPayload.available ? `${toFiniteNumber(monitorStats.automated_threats_found, 0)} threat hits` : 'Unsupported',
+                    memory: 'Unsupported',
+                    events: `${toFiniteNumber(dbComp.total_scans_stored, 0)} stored scans`,
+                    lastSeen: formatAge(getSourceRuntimeState('health').dataAgeMs ?? getSourceRuntimeState('health').ageMs),
+                    alert: aiComp.ml_models || 'unavailable',
+                    action: 'Anomaly + prediction models',
+                },
+                {
+                    name: 'Activity Database',
+                    identifier: 'db:activity_monitor',
+                    state: activityComp.status || 'unknown',
+                    load: `${toFiniteNumber(monitorStats.unique_artifacts_scanned, 0)} artifacts`,
+                    memory: 'Unsupported',
+                    events: `${observedLinks} network links`,
+                    lastSeen: formatAge(getSourceRuntimeState('monitor').dataAgeMs ?? getSourceRuntimeState('monitor').ageMs),
+                    alert: activityComp.status || 'unavailable',
+                    action: 'Persist telemetry activity',
+                },
+            ];
+
+            renderSecurityTaskTable(rows);
+            renderTaskOperations({
+                activeScans: `${totalScans}`,
+                attackDetections: `${activeThreats}`,
+                suspiciousEvents: `${suspiciousEvents}`,
+                quarantineActions: `${quarantineTotal}`,
+                telemetryState: String(freshState).toUpperCase(),
+                telemetryNote: `${formatAge(getSourceRuntimeState('monitor').dataAgeMs ?? getSourceRuntimeState('monitor').ageMs)} latest monitor update`,
+            });
+        }
+
+        function executeIncidentFeedAction() {
+            switchPage('dashboard');
+            if (panelState.recentThreatsCollapsed || panelState.recentLogsCollapsed) {
+                panelState.recentThreatsCollapsed = false;
+                panelState.recentLogsCollapsed = false;
+                persistPanelState();
+                applyPanelState();
+            }
+
+            const notificationDropdown = document.getElementById('notificationDropdown');
+            if (notificationDropdown) {
+                notificationDropdown.style.display = 'flex';
+                if (typeof renderNotifications === 'function') renderNotifications();
+            }
+
+            Promise.allSettled([fetchLogs(), fetchThreats()]).finally(() => {
+                const incidentAnchor = document.getElementById('recentThreatsCard') || document.getElementById('recentLogsCard');
+                if (incidentAnchor && typeof incidentAnchor.scrollIntoView === 'function') {
+                    incidentAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                showToast('Incident feed opened: threats and logs are now in view', 'info');
+            });
+        }
+
         function getSeverityBadge(severity) {
             const classes = {
                 critical: 'badge-threat',
@@ -2027,11 +3617,15 @@
                 const percentage = (api.queriesUsed / api.queriesLimit) * 100;
                 const statusBadge = api.status === 'online' ? 'badge-safe' : api.status === 'limited' ? 'badge-warning' : 'badge-threat';
                 const progressClass = percentage > 80 ? 'danger' : percentage > 50 ? 'warning' : '';
+                const pulseClass = api.status === 'online' ? '' : api.status === 'limited' ? 'warning' : 'offline';
                 
                 return `
                     <div class="card card-cyber api-card">
                         <div class="api-card-header">
-                            <div class="api-icon">${api.icon}</div>
+                            <div style="display:flex; align-items:center; gap:0.55rem;">
+                                <div class="api-icon">${api.icon}</div>
+                                <span class="service-pulse-indicator ${pulseClass}" aria-hidden="true"></span>
+                            </div>
                             <span class="badge ${statusBadge} font-mono" style="font-size: 10px;">${api.status.toUpperCase()}</span>
                         </div>
                         <h3>${api.name}</h3>
@@ -2057,19 +3651,49 @@
         async function fetchApiStatus() {
             try {
                 const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus);
+                const statusItems = Array.isArray(status)
+                    ? status
+                    : (Array.isArray(status?.apis)
+                        ? status.apis
+                        : (Array.isArray(status?.results) ? status.results : []));
+                if (!Array.isArray(statusItems)) {
+                    throw new Error('Invalid API status payload');
+                }
                 let configuredCount = 0;
-                status.forEach(s => {
+                statusItems.forEach(s => {
                     const item = apis.find(a => a.name === s.name);
                     if (item) {
                         item.status = s.key_configured ? 'online' : 'offline';
                         item.lastCheck = 'Just now';
+                        const used = toFiniteNumber(
+                            s.queries_used
+                            ?? s.usage?.used
+                            ?? s.usage?.queries_used
+                            ?? item.queriesUsed
+                            ?? 0
+                        );
+                        const limit = toFiniteNumber(
+                            s.queries_limit
+                            ?? s.limit
+                            ?? s.usage?.limit
+                            ?? s.usage?.queries_limit
+                            ?? item.queriesLimit
+                            ?? 0
+                        );
+                        item.queriesUsed = used;
+                        item.queriesLimit = limit > 0 ? limit : (item.queriesLimit || 1);
                         if (s.key_configured) configuredCount += 1;
                     }
                 });
                 const summary = document.getElementById('apiConnectionSummary');
                 if (summary) {
-                    summary.textContent = `${configuredCount}/${status.length} APIs Configured`;
+                    if (statusItems.length > 0) {
+                        summary.textContent = `${configuredCount}/${statusItems.length} APIs Configured`;
+                    } else {
+                        summary.textContent = `${configuredCount}/${apis.length} APIs Configured`;
+                    }
                 }
+                updateSystemStatusPanel();
 
                 if (previousConfiguredApis !== null && configuredCount !== previousConfiguredApis) {
                     const delta = configuredCount - previousConfiguredApis;
@@ -2092,10 +3716,12 @@
                     }
                 }
                 previousConfiguredApis = configuredCount;
+                updateSourceSignal('apis', { ok: true, dataTimestamp: Date.now() });
                 renderAPIs();
                 updateSystemStatusPanel();
             } catch (error) {
                 console.log('Using static API status');
+                updateSourceSignal('apis', { ok: false, error: error?.message || 'api_status_failed' });
                 updateSystemStatusPanel();
             }
         }
@@ -2111,6 +3737,11 @@
         function renderThreats(tableId = 'threatsTableBody') {
             const tbody = document.getElementById(tableId);
             if (!tbody) return;
+            if (!threats || threats.length === 0) {
+                const colSpan = tableId === 'threatsTableBody' || tableId === 'allThreatsModalTableBody' ? 8 : 7;
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center; padding:2rem; color:var(--muted-foreground);">No threats detected for the selected period.</td></tr>`;
+                return;
+            }
             tbody.innerHTML = threats.map(threat => `
                 <tr>
                     <td><code class="threat-id">${threat.id}</code></td>
@@ -2713,15 +4344,423 @@
             const monitorEl = document.getElementById('statusMonitorValue');
             const lastScanTargetEl = document.getElementById('statusLastScanTarget');
             const lastScanTimeEl = document.getElementById('statusLastScanTime');
+            const systemStatusBadge = document.getElementById('systemStatusBadge');
 
             const unreadHighPriority = notifications.filter(n => !n.read && ['warning', 'error'].includes(n.level)).length;
             const onlineCount = apis.filter(a => a.status === 'online').length;
+            const heartbeat = buildHeartbeatState();
 
             if (alertsEl) alertsEl.textContent = `${unreadHighPriority} New`;
             if (apisEl) apisEl.textContent = `${onlineCount}/${apis.length} Online`;
-            if (monitorEl) monitorEl.textContent = 'Running';
+            if (monitorEl) monitorEl.textContent = heartbeat.monitorLabel;
             if (lastScanTargetEl) lastScanTargetEl.textContent = lastScanMeta.target || 'N/A';
             if (lastScanTimeEl) lastScanTimeEl.textContent = lastScanMeta.time ? relativeTime(new Date(lastScanMeta.time)) : 'No scans yet';
+            if (systemStatusBadge) {
+                systemStatusBadge.textContent = heartbeat.badgeText;
+                systemStatusBadge.classList.remove('badge-safe', 'badge-warning', 'badge-threat');
+                systemStatusBadge.classList.add(heartbeat.badgeClass);
+            }
+            renderHeartbeatPanel(heartbeat);
+            renderLiveSignalStrip(heartbeat);
+            renderSecurityTaskMonitor();
+        }
+
+        function buildHeartbeatState() {
+            const stats = latestDashboardStats || {};
+            const postureSummary = latestSecurityPosture?.summary || {};
+            const sourceKeys = Object.keys(SOURCE_SIGNALS);
+            const sourceReadyCount = sourceKeys.filter((name) => {
+                const signal = SOURCE_SIGNALS[name];
+                return signal && Number.isFinite(signal.lastSuccessAt);
+            }).length;
+            const onlineCount = apis.filter(a => a.status === 'online').length;
+            const totalApis = apis.length || 1;
+            const unreadHighPriority = notifications.filter(n => !n.read && ['warning', 'error'].includes(n.level)).length;
+            const recentCriticalLogs = recentLogs.filter(log => ['critical', 'error'].includes(String(log.level || '').toLowerCase())).length;
+            const recentWarningLogs = recentLogs.filter(log => String(log.level || '').toLowerCase() === 'warning').length;
+            const criticalThreats = Number(stats.critical_threats || 0);
+            const highThreats = Number(stats.high_threats || 0);
+            const mediumThreats = Number(stats.medium_threats || 0);
+            const telemetryTotal = Number(stats.files_scanned || 0)
+                + Number(stats.ips_scanned || 0)
+                + Number(stats.urls_scanned || 0)
+                + Number(stats.domains_scanned || 0)
+                + Number(stats.hashes_scanned || 0);
+            const criticalPosture = Number(postureSummary.critical_findings || 0);
+            const highPosture = Number(postureSummary.high_findings || 0);
+            const totalThreatPressure = criticalThreats * 3 + highThreats * 2 + mediumThreats;
+            const telemetryBand = telemetryTotal > 300 ? 'Peak' : telemetryTotal > 120 ? 'High' : telemetryTotal > 20 ? 'Active' : 'Calm';
+            const apiHealthPct = Math.max(0, Math.min(100, Math.round((onlineCount / totalApis) * 100)));
+            const pulsePenalty = (criticalThreats * 24)
+                + (highThreats * 12)
+                + (mediumThreats * 6)
+                + (criticalPosture * 18)
+                + (highPosture * 9)
+                + (recentCriticalLogs * 14)
+                + (recentWarningLogs * 4)
+                + (unreadHighPriority * 3)
+                + Math.max(0, (totalApis - onlineCount) * 5);
+            const pulseScore = Math.max(8, Math.min(99, 99 - pulsePenalty));
+            const pulseLabel = pulseScore >= 85 ? 'Stable' : pulseScore >= 60 ? 'Watch' : 'Critical';
+            const alertLoad = totalThreatPressure > 6 || unreadHighPriority > 6
+                ? 'High'
+                : totalThreatPressure > 0 || unreadHighPriority > 0
+                    ? 'Medium'
+                    : 'Low';
+            const healthScoreRaw = toFiniteNumber(latestSystemHealth?.health_score, 0);
+            const sourceCompletionPct = sourceKeys.length ? Math.round((sourceReadyCount / sourceKeys.length) * 100) : 0;
+            const taskDone = Math.max(0, Math.min(100, Math.round((sourceCompletionPct * 0.55) + (healthScoreRaw * 0.45))));
+            const freshnessState = getGlobalFreshnessState();
+            const healthState = getSourceRuntimeState('health');
+            const threatsState = getSourceRuntimeState('threats');
+            const serviceCondition = freshnessState === 'offline' || freshnessState === 'unavailable'
+                ? 'Backend unavailable'
+                : freshnessState === 'stale'
+                    ? 'Telemetry stale'
+                    : freshnessState === 'delayed'
+                        ? 'Telemetry delayed'
+                        : 'Live';
+
+            const anomalyMarkers = [];
+            if (freshnessState === 'unavailable') anomalyMarkers.push({ level: 'danger', label: 'API unavailable' });
+            if (freshnessState === 'offline') anomalyMarkers.push({ level: 'danger', label: 'Signal offline' });
+            if (freshnessState === 'stale') anomalyMarkers.push({ level: 'warning', label: 'Stale telemetry' });
+            if (freshnessState === 'delayed') anomalyMarkers.push({ level: 'warning', label: 'Delayed updates' });
+            if (onlineCount < totalApis) anomalyMarkers.push({ level: 'warning', label: `API coverage ${onlineCount}/${totalApis}` });
+            if ((latestSystemHealth?.status || '').toLowerCase() === 'degraded') anomalyMarkers.push({ level: 'warning', label: 'System health degraded' });
+            if ((latestSystemHealth?.status || '').toLowerCase() === 'critical') anomalyMarkers.push({ level: 'danger', label: 'System health critical' });
+
+            const buildWaveform = (level) => {
+                if (level === 'danger') {
+                    return {
+                        points: '0,82 44,82 78,82 104,80 124,76 144,64 162,24 178,102 196,78 232,80 258,82 286,82 316,78 338,36 354,18 372,96 396,74 428,82 452,82 476,76 498,40 514,16 530,104 548,82 600,82',
+                        speed: '1.7s'
+                    };
+                }
+                if (level === 'warning') {
+                    return {
+                        points: '0,80 58,80 94,80 120,78 144,68 162,34 178,96 198,76 240,80 286,80 324,80 350,76 368,46 384,28 398,92 420,78 462,80 510,80 600,80',
+                        speed: '2.2s'
+                    };
+                }
+                return {
+                    points: '0,78 70,78 110,78 138,80 154,60 168,20 184,94 202,76 244,78 286,78 330,78 354,82 370,58 386,24 402,98 420,78 468,78 520,78 600,78',
+                    speed: '2.9s'
+                };
+            };
+
+            if (freshnessState === 'offline' || freshnessState === 'unavailable') {
+                const waveform = buildWaveform('warning');
+                return {
+                    level: 'danger',
+                    badgeClass: 'badge-threat',
+                    badgeText: 'UNAVAILABLE',
+                    monitorLabel: 'Unavailable',
+                    statusText: 'Offline',
+                    message: 'Backend telemetry unavailable · verify server and monitoring services.',
+                    trafficValue: `${telemetryTotal} events`,
+                    trafficSubtext: 'No reliable fresh telemetry',
+                    threatValue: 'Unknown',
+                    threatSubtext: 'Threat state cannot be confirmed',
+                    actionValue: 'Recover',
+                    actionSubtext: 'Restore backend connection first',
+                    actionButtonLabel: 'Open Threat Center',
+                    actionMode: 'danger',
+                    pulseScore: Math.max(10, pulseScore - 35),
+                    pulseLabel: 'Offline',
+                    apiHealth: `${apiHealthPct}%`,
+                    alertLoad: 'Unknown',
+                    trafficBand: 'Unavailable',
+                    wavePoints: waveform.points,
+                    waveSpeed: '3.4s',
+                    waveTone: 'offline',
+                    serviceCondition,
+                    telemetryAge: formatAge(threatsState.dataAgeMs ?? threatsState.ageMs),
+                    freshnessState,
+                    anomalies: anomalyMarkers,
+                    taskDone,
+                };
+            }
+
+            if (freshnessState === 'stale' || freshnessState === 'delayed') {
+                const waveform = buildWaveform('warning');
+                return {
+                    level: 'warning',
+                    badgeClass: 'badge-warning',
+                    badgeText: freshnessState === 'stale' ? 'STALE TELEMETRY' : 'DELAYED',
+                    monitorLabel: 'Degraded',
+                    statusText: freshnessState === 'stale' ? 'Stale' : 'Delayed',
+                    message: freshnessState === 'stale'
+                        ? 'Telemetry is stale · validate agent links and ingestion pipeline.'
+                        : 'Telemetry delayed · monitor feed latency and queue backlog.',
+                    trafficValue: `${telemetryTotal} events`,
+                    trafficSubtext: `Latest feed: ${formatAge(threatsState.dataAgeMs ?? threatsState.ageMs)}`,
+                    threatValue: 'Guarded',
+                    threatSubtext: 'State may lag until fresh telemetry resumes',
+                    actionValue: 'Verify',
+                    actionSubtext: 'Check ingestion, queue, and agent heartbeat',
+                    actionButtonLabel: 'Review Alerts',
+                    actionMode: 'warning',
+                    pulseScore: Math.max(25, pulseScore - 18),
+                    pulseLabel: freshnessState === 'stale' ? 'Stale' : 'Delayed',
+                    apiHealth: `${apiHealthPct}%`,
+                    alertLoad,
+                    trafficBand: telemetryBand,
+                    wavePoints: waveform.points,
+                    waveSpeed: freshnessState === 'stale' ? '3.4s' : '2.7s',
+                    waveTone: freshnessState,
+                    serviceCondition,
+                    telemetryAge: formatAge(threatsState.dataAgeMs ?? threatsState.ageMs),
+                    freshnessState,
+                    anomalies: anomalyMarkers,
+                    taskDone,
+                };
+            }
+
+            if (criticalThreats > 0 || recentCriticalLogs > 0 || criticalPosture > 0) {
+                const waveform = buildWaveform('danger');
+                return {
+                    level: 'danger',
+                    badgeClass: 'badge-threat',
+                    badgeText: 'ACTION REQUIRED',
+                    monitorLabel: 'Critical',
+                    statusText: 'Critical',
+                    message: 'Attack pressure high · immediate response required.',
+                    trafficValue: `${telemetryTotal} events`,
+                    trafficSubtext: 'Continuous telemetry under review',
+                    threatValue: 'High',
+                    threatSubtext: `${criticalThreats} critical · ${highThreats} high threat(s)`,
+                    actionValue: 'Respond',
+                    actionSubtext: 'Contain, investigate, and verify defenses',
+                    actionButtonLabel: 'Open Threat Center',
+                    actionMode: 'danger',
+                    pulseScore,
+                    pulseLabel,
+                    apiHealth: `${apiHealthPct}%`,
+                    alertLoad,
+                    trafficBand: telemetryBand,
+                    wavePoints: waveform.points,
+                    waveSpeed: waveform.speed,
+                    waveTone: 'danger',
+                    serviceCondition,
+                    telemetryAge: formatAge(threatsState.dataAgeMs ?? threatsState.ageMs),
+                    freshnessState,
+                    anomalies: anomalyMarkers,
+                    taskDone,
+                };
+            }
+
+            if (highThreats > 0 || mediumThreats > 0 || unreadHighPriority > 0 || recentWarningLogs > 0 || highPosture > 0 || onlineCount < totalApis) {
+                const waveform = buildWaveform('warning');
+                return {
+                    level: 'warning',
+                    badgeClass: 'badge-warning',
+                    badgeText: 'ELEVATED',
+                    monitorLabel: 'Watch',
+                    statusText: 'Elevated',
+                    message: 'Suspicious activity present · review alerts and keep monitoring.',
+                    trafficValue: `${telemetryTotal} events`,
+                    trafficSubtext: onlineCount < totalApis ? `API coverage ${onlineCount}/${totalApis} online` : 'Flow active and stable',
+                    threatValue: 'Moderate',
+                    threatSubtext: `${highThreats + mediumThreats} suspicious/high event(s)`,
+                    actionValue: 'Review',
+                    actionSubtext: 'Validate evidence before escalation',
+                    actionButtonLabel: 'Review Alerts',
+                    actionMode: 'warning',
+                    pulseScore,
+                    pulseLabel,
+                    apiHealth: `${apiHealthPct}%`,
+                    alertLoad,
+                    trafficBand: telemetryBand,
+                    wavePoints: waveform.points,
+                    waveSpeed: waveform.speed,
+                    waveTone: 'warning',
+                    serviceCondition,
+                    telemetryAge: formatAge(threatsState.dataAgeMs ?? threatsState.ageMs),
+                    freshnessState,
+                    anomalies: anomalyMarkers,
+                    taskDone,
+                };
+            }
+
+            const waveform = buildWaveform('normal');
+            return {
+                level: 'normal',
+                badgeClass: 'badge-safe',
+                badgeText: 'OPERATIONAL',
+                monitorLabel: 'Running',
+                statusText: 'Normal',
+                message: 'Normal flow · continue monitoring.',
+                trafficValue: `${telemetryTotal} events`,
+                trafficSubtext: telemetryTotal > 0 ? 'Telemetry flowing normally' : 'Waiting for telemetry',
+                threatValue: 'Low',
+                threatSubtext: 'No active escalation',
+                actionValue: 'Observe',
+                actionSubtext: 'No immediate response',
+                actionButtonLabel: 'Refresh Overview',
+                actionMode: 'normal',
+                pulseScore,
+                pulseLabel,
+                apiHealth: `${apiHealthPct}%`,
+                alertLoad,
+                trafficBand: telemetryBand,
+                wavePoints: waveform.points,
+                waveSpeed: waveform.speed,
+                waveTone: freshnessState,
+                serviceCondition,
+                telemetryAge: formatAge(threatsState.dataAgeMs ?? threatsState.ageMs),
+                freshnessState,
+                anomalies: anomalyMarkers,
+                taskDone,
+            };
+        }
+
+        function renderHeartbeatPanel(heartbeat) {
+            const statusEl = document.getElementById('heartbeatStatus');
+            const statusTextEl = document.getElementById('heartbeatStatusText');
+            const messageEl = document.getElementById('heartbeatMessage');
+            const waveEl = document.getElementById('heartbeatWave');
+            const trafficValueEl = document.getElementById('flowTrafficValue');
+            const trafficSubtextEl = document.getElementById('flowTrafficSubtext');
+            const threatValueEl = document.getElementById('flowThreatValue');
+            const threatSubtextEl = document.getElementById('flowThreatSubtext');
+            const actionValueEl = document.getElementById('flowActionValue');
+            const actionSubtextEl = document.getElementById('flowActionSubtext');
+            const actionBtnEl = document.getElementById('flowActionBtn');
+            const pulseMeterEl = document.getElementById('pulseMeter');
+            const pulseMeterValueEl = document.getElementById('pulseMeterValue');
+            const pulseMeterLabelEl = document.getElementById('pulseMeterLabel');
+            const pulseApiHealthEl = document.getElementById('pulseApiHealth');
+            const pulseAlertLoadEl = document.getElementById('pulseAlertLoad');
+            const pulseTrafficLoadEl = document.getElementById('pulseTrafficLoad');
+            const pulseTaskDoneEl = document.getElementById('pulseTaskDone');
+            const traceLineEl = document.getElementById('heartbeatTraceLine');
+            const traceGlowEl = document.getElementById('heartbeatTraceGlow');
+            const anomalyEl = document.getElementById('heartbeatAnomalyMarkers');
+            if (!statusEl || !statusTextEl || !messageEl || !waveEl) return;
+
+            statusEl.classList.remove('warning', 'danger');
+            waveEl.classList.remove('warning', 'danger', 'stale', 'offline');
+            if (heartbeat.level === 'warning') {
+                statusEl.classList.add('warning');
+                waveEl.classList.add('warning');
+            } else if (heartbeat.level === 'danger') {
+                statusEl.classList.add('danger');
+                waveEl.classList.add('danger');
+            }
+            if (heartbeat.waveTone === 'stale' || heartbeat.waveTone === 'delayed') {
+                waveEl.classList.add('stale');
+            }
+            if (heartbeat.waveTone === 'offline' || heartbeat.waveTone === 'unavailable') {
+                waveEl.classList.add('offline');
+            }
+
+            statusTextEl.textContent = heartbeat.statusText;
+            const heartbeatDetails = [heartbeat.serviceCondition, heartbeat.telemetryAge].filter(Boolean).join(' · ');
+            messageEl.textContent = heartbeatDetails
+                ? `${heartbeat.message} (${heartbeatDetails})`
+                : heartbeat.message;
+            if (trafficValueEl) trafficValueEl.textContent = heartbeat.trafficValue;
+            if (trafficSubtextEl) trafficSubtextEl.textContent = heartbeat.trafficSubtext;
+            if (threatValueEl) threatValueEl.textContent = heartbeat.threatValue;
+            if (threatSubtextEl) threatSubtextEl.textContent = heartbeat.threatSubtext;
+            if (actionValueEl) actionValueEl.textContent = heartbeat.actionValue;
+            if (actionSubtextEl) actionSubtextEl.textContent = heartbeat.actionSubtext;
+            if (actionBtnEl) {
+                actionBtnEl.textContent = heartbeat.actionButtonLabel || 'Take Action';
+                actionBtnEl.dataset.mode = heartbeat.actionMode || heartbeat.level || 'normal';
+                actionBtnEl.classList.remove('warning', 'danger');
+                if ((heartbeat.actionMode || heartbeat.level) === 'warning') actionBtnEl.classList.add('warning');
+                if ((heartbeat.actionMode || heartbeat.level) === 'danger') actionBtnEl.classList.add('danger');
+            }
+            if (pulseMeterEl) {
+                pulseMeterEl.style.setProperty('--pulse', String(heartbeat.pulseScore ?? 90));
+                pulseMeterEl.classList.remove('warning', 'danger');
+                if ((heartbeat.actionMode || heartbeat.level) === 'warning') pulseMeterEl.classList.add('warning');
+                if ((heartbeat.actionMode || heartbeat.level) === 'danger') pulseMeterEl.classList.add('danger');
+            }
+            if (pulseMeterValueEl) pulseMeterValueEl.textContent = `${heartbeat.pulseScore ?? 90}%`;
+            if (pulseMeterLabelEl) pulseMeterLabelEl.textContent = heartbeat.pulseLabel || 'Stable';
+            if (pulseApiHealthEl) pulseApiHealthEl.textContent = heartbeat.apiHealth || '0%';
+            if (pulseAlertLoadEl) pulseAlertLoadEl.textContent = heartbeat.alertLoad || 'Low';
+            if (pulseTrafficLoadEl) pulseTrafficLoadEl.textContent = heartbeat.trafficBand || 'Calm';
+            if (pulseTaskDoneEl) pulseTaskDoneEl.textContent = `${toFiniteNumber(heartbeat.taskDone, 0)}%`;
+            if (traceLineEl) traceLineEl.setAttribute('points', heartbeat.wavePoints || '0,78 600,78');
+            if (traceGlowEl) traceGlowEl.setAttribute('points', heartbeat.wavePoints || '0,78 600,78');
+            waveEl.style.setProperty('--heartbeat-speed', heartbeat.waveSpeed || '2.8s');
+            if (anomalyEl) {
+                const anomalies = Array.isArray(heartbeat.anomalies) ? heartbeat.anomalies.slice(0, 4) : [];
+                if (!anomalies.length) {
+                    anomalyEl.innerHTML = '<span class="anomaly-chip">No anomaly markers</span>';
+                } else {
+                    anomalyEl.innerHTML = anomalies.map(item => {
+                        const level = String(item?.level || '').toLowerCase();
+                        const cls = level === 'danger' ? 'danger' : level === 'warning' ? 'warning' : '';
+                        return `<span class="anomaly-chip ${cls}">${item.label || 'signal'}</span>`;
+                    }).join('');
+                }
+            }
+        }
+
+        function executeHeartbeatAction() {
+            if (heartbeatActionRunning) return;
+            heartbeatActionRunning = true;
+
+            const heartbeat = buildHeartbeatState();
+            const mode = heartbeat.actionMode || heartbeat.level || 'normal';
+            const actionBtn = document.getElementById('flowActionBtn');
+            const originalLabel = actionBtn ? actionBtn.textContent : '';
+            if (actionBtn) {
+                actionBtn.disabled = true;
+                actionBtn.textContent = 'Executing...';
+            }
+
+            if (mode === 'danger') {
+                switchPage('threats');
+                viewAllThreats();
+                Promise.allSettled([fetchThreats(), fetchLogs(), fetchSystemHealth(), fetchMonitoringStats()]).finally(() => {
+                    showToast('Action mode: threat center opened', 'warning');
+                    if (actionBtn) {
+                        actionBtn.disabled = false;
+                        actionBtn.textContent = originalLabel || 'Open Threat Center';
+                    }
+                    heartbeatActionRunning = false;
+                });
+                return;
+            }
+
+            if (mode === 'warning') {
+                switchPage('dashboard');
+                toggleNotifications();
+                Promise.allSettled([fetchLogs(), fetchThreats(), fetchSystemHealth(), fetchMonitoringStats()]).finally(() => {
+                    showToast('Action mode: review active alerts', 'info');
+                    if (actionBtn) {
+                        actionBtn.disabled = false;
+                        actionBtn.textContent = originalLabel || 'Review Alerts';
+                    }
+                    heartbeatActionRunning = false;
+                });
+                return;
+            }
+
+            Promise.allSettled([
+                fetchDashboardStats(),
+                fetchThreats(),
+                fetchLogs(),
+                fetchApiStatus(),
+                fetchSystemHealth(),
+                fetchMonitoringStats(),
+                fetchSecurityPosture(),
+                fetchQuarantineInventory(),
+            ]).then(() => {
+                showToast('Operational refresh complete', 'success');
+            }).finally(() => {
+                if (actionBtn) {
+                    actionBtn.disabled = false;
+                    actionBtn.textContent = originalLabel || 'Refresh Overview';
+                }
+                heartbeatActionRunning = false;
+            });
         }
 
         function applyDashboardSearch(query) {
@@ -2770,10 +4809,24 @@
             localStorage.setItem(DASHBOARD_SETTINGS_KEY, JSON.stringify(dashboardSettings));
         }
 
+        function isLowSignalThreatNotification(item) {
+            const title = String(item?.title || '').toLowerCase();
+            const message = String(item?.message || '').toLowerCase();
+            return title.includes('attack detected: ip threat')
+                && (
+                    message.includes('limited corroboration')
+                    || message.includes('minor threat indicators')
+                );
+        }
+
         function loadNotifications() {
             try {
                 const raw = localStorage.getItem(DASHBOARD_NOTIFICATIONS_KEY);
                 notifications = raw ? JSON.parse(raw) : [];
+                if (Array.isArray(notifications)) {
+                    notifications = notifications.filter(item => !isLowSignalThreatNotification(item));
+                    persistNotifications();
+                }
             } catch (_) {
                 notifications = [];
             }
@@ -2918,6 +4971,8 @@
                     fetchThreats();
                     fetchLogs();
                     fetchApiStatus();
+                    fetchSystemHealth();
+                    fetchMonitoringStats();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
                 }, interval);
@@ -3206,13 +5261,49 @@
         async function fetchDashboardStats() {
             try {
                 const stats = await apiRequest(API_ENDPOINTS.dashboardStats);
-                const totalScans = Number(stats.total_scans || 0);
+                const statsObj = asObject(stats);
+                if (!statsObj) {
+                    throw new Error('Invalid dashboard stats payload');
+                }
+                latestDashboardStats = statsObj;
+                const totalScans = Number(
+                    statsObj.total
+                    ?? statsObj.total_scans
+                    ?? (
+                        Number(statsObj.files_scanned || 0)
+                        + Number(statsObj.urls_scanned || 0)
+                        + Number(statsObj.ips_scanned || 0)
+                        + Number(statsObj.hashes_scanned || 0)
+                        + Number(statsObj.domains_scanned || 0)
+                    )
+                );
                 document.getElementById('scansToday').textContent = totalScans;
-                const activeThreats = Number(stats.active_threats || stats.critical_threats || 0);
+
+                const criticalThreats = Number(statsObj.critical_threats || 0);
+                const highThreats = Number(statsObj.high_threats || 0);
+                const mediumThreats = Number(statsObj.medium_threats || 0);
+                const lowThreats = Number(statsObj.low_threats || 0);
+                const cleanScans = Number(statsObj.clean_scans || 0);
+                const activeThreats = Number(statsObj.active_threats ?? (criticalThreats + highThreats + mediumThreats + lowThreats));
                 document.getElementById('threatsFound').textContent = activeThreats;
+
+                const coveredAssets = Number(statsObj.files_scanned || 0)
+                    + Number(statsObj.urls_scanned || 0)
+                    + Number(statsObj.ips_scanned || 0)
+                    + Number(statsObj.hashes_scanned || 0)
+                    + Number(statsObj.domains_scanned || 0);
+
                 const detectionRate = totalScans > 0 ? Math.min(100, (activeThreats / totalScans) * 100) : 0;
                 const detectionRateEl = document.getElementById('detectionRate');
                 if (detectionRateEl) detectionRateEl.textContent = `${detectionRate.toFixed(1)}%`;
+                const criticalEl = document.getElementById('overviewCritical');
+                const highEl = document.getElementById('overviewHigh');
+                const cleanEl = document.getElementById('overviewClean');
+                const assetsEl = document.getElementById('overviewAssets');
+                if (criticalEl) criticalEl.textContent = criticalThreats;
+                if (highEl) highEl.textContent = highThreats;
+                if (cleanEl) cleanEl.textContent = cleanScans;
+                if (assetsEl) assetsEl.textContent = coveredAssets;
 
                 if (previousThreatCount !== null && activeThreats > previousThreatCount) {
                     const increase = activeThreats - previousThreatCount;
@@ -3225,10 +5316,13 @@
                     );
                 }
                 previousThreatCount = activeThreats;
+                const statsTs = toEpochMs(statsObj.timestamp) || Date.now();
+                updateSourceSignal('stats', { ok: true, dataTimestamp: statsTs });
                 setSyncStatus('ok', 'LIVE');
                 updateSystemStatusPanel();
             } catch (error) {
                 console.log('Using static dashboard stats');
+                updateSourceSignal('stats', { ok: false, error: error?.message || 'stats_failed' });
                 setSyncStatus('warn', 'STATIC');
                 updateSystemStatusPanel();
             }
@@ -3237,12 +5331,21 @@
         async function fetchLogs() {
             try {
                 const data = await apiRequest(API_ENDPOINTS.dashboardLogs);
-                recentLogs = data || [];
+                const logsPayload = asArray(data);
+                recentLogs = logsPayload;
+                const newestLogTs = logsPayload
+                    .map(log => toEpochMs(log?.timestamp))
+                    .filter(ms => ms !== null)
+                    .sort((a, b) => b - a)[0] || Date.now();
+                updateSourceSignal('logs', { ok: true, dataTimestamp: newestLogTs });
                 renderLogs(recentLogs);
+                updateSystemStatusPanel();
             } catch (error) {
                 console.log('Using static logs data');
+                updateSourceSignal('logs', { ok: false, error: error?.message || 'logs_failed' });
                 renderLogs([]);
                 setSyncStatus('warn', 'STATIC');
+                updateSystemStatusPanel();
             }
         }
 
@@ -3253,9 +5356,25 @@
                     ? data
                     : (Array.isArray(data?.threats) ? data.threats : []);
 
+                const isLowSignalThreatItem = (item) => {
+                    const type = String(item?.type || '').toLowerCase();
+                    const summary = String(item?.short_description || item?.description || item?.details || '').toLowerCase();
+                    const confidence = Number(item?.confidence || 0);
+                    const corroborationCount = Number(item?.corroboration_count || 0);
+                    return (type === 'ip_threat' || type === 'ip')
+                        && (summary.includes('limited corroboration') || summary.includes('minor threat indicators'))
+                        && (confidence === 0 || confidence < 50)
+                        && corroborationCount <= 1;
+                };
+
                 const normalized = incoming.map((item, idx) => {
                     const type = String(item.type || item.attack_type || item.name || 'threat').toLowerCase();
-                    const severity = String(item.severity || item.threat_level || 'medium').toLowerCase();
+                    const rawSeverity = String(item.severity || item.threat_level || 'medium').toLowerCase();
+                    const severity = ['critical', 'high', 'medium', 'low'].includes(rawSeverity)
+                        ? rawSeverity
+                        : (rawSeverity.includes('crit') || rawSeverity.includes('malicious') ? 'critical'
+                            : (rawSeverity.includes('suspicious') || rawSeverity.includes('high') ? 'high'
+                                : (rawSeverity.includes('safe') || rawSeverity.includes('clean') ? 'low' : 'medium')));
                     const target = item.target || item.source_ip || item.source || item.name || 'unknown';
                     const targetDisplay = item.target_display || (item.source_ip && item.source_hostname ? `${item.source_ip} (${item.source_hostname})` : target);
                     const id = String(item.id || item.event_id || item.threat_id || item.scan_id || `THR_AUTO_${idx}`);
@@ -3293,31 +5412,46 @@
                     threats.length = 0;
                     threats.push(...normalized);
 
-                    // Periodic popup notifications for new high-priority attacks
-                    normalized
-                        .filter(t => ['high', 'critical'].includes(String(t.severity || '').toLowerCase()))
-                        .slice(0, 15)
-                        .forEach(t => {
-                            if (seenThreatIds.has(t.id)) return;
-                            seenThreatIds.add(t.id);
+                    if (!threatFeedPrimed) {
+                        normalized.forEach(t => seenThreatIds.add(t.id));
+                        threatFeedPrimed = true;
+                    }
 
-                            const firstMitigation = Array.isArray(t.mitigation_commands) && t.mitigation_commands.length > 0
-                                ? ` | Mitigate: ${t.mitigation_commands[0]}`
-                                : '';
-                            const prediction = t.prediction_summary
-                                ? ` | Predict: ${t.prediction_summary}${t.prediction_confidence ? ` (${Math.round(Number(t.prediction_confidence) * 100)}%)` : ''}`
-                                : '';
-                            addNotification(
-                                `Attack Detected: ${formatThreatTypeLabel(t.type)}`,
-                                `${t.target_display || t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
-                                t.severity === 'critical' ? 'error' : 'warning',
-                                `live_attack_${t.id}`,
-                                45000
-                            );
-                        });
+                    // Periodic popup notifications for new high-priority attacks
+                    if (threatFeedPrimed) {
+                        normalized
+                            .filter(t => ['high', 'critical'].includes(String(t.severity || '').toLowerCase()) && !isLowSignalThreatItem(t))
+                            .slice(0, 15)
+                            .forEach(t => {
+                                if (seenThreatIds.has(t.id)) return;
+                                seenThreatIds.add(t.id);
+
+                                const firstMitigation = Array.isArray(t.mitigation_commands) && t.mitigation_commands.length > 0
+                                    ? ` | Mitigate: ${t.mitigation_commands[0]}`
+                                    : '';
+                                const prediction = t.prediction_summary
+                                    ? ` | Predict: ${t.prediction_summary}${t.prediction_confidence ? ` (${Math.round(Number(t.prediction_confidence) * 100)}%)` : ''}`
+                                    : '';
+                                addNotification(
+                                    `Attack Detected: ${formatThreatTypeLabel(t.type)}`,
+                                    `${t.target_display || t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
+                                    t.severity === 'critical' ? 'error' : 'warning',
+                                    `live_attack_${t.id}`,
+                                    45000
+                                );
+                            });
+                    }
+                } else if (!threatFeedPrimed) {
+                    threatFeedPrimed = true;
                 }
+                const newestThreatTs = normalized
+                    .map(item => toEpochMs(item?.timestamp))
+                    .filter(ms => ms !== null)
+                    .sort((a, b) => b - a)[0] || Date.now();
+                updateSourceSignal('threats', { ok: true, dataTimestamp: newestThreatTs });
             } catch (error) {
                 console.log('Using static threats data');
+                updateSourceSignal('threats', { ok: false, error: error?.message || 'threats_failed' });
             }
             renderThreats();
             renderThreats('allThreatsPageTableBody');
@@ -3402,6 +5536,7 @@
                         recentLogs.unshift(data);
                         if (recentLogs.length > 100) recentLogs.length = 100;
                         renderLogs(recentLogs);
+                        updateSystemStatusPanel();
                     } catch (e) {
                         // ignore parse errors
                     }
@@ -3724,10 +5859,21 @@
             if (!card) return;
             await runWithRefreshIndicator('refreshSecurityPostureBtn', async () => {
                 try {
-                    const data = await apiRequest('/api/v1/dashboard/security-posture');
-                    renderSecurityPosture(data);
+                    const data = await apiRequest(API_ENDPOINTS.dashboardSecurityPosture);
+                    const postureObj = asObject(data);
+                    if (!postureObj) {
+                        throw new Error('Invalid security posture payload');
+                    }
+                    updateSourceSignal('posture', {
+                        ok: true,
+                        dataTimestamp: toEpochMs(postureObj.timestamp) || Date.now(),
+                    });
+                    renderSecurityPosture(postureObj);
                 } catch (error) {
+                    latestSecurityPosture = null;
+                    updateSourceSignal('posture', { ok: false, error: error?.message || 'posture_failed' });
                     card.innerHTML = `<div style="padding:1rem; color:var(--muted-foreground);">Security posture data unavailable — run the protection client to generate a startup report.</div>`;
+                    updateSystemStatusPanel();
                 }
             });
         }
@@ -3735,6 +5881,7 @@
         function renderSecurityPosture(data) {
             const card = document.getElementById('securityPostureCard');
             if (!card) return;
+            latestSecurityPosture = data || null;
             const summary = data.summary || {};
             const categories = data.categories || {};
             const available = data.available;
@@ -3792,6 +5939,7 @@
                     'warning', 'posture_critical', 120000
                 );
             }
+            updateSystemStatusPanel();
         }
 
         async function fetchQuarantineInventory() {
@@ -3799,9 +5947,19 @@
             if (!tbody) return;
             await runWithRefreshIndicator('refreshQuarantineBtn', async () => {
                 try {
-                    const data = await apiRequest('/api/v1/dashboard/quarantine-inventory');
-                    renderQuarantineInventory(data);
+                    const data = await apiRequest(API_ENDPOINTS.dashboardQuarantineInventory);
+                    const invObj = asObject(data);
+                    if (!invObj) {
+                        throw new Error('Invalid quarantine payload');
+                    }
+                    const newestQuarantineTs = asArray(invObj.items)
+                        .map(item => toEpochMs(item?.timestamp))
+                        .filter(ms => ms !== null)
+                        .sort((a, b) => b - a)[0] || Date.now();
+                    updateSourceSignal('quarantine', { ok: true, dataTimestamp: newestQuarantineTs });
+                    renderQuarantineInventory(invObj);
                 } catch (error) {
+                    updateSourceSignal('quarantine', { ok: false, error: error?.message || 'quarantine_failed' });
                     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted-foreground);">Quarantine data unavailable.</td></tr>';
                 }
             });
@@ -3834,6 +5992,133 @@
             if (statsDiv) {
                 statsDiv.innerHTML = `<span>📦 <strong>${data.total || 0}</strong> quarantined file(s)</span>`;
             }
+            updateSystemStatusPanel();
+        }
+
+        async function fetchMonitoringStats() {
+            try {
+                const data = await apiRequest(API_ENDPOINTS.dashboardMonitoringStats);
+                const payload = asObject(data);
+                if (!payload) {
+                    throw new Error('Invalid monitoring stats payload');
+                }
+                latestMonitoringStats = payload;
+                updateSourceSignal('monitor', {
+                    ok: true,
+                    dataTimestamp: toEpochMs(payload.generated_at) || Date.now(),
+                });
+                renderSecurityTaskMonitor();
+            } catch (error) {
+                latestMonitoringStats = null;
+                updateSourceSignal('monitor', { ok: false, error: error?.message || 'monitoring_stats_failed' });
+                renderSecurityTaskMonitor();
+            }
+        }
+
+        async function fetchSystemHealth() {
+            const card = document.getElementById('systemHealthCard');
+            if (!card) return;
+            await runWithRefreshIndicator('refreshSystemHealthBtn', async () => {
+                try {
+                    const data = await apiRequest(API_ENDPOINTS.dashboardSystemHealth);
+                    const healthObj = asObject(data);
+                    if (!healthObj) {
+                        throw new Error('Invalid system health payload');
+                    }
+                    latestSystemHealth = healthObj;
+                    updateSourceSignal('health', {
+                        ok: true,
+                        dataTimestamp: toEpochMs(healthObj.timestamp) || Date.now(),
+                    });
+                    renderSystemHealth(healthObj);
+                } catch (error) {
+                    latestSystemHealth = null;
+                    updateSourceSignal('health', { ok: false, error: error?.message || 'system_health_failed' });
+                    card.innerHTML = '<div style="text-align:center; color:var(--muted-foreground); padding:1rem;">System health unavailable.</div>';
+                    updateSystemStatusPanel();
+                }
+            });
+        }
+
+        function renderSystemHealth(data) {
+            const card = document.getElementById('systemHealthCard');
+            if (!card) return;
+
+            const components = asObject(data.components) || {};
+            const externalApis = asObject(components.external_apis) || {};
+            const database = asObject(components.database) || {};
+            const activityDb = asObject(components.activity_database) || {};
+            const aiEngine = asObject(components.ai_engine) || {};
+            const bg = asObject(components.background_monitor) || {};
+
+            const healthScore = toFiniteNumber(data.health_score, 0);
+            const globalStatus = String(data.status || 'unknown').toLowerCase();
+
+            const pulseClassFor = (value) => {
+                const val = String(value || '').toLowerCase();
+                if (['healthy', 'configured', 'active', 'ready', 'loaded'].includes(val)) return '';
+                if (['degraded', 'standby', 'quota_cooldown', 'no_keys', 'unavailable'].includes(val)) return 'warning';
+                return 'offline';
+            };
+
+            const items = [
+                {
+                    title: 'Database + Ingestion',
+                    status: database.status || 'unknown',
+                    detail: `Scans stored: ${toFiniteNumber(database.total_scans_stored, 0)}`,
+                    pulse: pulseClassFor(database.status),
+                },
+                {
+                    title: 'API Connectivity',
+                    status: externalApis.status || 'unknown',
+                    detail: `${toFiniteNumber(externalApis.configured_count, 0)}/${toFiniteNumber(externalApis.total_count, 0)} configured`,
+                    pulse: pulseClassFor(externalApis.status),
+                },
+                {
+                    title: 'AI/ML Chain',
+                    status: aiEngine.gemini || 'unknown',
+                    detail: `ML models: ${aiEngine.ml_models || 'unknown'}`,
+                    pulse: pulseClassFor(aiEngine.gemini === 'ready' ? 'healthy' : aiEngine.gemini),
+                },
+                {
+                    title: 'Activity Database',
+                    status: activityDb.status || 'unknown',
+                    detail: 'Threat telemetry store',
+                    pulse: pulseClassFor(activityDb.status),
+                },
+                {
+                    title: 'Background Monitor',
+                    status: bg.status || 'unknown',
+                    detail: `Activity DB: ${bg.activity_db || 'unknown'}`,
+                    pulse: pulseClassFor(bg.status),
+                },
+                {
+                    title: 'Overall Health',
+                    status: globalStatus,
+                    detail: `Score: ${healthScore}% · ${data.timestamp ? new Date(data.timestamp).toLocaleString() : 'no timestamp'}`,
+                    pulse: pulseClassFor(globalStatus),
+                },
+            ];
+
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.95rem;">
+                    <div style="font-size:0.78rem; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.08em; font-family:'JetBrains Mono', monospace;">System health from backend telemetry</div>
+                    <span class="freshness-pill ${healthScore >= 75 ? 'normal' : healthScore >= 40 ? 'delayed' : 'offline'}">${globalStatus.toUpperCase()}</span>
+                </div>
+                <div class="service-pulse-grid">
+                    ${items.map((entry) => `
+                        <div class="health-pulse-card">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.55rem;">
+                                <div style="font-size:0.74rem; color:rgba(186,233,226,0.92); text-transform:uppercase; letter-spacing:0.06em; font-family:'JetBrains Mono', monospace;">${entry.title}</div>
+                                <span class="service-pulse-indicator ${entry.pulse}" aria-hidden="true"></span>
+                            </div>
+                            <div style="font-size:0.93rem; font-weight:700; color:#d9fef9; text-transform:uppercase;">${String(entry.status || 'unknown')}</div>
+                            <div style="font-size:0.73rem; color:var(--muted-foreground);">${entry.detail}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            updateSystemStatusPanel();
         }
 
         // =============================================
@@ -4209,6 +6494,8 @@
             fetchScanHistory();
             fetchLogs();
             fetchApiStatus();
+            fetchSystemHealth();
+            fetchMonitoringStats();
             fetchSecurityPosture();
             fetchQuarantineInventory();
             initLogStream();
@@ -4245,6 +6532,8 @@
                     fetchThreats();
                     fetchLogs();
                     fetchApiStatus();
+                    fetchSystemHealth();
+                    fetchMonitoringStats();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
                 }

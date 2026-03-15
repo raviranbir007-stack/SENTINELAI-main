@@ -93,6 +93,41 @@ REPORTS_STORE: list[dict] = _load_persistent_reports()
 REPORTS_PDF_CACHE: dict[str, bytes] = {}
 
 
+def _is_low_signal_suspicious_ip_scan(scan: ScanHistory) -> bool:
+    """Return True for low-confidence single-source suspicious IP scans."""
+    level = str(scan.threat_level or "unknown").lower()
+    target_type = str(scan.target_type or "unknown").lower()
+    if level != "suspicious" or target_type != "ip":
+        return False
+
+    try:
+        confidence = float(scan.confidence or 0.0)
+    except Exception:
+        confidence = 0.0
+
+    analysis = scan.analysis_data or {}
+    indicators = analysis.get("threat_indicators") or []
+    warnings = analysis.get("warnings") or []
+    corroboration_count = int(scan.corroboration_count or 0)
+    summary_blob = " ".join([
+        str(analysis.get("summary", "") or ""),
+        " ".join(str(w) for w in warnings),
+        " ".join(str(r) for r in (analysis.get("recommendations") or [])),
+    ]).lower()
+
+    return (
+        confidence < 0.5
+        and len(indicators) <= 1
+        and len(warnings) <= 1
+        and corroboration_count <= 1
+        and (
+            "single source" in summary_blob
+            or "limited corroboration" in summary_blob
+            or "minor threat indicators" in summary_blob
+        )
+    )
+
+
 async def _save_scan_to_db(scan_data: dict, db: AsyncSession):
     """Save scan result to database for historical reporting"""
     import logging
@@ -611,6 +646,8 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
         level = (scan.threat_level or "unknown").lower()
         if level in ["safe", "clean", "unknown"]:
             continue
+        if _is_low_signal_suspicious_ip_scan(scan):
+            continue
 
         severity = "critical" if level in ["malicious", "critical"] else "high" if level in ["suspicious", "high"] else "medium"
         analysis = scan.analysis_data or {}
@@ -629,6 +666,9 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "description": summary,
             "short_description": summary[:140],
             "severity": severity,
+            "confidence": scan.confidence,
+            "corroboration_count": scan.corroboration_count or 0,
+            "target_type": scan.target_type,
             "source": "Multi-API Scan",
             "location": "Endpoint Scan Pipeline",
             "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
