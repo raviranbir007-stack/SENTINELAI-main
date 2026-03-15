@@ -178,6 +178,11 @@ class DefenseCoordinator:
     def _send_alert(self, attack_id: str, attack: Dict):
         """Send alert through all available notification methods"""
         alert_num = attack['alert_count'] + 1
+        short_desc = attack.get('short_description') or attack.get('description') or 'Suspicious activity detected'
+        short_desc = short_desc[:55] if len(short_desc) > 55 else short_desc
+        mitigation_commands = attack.get('mitigation_commands') if isinstance(attack.get('mitigation_commands'), list) else []
+        mitigation_cmd = mitigation_commands[0] if mitigation_commands else 'Manual containment required'
+        mitigation_cmd = mitigation_cmd[:55] if len(mitigation_cmd) > 55 else mitigation_cmd
         
         # Format description to fit in box
         desc = attack['description'][:55] if len(attack['description']) > 55 else attack['description']
@@ -190,6 +195,8 @@ class DefenseCoordinator:
 ║ Severity:    {attack['severity']:<45} ║
 ║ Source IP:   {attack.get('source_ip', 'N/A'):<45} ║
 ║ Description: {desc:<45} ║
+║ Short Desc:  {short_desc:<45} ║
+║ Mitigate:    {mitigation_cmd:<45} ║
 ║                                                               ║
 ║ ⏰ Alerts Remaining: {self.MAX_ALERTS - alert_num} before AUTO-QUARANTINE             ║
 ║                                                               ║
@@ -211,7 +218,7 @@ class DefenseCoordinator:
                 logger.error(f"Failed to send alert via {notify_method.__name__}: {e}")
         
         # Log the alert
-        logger.warning(f"Alert #{alert_num}/5 sent for attack: {attack_id}")
+        logger.warning(f"Alert #{alert_num}/{self.MAX_ALERTS} sent for attack: {attack_id}")
         
         # Callback to server
         if self.callback:
@@ -235,8 +242,15 @@ class DefenseCoordinator:
     def _notify_desktop(self, message: str, attack: Dict, alert_num: int):
         """Send desktop notification"""
         try:
-            title = f"🚨 SECURITY ALERT #{alert_num}/5"
-            body = f"{attack['type']} from {attack.get('source_ip', 'UNKNOWN')}\n{attack['description']}"
+            title = f"🚨 SECURITY ALERT #{alert_num}/{self.MAX_ALERTS}"
+            mitigation_commands = attack.get('mitigation_commands') if isinstance(attack.get('mitigation_commands'), list) else []
+            mitigation_cmd = mitigation_commands[0] if mitigation_commands else None
+            body = (
+                f"{attack['type']} from {attack.get('source_ip', 'UNKNOWN')}\n"
+                f"{attack.get('short_description') or attack.get('description', '')}"
+            )
+            if mitigation_cmd:
+                body += f"\nMitigate: {mitigation_cmd}"
             
             system = platform.system()
             

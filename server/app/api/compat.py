@@ -17,7 +17,7 @@ from ..config import settings
 from ..core.report_generator import report_generator
 from ..core.threat_analyzer import threat_analyzer
 from ..database import get_db
-from ..models import ScanHistory, SystemLog
+from ..models import AttackEvent, ScanHistory, SystemLog
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -545,28 +545,99 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
 
 @router.get("/threats")
 async def get_threats(db: AsyncSession = Depends(get_db)):
-    """Get all detected threats (compatibility endpoint)."""
-    result = await db.execute(select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(100))
-    scans = result.scalars().all()
+    """Get all detected threats (compatibility endpoint).
+
+    Combines scan-based findings and IDS attack events so the dashboard can
+    show intrusion attempts (nmap/brute-force/metasploit-like patterns) with
+    concise description and mitigation hints.
+    """
+    scan_result = await db.execute(select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(100))
+    scans = scan_result.scalars().all()
+
+    attack_result = await db.execute(select(AttackEvent).order_by(desc(AttackEvent.detected_at)).limit(100))
+    attacks = attack_result.scalars().all()
+
+    def _icon_for(threat_type: str) -> str:
+        lowered = str(threat_type or "").lower()
+        if "brute" in lowered:
+            return "🔐"
+        if "metasploit" in lowered or "exploit" in lowered:
+            return "💥"
+        if "scan" in lowered or "nmap" in lowered or "recon" in lowered:
+            return "🛰️"
+        if "flood" in lowered or "ddos" in lowered:
+            return "🌊"
+        return "🚨"
 
     threats = []
+
+    # Scan-history threats
     for scan in scans:
         level = (scan.threat_level or "unknown").lower()
         if level in ["safe", "clean", "unknown"]:
             continue
+
         severity = "critical" if level in ["malicious", "critical"] else "high" if level in ["suspicious", "high"] else "medium"
         analysis = scan.analysis_data or {}
         summary = analysis.get("summary") or "Threat detected"
+        target = scan.target or scan.target_name or "unknown"
+        type_label = f"{(scan.target_type or 'scan').lower()}_threat"
+
         threats.append({
             "id": scan.scan_id,
-            "name": f"{scan.target_type.upper()} Threat",
+            "scan_id": scan.scan_id,
+            "name": f"{(scan.target_type or 'unknown').upper()} Threat",
+            "type": type_label,
+            "icon": _icon_for(type_label),
+            "target": target,
             "details": summary,
+            "description": summary,
+            "short_description": summary[:140],
             "severity": severity,
+            "source": "Multi-API Scan",
+            "location": "Endpoint Scan Pipeline",
             "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
             "status": "active",
         })
 
-    return threats
+    # IDS/defense attack events
+    for attack in attacks:
+        indicators = attack.indicators if isinstance(attack.indicators, dict) else {}
+        short_desc = indicators.get("short_description") or attack.description or "Intrusion attempt detected"
+        mitigation_commands = indicators.get("mitigation_commands")
+        if not isinstance(mitigation_commands, list):
+            mitigation_commands = []
+
+        severity = (attack.severity.value if attack.severity else "medium").lower()
+        target = attack.source_ip or attack.source_domain or attack.destination_ip or "unknown"
+        type_label = str(attack.attack_type or "intrusion").lower()
+
+        threats.append({
+            "id": attack.event_id,
+            "event_id": attack.event_id,
+            "name": f"Attack Event: {attack.attack_type}",
+            "type": type_label,
+            "icon": _icon_for(type_label),
+            "target": target,
+            "details": attack.description or short_desc,
+            "description": attack.description or short_desc,
+            "short_description": short_desc,
+            "severity": severity,
+            "source": indicators.get("tool_signature") or "Intrusion Detector",
+            "location": "Network Intrusion Monitoring",
+            "timestamp": attack.detected_at.isoformat() if attack.detected_at else None,
+            "status": attack.status or "active",
+            "mitigation_commands": mitigation_commands,
+            "recommended_action": indicators.get("recommended_action"),
+            "attack_family": indicators.get("attack_family"),
+            "tool_signature": indicators.get("tool_signature"),
+            "prediction_summary": indicators.get("prediction_summary"),
+            "predicted_next_step": indicators.get("predicted_next_step"),
+            "prediction_confidence": indicators.get("prediction_confidence"),
+        })
+
+    threats.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
+    return threats[:200]
 
 
 @router.get("/logs")

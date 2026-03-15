@@ -4,6 +4,7 @@ Automatically registers with server, monitors system, and defends against attack
 """
 
 import asyncio
+from collections import defaultdict
 import hashlib
 import json
 import logging
@@ -11,6 +12,7 @@ import platform
 import socket
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -79,6 +81,19 @@ class SentinelClient:
         self.blocked_ips = set()
         self.blocked_domains = set()
 
+        # Lightweight IDS heuristics for broad attack monitoring
+        self.connection_attempts = defaultdict(list)  # IP -> [timestamps]
+        self.port_attempts = defaultdict(list)  # IP -> [(timestamp, local service port)]
+        self.alert_cooldown = {}  # IP -> timestamp
+        self.time_window = int(self.config.get("defense", {}).get("time_window", 60))
+        self.max_scan_ports = int(self.config.get("defense", {}).get("max_scan_ports", 12))
+        self.max_bruteforce_attempts = int(self.config.get("defense", {}).get("max_bruteforce_attempts", 20))
+        self.max_web_probe_attempts = int(self.config.get("defense", {}).get("max_web_probe_attempts", 35))
+        self.alert_cooldown_seconds = int(self.config.get("defense", {}).get("alert_cooldown_seconds", 180))
+        self.auth_ports = {21, 22, 23, 25, 110, 143, 445, 993, 995, 1433, 3306, 3389, 5432, 6379}
+        self.web_ports = {80, 443, 8080, 8443}
+        self.metasploit_ports = {4444, 5555, 6666}
+
         # Monitoring configuration
         self.scan_interval = int(self.config.get("client", {}).get("scan_interval", 300))
         self.heartbeat_interval = int(self.config.get("client", {}).get("heartbeat_interval", 60))
@@ -108,6 +123,188 @@ class SentinelClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    def _is_private_or_local_ip(self, ip: str) -> bool:
+        """Filter internal addresses from attacker heuristics."""
+        try:
+            import ipaddress
+
+            ip_obj = ipaddress.ip_address(ip)
+            return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+        except Exception:
+            return ip.startswith(("127.", "192.168.", "10.", "172."))
+
+    def _cleanup_tracking_state(self, now: datetime):
+        """Cleanup old timestamps to keep memory bounded."""
+        cutoff = now.timestamp() - self.time_window
+
+        for ip in list(self.connection_attempts.keys()):
+            recent = [ts for ts in self.connection_attempts[ip] if ts >= cutoff]
+            if recent:
+                self.connection_attempts[ip] = recent
+            else:
+                del self.connection_attempts[ip]
+
+        for ip in list(self.port_attempts.keys()):
+            if ip in self.port_attempts:
+                self.port_attempts[ip] = [
+                    (ts, p) for ts, p in self.port_attempts[ip] if ts >= cutoff
+                ]
+            if ip not in self.connection_attempts or not self.port_attempts[ip]:
+                del self.port_attempts[ip]
+
+        for ip in list(self.alert_cooldown.keys()):
+            if now.timestamp() - self.alert_cooldown[ip] > max(self.alert_cooldown_seconds * 3, 600):
+                del self.alert_cooldown[ip]
+
+    def _predict_attack(self, attack_type: str) -> Dict:
+        """Predict likely next step for proactive defense."""
+        mapping = {
+            "NMAP_RECON": (
+                "Likely exploit attempt after reconnaissance",
+                "EXPLOIT_OR_BRUTE_FORCE",
+                0.82,
+            ),
+            "BRUTE_FORCE_ATTEMPT": (
+                "Likely credential compromise / lateral movement",
+                "CREDENTIAL_COMPROMISE",
+                0.88,
+            ),
+            "METASPLOIT_PROBE": (
+                "Likely reverse shell or meterpreter session attempt",
+                "REMOTE_CODE_EXECUTION",
+                0.91,
+            ),
+            "WEB_INJECTION_RECON": (
+                "Likely SQL injection / command injection payload delivery",
+                "WEB_APP_COMPROMISE",
+                0.79,
+            ),
+        }
+        summary, step, confidence = mapping.get(
+            attack_type,
+            ("Likely escalation against exposed services", "ESCALATION_ATTEMPT", 0.66),
+        )
+        return {
+            "prediction_summary": summary,
+            "predicted_next_step": step,
+            "prediction_confidence": round(float(confidence), 2),
+        }
+
+    async def _handle_live_connection_pattern(self, remote_ip: str, local_port: int):
+        """Detect broad cyber-attack patterns from live connection behavior."""
+        now = datetime.utcnow()
+        now_ts = now.timestamp()
+
+        if not remote_ip or self._is_private_or_local_ip(remote_ip):
+            return
+
+        self.connection_attempts[remote_ip].append(now_ts)
+        if local_port > 0:
+            self.port_attempts[remote_ip].append((now_ts, local_port))
+
+        # Anti-spam cooldown
+        last_alert = self.alert_cooldown.get(remote_ip, 0)
+        if now_ts - last_alert < self.alert_cooldown_seconds:
+            return
+
+        recent_hits = [ts for ts in self.connection_attempts[remote_ip] if now_ts - ts <= self.time_window]
+        recent_ports = [
+            port
+            for ts, port in self.port_attempts[remote_ip]
+            if now_ts - ts <= self.time_window
+        ]
+        unique_ports = set(recent_ports)
+
+        attack_type = None
+        severity = "medium"
+        description = ""
+        short_description = ""
+        mitigation_commands: List[str] = []
+        tool_signature = None
+        attack_family = None
+        recommended_action = None
+
+        auth_hits = sum(1 for p in recent_ports if p in self.auth_ports)
+        web_hits = sum(1 for p in recent_ports if p in self.web_ports)
+        metasploit_hits = sorted(list(unique_ports.intersection(self.metasploit_ports)))
+
+        if metasploit_hits:
+            attack_type = "METASPLOIT_PROBE"
+            severity = "critical"
+            attack_family = "METASPLOIT_PROBE"
+            tool_signature = "METASPLOIT_PATTERN"
+            description = f"Potential Metasploit probe detected on listener/payload ports: {metasploit_hits}"
+            short_description = f"Metasploit-like activity on port {metasploit_hits[0]}"
+            mitigation_commands = [
+                f"sudo iptables -I INPUT -s {remote_ip} -j DROP",
+                "sudo ss -tulpen | grep -E ':(4444|5555|6666)\\b'",
+            ]
+            recommended_action = "Block source IP and inspect host for reverse-shell callbacks"
+        elif len(unique_ports) >= self.max_scan_ports:
+            attack_type = "NMAP_RECON"
+            severity = "high"
+            attack_family = "RECONNAISSANCE"
+            tool_signature = "NMAP_RECON"
+            description = f"Port scan detected: {len(unique_ports)} service ports probed in {self.time_window}s"
+            short_description = "Likely Nmap-style reconnaissance"
+            mitigation_commands = [
+                f"sudo iptables -I INPUT -s {remote_ip} -j DROP",
+                "sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban",
+            ]
+            recommended_action = "Block attacker IP and enable recon/burst rate-limits"
+        elif auth_hits >= self.max_bruteforce_attempts:
+            attack_type = "BRUTE_FORCE_ATTEMPT"
+            severity = "high"
+            attack_family = "BRUTE_FORCE"
+            tool_signature = "HYDRA_MEDUSA_STYLE"
+            description = f"Possible brute-force detected: {auth_hits} auth-port attempts in {self.time_window}s"
+            short_description = "Likely brute-force login attack"
+            mitigation_commands = [
+                f"sudo iptables -I INPUT -s {remote_ip} -j DROP",
+                "sudo systemctl restart ssh || true",
+            ]
+            recommended_action = "Block source IP and enforce MFA/lockout controls"
+        elif web_hits >= self.max_web_probe_attempts:
+            attack_type = "WEB_INJECTION_RECON"
+            severity = "high"
+            attack_family = "WEB_INJECTION_RECON"
+            tool_signature = "WEB_RECON_PATTERN"
+            description = f"High-rate web probing detected ({web_hits} hits): possible SQL injection/XSS recon"
+            short_description = "Possible SQL injection reconnaissance"
+            mitigation_commands = [
+                f"sudo iptables -I INPUT -s {remote_ip} -j DROP",
+                "sudo iptables -I INPUT -p tcp -m multiport --dports 80,443,8080,8443 -m conntrack --ctstate NEW -m recent --set",
+            ]
+            recommended_action = "Enable WAF + strict input validation for web endpoints"
+
+        if not attack_type:
+            return
+
+        prediction = self._predict_attack(attack_type)
+        indicators = {
+            "short_description": short_description,
+            "attack_family": attack_family,
+            "tool_signature": tool_signature,
+            "mitigation_commands": mitigation_commands,
+            "recommended_action": recommended_action,
+            "attempt_count": len(recent_hits),
+            "ports": sorted(list(unique_ports))[:20],
+            **prediction,
+            "timestamp": now.isoformat(),
+        }
+
+        await self.report_attack(
+            attack_type=attack_type,
+            source_ip=remote_ip,
+            severity=severity,
+            description=description,
+            indicators=indicators,
+        )
+
+        self.alert_cooldown[remote_ip] = now_ts
+        if self.auto_block_threats and severity in {"high", "critical"}:
+            await self.block_ip(remote_ip)
 
     async def register(self) -> bool:
         """Register client with the server"""
@@ -330,7 +527,12 @@ class SentinelClient:
             return {"error": str(e)}
 
     async def report_attack(
-        self, attack_type: str, source_ip: Optional[str] = None, severity: str = "medium", description: str = ""
+        self,
+        attack_type: str,
+        source_ip: Optional[str] = None,
+        severity: str = "medium",
+        description: str = "",
+        indicators: Optional[Dict] = None,
     ) -> bool:
         """Report an attack to the server"""
         try:
@@ -340,7 +542,7 @@ class SentinelClient:
                 "source_ip": source_ip,
                 "severity": severity,
                 "description": description,
-                "indicators": {"timestamp": datetime.utcnow().isoformat()},
+                "indicators": indicators or {"timestamp": datetime.utcnow().isoformat()},
             }
 
             response = requests.post(
@@ -490,10 +692,14 @@ class SentinelClient:
                 for conn in connections:
                     if conn.status == "ESTABLISHED" and conn.raddr:
                         remote_ip = conn.raddr.ip
+                        local_port = conn.laddr.port if conn.laddr else 0
 
                         # Skip local IPs
-                        if remote_ip.startswith(("127.", "192.168.", "10.", "172.")):
+                        if self._is_private_or_local_ip(remote_ip):
                             continue
+
+                        # Behavioral attack detection and prediction
+                        await self._handle_live_connection_pattern(remote_ip, local_port)
 
                         # Scan suspicious connections
                         if remote_ip not in self.blocked_ips:
@@ -505,6 +711,8 @@ class SentinelClient:
                                 logger.debug(f"Scanning connection to: {remote_ip}")
                                 await self.scan_ip(remote_ip)
                                 self._scanned_ips.add(remote_ip)
+
+                self._cleanup_tracking_state(datetime.utcnow())
 
             except Exception as e:
                 logger.error(f"Network monitoring error: {e}")

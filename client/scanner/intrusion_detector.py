@@ -53,6 +53,8 @@ class IntrusionDetector:
         self.FLOOD_HARD_THRESHOLD = self._env_int("SENTINEL_IDS_HARD_FLOOD", 600, minimum=100)
         self.MAX_FAILED_AUTH = self._env_int("SENTINEL_IDS_MAX_FAILED_AUTH", 5, minimum=1)
         self.SUSPICIOUS_PORT_THRESHOLD = self._env_int("SENTINEL_IDS_SUSPICIOUS_PORTS", 10, minimum=3)
+        self.BRUTE_FORCE_CONN_THRESHOLD = self._env_int("SENTINEL_IDS_BRUTE_FORCE_CONN", 20, minimum=5)
+        self.WEB_ATTACK_CONN_THRESHOLD = self._env_int("SENTINEL_IDS_WEB_ATTACK_CONN", 35, minimum=10)
         self.TIME_WINDOW = self._env_int("SENTINEL_IDS_TIME_WINDOW", 60, minimum=10)
         self.ALERT_COOLDOWN = self._env_int("SENTINEL_IDS_ALERT_COOLDOWN", 300, minimum=30)
         
@@ -62,6 +64,8 @@ class IntrusionDetector:
         
         # Attack patterns
         self.COMMON_ATTACK_PORTS = {
+            80: "HTTP Web Attack",
+            443: "HTTPS Web Attack",
             22: "SSH Brute Force",
             23: "Telnet Attack",
             445: "SMB/RDP Attack",
@@ -74,6 +78,12 @@ class IntrusionDetector:
             8080: "Web Server Attack",
             8443: "HTTPS Attack"
         }
+
+        # Authentication-focused service ports commonly abused by brute-force tools
+        self.AUTH_TARGET_PORTS = {21, 22, 23, 25, 110, 143, 445, 993, 995, 1433, 3306, 3389, 5432, 6379}
+
+        # Common payload/listener ports often seen in Metasploit workflows
+        self.METASPLOIT_PORT_SIGNATURES = {4444, 5555, 6666}
         
         # Known malicious patterns
         self.MALICIOUS_PATTERNS = [
@@ -292,6 +302,93 @@ class IntrusionDetector:
         time_since_last = time.time() - self.attack_cooldown[ip]
         return time_since_last < self.ALERT_COOLDOWN
 
+    def _build_mitigation_commands(self, ip: str, attack_family: str, target_port: Optional[int] = None) -> List[str]:
+        """Build actionable mitigation commands shown in alerts/dashboard."""
+        commands = [
+            f"sudo iptables -I INPUT -s {ip} -j DROP",
+            f"sudo iptables -I OUTPUT -d {ip} -j DROP",
+        ]
+
+        if target_port:
+            commands.append(
+                f"sudo iptables -I INPUT -p tcp --dport {target_port} -m conntrack --ctstate NEW -m recent --set"
+            )
+            commands.append(
+                f"sudo iptables -I INPUT -p tcp --dport {target_port} -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 20 -j DROP"
+            )
+
+        if attack_family == 'NMAP_RECON':
+            commands.append("sudo apt install -y fail2ban && sudo systemctl enable --now fail2ban")
+        elif attack_family == 'BRUTE_FORCE':
+            commands.append("sudo systemctl restart ssh || true")
+        elif attack_family == 'WEB_INJECTION_RECON':
+            commands.append("sudo iptables -I INPUT -p tcp -m multiport --dports 80,443,8080,8443 -m conntrack --ctstate NEW -m recent --set")
+        elif attack_family == 'METASPLOIT_PROBE':
+            commands.append("sudo ss -tulpen | grep -E ':(4444|5555|6666)\\b'")
+
+        return commands
+
+    def _predict_attack_progression(self, attack: Dict) -> Dict:
+        """Predict probable next attacker action for proactive defense."""
+        attack_type = str(attack.get('type', 'UNKNOWN')).upper()
+
+        mapping = {
+            'PORT_SCAN': (
+                'Likely follow-up exploit or brute-force attempt after reconnaissance',
+                'EXPLOIT_OR_BRUTE_FORCE',
+                0.81,
+            ),
+            'BRUTE_FORCE_ATTEMPT': (
+                'Likely credential stuffing or lateral movement if authentication succeeds',
+                'CREDENTIAL_COMPROMISE',
+                0.87,
+            ),
+            'METASPLOIT_PROBE': (
+                'Likely reverse shell/session establishment attempt',
+                'REMOTE_CODE_EXECUTION',
+                0.90,
+            ),
+            'TARGETED_ATTACK': (
+                'Likely service exploitation against exposed ports',
+                'SERVICE_COMPROMISE',
+                0.84,
+            ),
+            'DDOS_ATTACK': (
+                'Likely sustained service disruption and volumetric flood',
+                'AVAILABILITY_OUTAGE',
+                0.79,
+            ),
+            'WEB_INJECTION_RECON': (
+                'Likely SQL injection or command injection payload delivery',
+                'WEB_APP_COMPROMISE',
+                0.78,
+            ),
+        }
+
+        summary, next_step, confidence = mapping.get(
+            attack_type,
+            (
+                'Likely escalation attempt against exposed services',
+                'ESCALATION_ATTEMPT',
+                0.65,
+            ),
+        )
+
+        return {
+            'prediction_summary': summary,
+            'predicted_next_step': next_step,
+            'prediction_confidence': round(float(confidence), 2),
+        }
+
+    def _with_prediction(self, attack: Dict) -> Dict:
+        """Attach predictive fields to attack payload."""
+        try:
+            enriched = dict(attack)
+            enriched.update(self._predict_attack_progression(attack))
+            return enriched
+        except Exception:
+            return attack
+
     def start(self):
         """Start the intrusion detection system"""
         if not self.running:
@@ -439,15 +536,20 @@ class IntrusionDetector:
             if len(recent) > self.FLOOD_HARD_THRESHOLD:
                 # Extreme burst — block immediately without waiting for 2nd signal
                 desc = f'Severe connection flood: {len(recent)} inbound connections in {self.TIME_WINDOW}s'
-                attacks.append({
+                family = 'CONNECTION_FLOOD'
+                attacks.append(self._with_prediction({
                     'type': 'CONNECTION_FLOOD',
                     'severity': 'CRITICAL',
                     'source_ip': ip,
                     'description': desc,
+                    'short_description': f'High-rate inbound flood from {ip}',
                     'count': len(recent),
+                    'attack_family': family,
+                    'mitigation_commands': self._build_mitigation_commands(ip, family),
+                    'recommended_action': 'Block source IP and enable flood/rate limiting rules',
                     'timestamp': current_time,
                     'action_required': True
-                })
+                }))
                 self.blocked_ips.add(ip)
                 self._persist_ip_block(ip, 'CONNECTION_FLOOD', 'CRITICAL', desc)
                 self.attack_cooldown[ip] = time.time()
@@ -456,16 +558,21 @@ class IntrusionDetector:
                 self.attack_signals[ip].add('CONNECTION_FLOOD')
                 if len(self.attack_signals[ip]) >= self.MULTI_SIGNAL_THRESHOLD:
                     desc = f'Connection flood detected: {len(recent)} inbound connections in {self.TIME_WINDOW}s (multi-signal confirmed)'
-                    attacks.append({
+                    family = 'CONNECTION_FLOOD'
+                    attacks.append(self._with_prediction({
                         'type': 'CONNECTION_FLOOD',
                         'severity': 'HIGH',
                         'source_ip': ip,
                         'description': desc,
+                        'short_description': f'Inbound flood pattern detected from {ip}',
                         'count': len(recent),
                         'signals': list(self.attack_signals[ip]),
+                        'attack_family': family,
+                        'mitigation_commands': self._build_mitigation_commands(ip, family),
+                        'recommended_action': 'Block source IP and inspect edge firewall logs',
                         'timestamp': current_time,
                         'action_required': True
-                    })
+                    }))
                     self.blocked_ips.add(ip)
                     self._persist_ip_block(ip, 'CONNECTION_FLOOD', 'HIGH', desc)
                     self.attack_cooldown[ip] = time.time()
@@ -473,34 +580,127 @@ class IntrusionDetector:
             # Detect port scanning
             if ip in self.suspicious_ports:
                 unique_ports = set(self.suspicious_ports[ip])
+
+                # Detect brute-force bursts against auth-related ports
+                auth_port_hits = {
+                    p: self.suspicious_ports[ip].count(p)
+                    for p in set(self.suspicious_ports[ip])
+                    if p in self.AUTH_TARGET_PORTS
+                }
+                if auth_port_hits:
+                    top_port, top_hits = max(auth_port_hits.items(), key=lambda item: item[1])
+                    if top_hits >= self.BRUTE_FORCE_CONN_THRESHOLD:
+                        desc = (
+                            f'Possible brute-force: {top_hits} attempts against service port {top_port} '
+                            f'within monitoring window'
+                        )
+                        attacks.append(self._with_prediction({
+                            'type': 'BRUTE_FORCE_ATTEMPT',
+                            'severity': 'CRITICAL' if top_hits >= self.BRUTE_FORCE_CONN_THRESHOLD * 2 else 'HIGH',
+                            'source_ip': ip,
+                            'description': desc,
+                            'short_description': f'Likely brute-force on port {top_port}',
+                            'target_port': top_port,
+                            'attempt_count': top_hits,
+                            'tool_signature': 'HYDRA_MEDUSA_STYLE',
+                            'attack_family': 'BRUTE_FORCE',
+                            'mitigation_commands': self._build_mitigation_commands(ip, 'BRUTE_FORCE', top_port),
+                            'recommended_action': 'Block source IP and enforce MFA/strong auth for exposed services',
+                            'timestamp': current_time,
+                            'action_required': True
+                        }))
+                        self.blocked_ips.add(ip)
+                        self._persist_ip_block(ip, 'BRUTE_FORCE_ATTEMPT', 'HIGH', desc)
+                        self.attack_cooldown[ip] = time.time()
+
                 if len(unique_ports) > self.SUSPICIOUS_PORT_THRESHOLD:
+                    tool_signature = 'NMAP_RECON' if len(unique_ports) >= max(12, self.SUSPICIOUS_PORT_THRESHOLD) else 'PORT_RECON'
                     desc = f'Port scan detected: {len(unique_ports)} different ports scanned'
-                    attacks.append({
+                    attacks.append(self._with_prediction({
                         'type': 'PORT_SCAN',
                         'severity': 'HIGH',
                         'source_ip': ip,
                         'description': desc,
+                        'short_description': f'Likely {"Nmap" if tool_signature == "NMAP_RECON" else "recon"} scan against multiple ports',
                         'ports': list(unique_ports)[:20],  # First 20 ports
+                        'tool_signature': tool_signature,
+                        'attack_family': 'RECONNAISSANCE',
+                        'mitigation_commands': self._build_mitigation_commands(ip, 'NMAP_RECON'),
+                        'recommended_action': 'Block source IP and enable IDS signatures for reconnaissance patterns',
                         'timestamp': current_time,
                         'action_required': True
-                    })
+                    }))
                     self.blocked_ips.add(ip)
                     self._persist_ip_block(ip, 'PORT_SCAN', 'HIGH', desc)
                     self.attack_cooldown[ip] = time.time()  # Set cooldown
-                
-                # Detect specific attack types based on ports
-                for port in unique_ports:
-                    if port in self.COMMON_ATTACK_PORTS:
-                        attacks.append({
-                            'type': 'TARGETED_ATTACK',
-                            'severity': 'CRITICAL',
-                            'source_ip': ip,
-                            'description': f'{self.COMMON_ATTACK_PORTS[port]} detected on port {port}',
-                            'target_port': port,
-                            'attack_type': self.COMMON_ATTACK_PORTS[port],
-                            'timestamp': current_time,
-                            'action_required': True
-                        })
+
+                # Detect Metasploit-like probes (common listener/payload ports)
+                metasploit_ports = sorted(list(unique_ports.intersection(self.METASPLOIT_PORT_SIGNATURES)))
+                if metasploit_ports:
+                    probe_port = metasploit_ports[0]
+                    desc = f'Potential Metasploit activity: probe on known payload/listener port(s) {metasploit_ports}'
+                    attacks.append(self._with_prediction({
+                        'type': 'METASPLOIT_PROBE',
+                        'severity': 'CRITICAL',
+                        'source_ip': ip,
+                        'description': desc,
+                        'short_description': f'Metasploit-like probe observed on port {probe_port}',
+                        'ports': metasploit_ports,
+                        'tool_signature': 'METASPLOIT_PATTERN',
+                        'attack_family': 'METASPLOIT_PROBE',
+                        'mitigation_commands': self._build_mitigation_commands(ip, 'METASPLOIT_PROBE', probe_port),
+                        'recommended_action': 'Block source IP and inspect endpoint for reverse-shell sessions',
+                        'timestamp': current_time,
+                        'action_required': True
+                    }))
+                    self.blocked_ips.add(ip)
+                    self._persist_ip_block(ip, 'METASPLOIT_PROBE', 'CRITICAL', desc)
+                    self.attack_cooldown[ip] = time.time()
+
+                # Summarize targeted service attacks instead of one alert per port
+                targeted_ports = sorted([port for port in unique_ports if port in self.COMMON_ATTACK_PORTS])
+                if targeted_ports:
+                    port_labels = [f"{p}:{self.COMMON_ATTACK_PORTS[p]}" for p in targeted_ports[:6]]
+                    desc = f'Targeted attack against exposed services: {", ".join(port_labels)}'
+                    attacks.append(self._with_prediction({
+                        'type': 'TARGETED_ATTACK',
+                        'severity': 'CRITICAL',
+                        'source_ip': ip,
+                        'description': desc,
+                        'short_description': f'Targeted service probing on {len(targeted_ports)} critical ports',
+                        'target_ports': targeted_ports,
+                        'attack_type': 'SERVICE_TARGETING',
+                        'attack_family': 'TARGETED_ATTACK',
+                        'mitigation_commands': self._build_mitigation_commands(ip, 'TARGETED_ATTACK', targeted_ports[0]),
+                        'recommended_action': 'Restrict exposed services by IP allowlist and verify brute-force protections',
+                        'timestamp': current_time,
+                        'action_required': True
+                    }))
+
+                # Detect web attack reconnaissance likely to precede SQLi/XSS/RCE attempts
+                web_hits = sum(1 for p in self.suspicious_ports[ip] if p in {80, 443, 8080, 8443})
+                if web_hits >= self.WEB_ATTACK_CONN_THRESHOLD:
+                    desc = (
+                        f'High-rate web probing detected: {web_hits} inbound attempts on web service ports '
+                        f'within monitoring window (possible SQL injection/recon)'
+                    )
+                    attacks.append(self._with_prediction({
+                        'type': 'WEB_INJECTION_RECON',
+                        'severity': 'HIGH',
+                        'source_ip': ip,
+                        'description': desc,
+                        'short_description': 'Potential web attack reconnaissance (SQLi/XSS pre-stage)',
+                        'attempt_count': web_hits,
+                        'attack_family': 'WEB_INJECTION_RECON',
+                        'tool_signature': 'WEB_RECON_PATTERN',
+                        'mitigation_commands': self._build_mitigation_commands(ip, 'WEB_INJECTION_RECON', 80),
+                        'recommended_action': 'Enable WAF rules, strict input validation, and rate limits on web endpoints',
+                        'timestamp': current_time,
+                        'action_required': True
+                    }))
+                    self.blocked_ips.add(ip)
+                    self._persist_ip_block(ip, 'WEB_INJECTION_RECON', 'HIGH', desc)
+                    self.attack_cooldown[ip] = time.time()
         
         # Detect unusual network activity
         network_stats = psutil.net_io_counters()
@@ -510,16 +710,23 @@ class IntrusionDetector:
             
             # Detect abnormal traffic (potential DDoS)
             if bytes_recv_diff > 100_000_000:  # 100MB in 1 second
-                attacks.append({
+                attacks.append(self._with_prediction({
                     'type': 'DDOS_ATTACK',
                     'severity': 'CRITICAL',
                     'source_ip': 'MULTIPLE',
                     'description': f'Possible DDoS attack: {bytes_recv_diff / 1_000_000:.2f} MB/s incoming traffic',
+                    'short_description': 'Abnormal volumetric traffic spike detected',
+                    'attack_family': 'DDOS_ATTACK',
+                    'mitigation_commands': [
+                        'sudo iptables -I INPUT -p tcp --syn -m limit --limit 20/s --limit-burst 40 -j ACCEPT',
+                        'sudo iptables -A INPUT -p tcp --syn -j DROP',
+                    ],
+                    'recommended_action': 'Apply edge rate limits and upstream DDoS mitigation profile',
                     'bytes_received': bytes_recv_diff,
                     'packets_received': packets_recv_diff,
                     'timestamp': current_time,
                     'action_required': True
-                })
+                }))
         
         self._last_network_stats = network_stats
         

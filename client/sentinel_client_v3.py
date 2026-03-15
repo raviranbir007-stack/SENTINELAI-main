@@ -323,6 +323,9 @@ class SentinelClientV3:
     def _handle_attack(self, attack: Dict):
         """Handle detected attack from IntrusionDetector"""
         logger.critical(f"🚨 ATTACK DETECTED: {attack['type']} from {attack.get('source_ip', 'UNKNOWN')}")
+
+        # Forward to backend so dashboard receives real-time attack visibility
+        self._report_intrusion_attack(attack)
         
         # Pass to defense coordinator for alerting
         self.defense_coordinator.handle_attack(attack)
@@ -340,6 +343,51 @@ class SentinelClientV3:
                     )
             except Exception as e:
                 logger.debug(f"Attack source analysis failed")
+
+    def _report_intrusion_attack(self, attack: Dict):
+        """Report IDS attack to backend attack-events API for dashboard/monitoring."""
+        try:
+            severity = str(attack.get('severity', 'MEDIUM')).lower()
+            if severity not in {'low', 'medium', 'high', 'critical'}:
+                severity = 'medium'
+
+            attack_timestamp = attack.get('timestamp')
+            if hasattr(attack_timestamp, 'isoformat'):
+                attack_timestamp = attack_timestamp.isoformat()
+            elif not attack_timestamp:
+                attack_timestamp = datetime.utcnow().isoformat()
+
+            payload = {
+                'client_id': self.client_id,
+                'attack_type': attack.get('type', 'intrusion_detected'),
+                'source_ip': attack.get('source_ip'),
+                'destination_port': attack.get('target_port'),
+                'severity': severity,
+                'description': attack.get('description') or attack.get('short_description') or 'Intrusion detected by IDS',
+                'indicators': {
+                    'short_description': attack.get('short_description'),
+                    'attack_family': attack.get('attack_family'),
+                    'tool_signature': attack.get('tool_signature'),
+                    'prediction_summary': attack.get('prediction_summary'),
+                    'predicted_next_step': attack.get('predicted_next_step'),
+                    'prediction_confidence': attack.get('prediction_confidence'),
+                    'mitigation_commands': attack.get('mitigation_commands') or [],
+                    'recommended_action': attack.get('recommended_action'),
+                    'timestamp': attack_timestamp,
+                    'raw': {k: v for k, v in attack.items() if k not in {'timestamp'}},
+                },
+            }
+
+            response = requests.post(
+                f"{self.server_url}/api/v1/network/attack/report",
+                headers=self._get_headers(),
+                json=payload,
+                timeout=10,
+            )
+            if response.status_code != 200:
+                logger.debug(f"Attack report rejected: HTTP {response.status_code}")
+        except Exception:
+            logger.debug("Failed to report IDS attack to backend")
 
     def _handle_activity_alert(self, activity: Dict):
         """Handle activity alerts from ActivityLogger"""
