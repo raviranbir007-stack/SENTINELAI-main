@@ -4,8 +4,13 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .env
 .venv/
+.venv-ml/
+server/venv/
 venv/
 env/
 ENV/
@@ -38,6 +43,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+quarantine_log.json
 
 # Temp files
 *.tmp
@@ -48,6 +54,7 @@ logs/
 *.sqlite
 instance/
 server/generated_reports/
+generated_reports/
 
 # Coverage
 .coverage
