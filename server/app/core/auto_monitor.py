@@ -663,11 +663,11 @@ class AutomaticActivityMonitor:
         
         while self.running:
             try:
-            # Monitor browser activity (user visits)
+                # Monitor browser activity (user visits)
                 await self._monitor_browser_activity()
-            await self._monitor_network_connections()
+                await self._monitor_network_connections()
                 
-            # Check every 10 seconds for new browser visits / connection changes
+                # Check every 10 seconds for new browser visits / connection changes
                 await asyncio.sleep(10)
                 
             except Exception as e:
@@ -682,19 +682,11 @@ class AutomaticActivityMonitor:
         self.running = True
         self.stats['start_time'] = datetime.utcnow()
         
-        print("=" * 70)
-        print("🤖 AUTOMATIC ACTIVITY MONITORING STARTED")
-        print("=" * 70)
-        print("✓ Monitoring browser activity (history + real visits)")
-        if self.enable_network_monitoring:
-            print("✓ Low-noise active network connection monitoring enabled")
-            print(f"✓ Public IP scans throttled ({self.network_scan_cooldown}s cooldown per IP)")
-        else:
-            print("✓ Passive browser-history mode only")
-            print("✓ Network connection monitoring disabled by configuration")
-        print("✓ Auto-scanning all detected artifacts")
-        print("✓ Brief messages shown here, full details in database")
-        print("=" * 70)
+        mode = "active+passive" if self.enable_network_monitoring else "passive"
+        print(
+            f"🤖 Auto monitor started | mode={mode} | ip_cooldown={self.network_scan_cooldown}s | auto_scan=on",
+            flush=True,
+        )
         
         # Start monitoring loop
         await self._monitoring_loop()
@@ -707,16 +699,18 @@ class AutomaticActivityMonitor:
         if self.stats['start_time']:
             duration = datetime.utcnow() - self.stats['start_time']
             
-            print("\n" + "=" * 70)
-            print("📊 MONITORING SESSION SUMMARY")
-            print("=" * 70)
-            print(f"Duration: {str(duration).split('.')[0]}")
-            print(f"URLs Detected: {self.stats['urls_detected']}")
-            print(f"IPs Detected: {self.stats['ips_detected']}")
-            print(f"Domains Detected: {self.stats['domains_detected']}")
-            print(f"Scans Performed: {self.stats['scans_performed']}")
-            print(f"Threats Found: {self.stats['threats_found']}")
-            print("=" * 70)
+            print(
+                "📊 Auto monitor summary | duration=%s | urls=%s ips=%s domains=%s scans=%s threats=%s"
+                % (
+                    str(duration).split('.')[0],
+                    self.stats['urls_detected'],
+                    self.stats['ips_detected'],
+                    self.stats['domains_detected'],
+                    self.stats['scans_performed'],
+                    self.stats['threats_found'],
+                ),
+                flush=True,
+            )
     
     def get_stats(self) -> Dict:
         """Get current statistics"""

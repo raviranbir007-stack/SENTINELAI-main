@@ -862,7 +862,7 @@ class ActivityMonitor:
         else:
             logger.info("MONITOR browsers | none detected yet")
         
-        print("✅ Monitoring active", flush=True)
+        logger.info("MONITOR active")
         
         # Show browser setup on first cycle
         await asyncio.sleep(1)
@@ -879,7 +879,7 @@ class ActivityMonitor:
                 self.last_browser_check_time = datetime.now().timestamp()
                 
                 if visits:
-                    print(f"🔍 Scanning {len(visits)} new website(s)", flush=True)
+                    logger.debug("Scanning %s new website(s)", len(visits))
                 for visit in visits:
                     task = asyncio.create_task(self._process_website_with_semaphore(visit))
                     self._pending_tasks.add(task)
@@ -904,7 +904,7 @@ class ActivityMonitor:
     async def stop(self):
         """Stop monitoring"""
         self.running = False
-        print("🛑 Activity monitor stopped", flush=True)
+        logger.info("MONITOR stopped")
 
     async def _process_website_with_semaphore(self, visit: Dict[str, Any]):
         """Limit concurrent website analyses to avoid lag."""

@@ -203,8 +203,9 @@ async def lifespan(app: FastAPI):
     # Initialize Gemini configuration
     initialize_gemini_configuration()
     
-    logger.info("✅ Application startup complete")
-    logger.info(f"📊 System Status: {get_system_status()}")
+    system_status = get_system_status()
+    gemini_status = system_status.get("gemini", {}).get("status", "unknown")
+    logger.info("✅ Application startup complete | gemini=%s", gemini_status)
     
     if _startup_monitors_enabled():
         # Start activity monitoring
@@ -217,9 +218,7 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start activity monitor: {e}")
         
         # Initialize and start enhanced monitoring components
-        logger.info("=" * 80)
-        logger.info("🤖 INITIALIZING MONITORING")
-        logger.info("=" * 80)
+        logger.info("🤖 Initializing monitoring components")
         
         try:
             # Initialize activity database
@@ -230,7 +229,6 @@ async def lifespan(app: FastAPI):
             from app.core.terminal_monitor import terminal_monitor
             terminal_monitor.start()
             logger.info("✅ Monitor ready")
-            logger.info("=" * 80)
             
             # Start automatic activity monitor
             from app.core.auto_monitor import AutomaticActivityMonitor

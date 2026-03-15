@@ -146,6 +146,12 @@ class BehavioralMonitor:
         self._process_cache: Dict[int, Dict] = {}   # pid → {name, ppid, create_time}
         self._alert_cooldown: Dict[str, float] = {}   # alert_key → last_alert_ts
 
+        # Clipboard checks are noisy in normal workflows; keep opt-in by default.
+        self.enable_clipboard_monitor = os.getenv("SENTINEL_MONITOR_CLIPBOARD", "false").lower() == "true"
+        self.clipboard_min_confirmations = int(os.getenv("SENTINEL_CLIPBOARD_MIN_CONFIRMATIONS", "2"))
+        self._last_clipboard_fingerprint = ""
+        self._clipboard_match_count = 0
+
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -215,7 +221,8 @@ class BehavioralMonitor:
                 self._check_network_exfil()
                 self._check_cpu_miners()
                 self._check_screen_keyloggers()
-                self._check_clipboard()
+                if self.enable_clipboard_monitor:
+                    self._check_clipboard()
                 self._check_sudo_events()
             except Exception as e:
                 logger.debug(f"Behavioral loop error: {e}")
@@ -392,15 +399,29 @@ class BehavioralMonitor:
         try:
             clip_text = self._get_clipboard_text()
             if not clip_text:
+                self._last_clipboard_fingerprint = ""
+                self._clipboard_match_count = 0
                 return
+
+            # Avoid re-alerting for arbitrary copy/paste churn unless the exact
+            # same sensitive content is observed repeatedly across checks.
+            fingerprint = str(hash(clip_text))
+            if fingerprint == self._last_clipboard_fingerprint:
+                self._clipboard_match_count += 1
+            else:
+                self._last_clipboard_fingerprint = fingerprint
+                self._clipboard_match_count = 1
+
             for pat in SENSITIVE_PATTERNS:
                 if re.search(pat, clip_text):
+                    if self._clipboard_match_count < self.clipboard_min_confirmations:
+                        return
                     self._raise_alert(
-                        "SENSITIVE_CLIPBOARD", "HIGH",
+                        "SENSITIVE_CLIPBOARD", "MEDIUM",
                         "Sensitive data detected in clipboard",
                         "Pattern match in clipboard content",
                         cooldown_key="clipboard_sensitive",
-                        cooldown_secs=60,
+                        cooldown_secs=600,
                     )
                     break
         except Exception:

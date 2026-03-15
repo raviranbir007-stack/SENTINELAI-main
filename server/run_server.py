@@ -70,6 +70,15 @@ class ConsoleNoiseFilter(logging.Filter):
     noisy_info_only = (
         "app.api.v1.endpoints.scan",
         "app.core.threat_analyzer",
+        "app.main",
+        "app.database",
+        "app.gemini_config",
+        "app.ai_engine.analyzer",
+        "app.ml_models",
+        "app.core.report_generator",
+        "AutoMonitor",
+        "ActivityDatabase",
+        "TerminalMonitor",
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -369,24 +378,46 @@ def run_protection_client():
             # Print stats every 5 minutes
             if time.time() - last_stats > 300:
                 uptime = int(time.time() - stats["start_time"])
-                logger.info("")
-                logger.info(f"📊 PROTECTION STATS (Uptime: {uptime//60}m)")
-                logger.info(f"  • Intrusions detected: {stats['intrusions_detected']}")
-                logger.info(f"  • Intrusions blocked: {stats['intrusions_blocked']}")
-                logger.info(f"  • Activities logged: {stats['activities_logged']}")
-                logger.info(f"  • Threats detected: {stats['threats_detected']}")
-                logger.info(f"  • Extended monitor events: {stats['extended_events']}")
-                logger.info(f"  • Startup findings: {stats['startup_findings']}")
-                logger.info(f"  • Files quarantined: {stats['files_quarantined']}")
-                logger.info(f"  • Firewall hardening actions: {stats['firewall_hardening_actions']}")
-                logger.info(f"  • USB summary: {usb_monitor.get_events_summary()}")
-                logger.info(f"  • Email summary: {email_monitor.get_summary()}")
-                logger.info(f"  • Vulnerability summary: {vulnerability_scanner.get_summary()}")
-                logger.info(f"  • Behavioral summary: {behavioral_monitor.get_summary()}")
-                logger.info(f"  • DNS summary: {dns_monitor.get_summary()}")
-                logger.info(f"  • Network summary: {network_scanner.get_summary()}")
-                logger.info(f"  • Process summary: {process_scanner.get_summary()}")
-                logger.info(f"  • Traffic summary: {traffic_monitor.get_statistics()}")
+                usb_summary = usb_monitor.get_events_summary()
+                email_summary = email_monitor.get_summary()
+                vuln_summary = vulnerability_scanner.get_summary()
+                behavioral_summary = behavioral_monitor.get_summary()
+                dns_summary = dns_monitor.get_summary()
+                network_summary = network_scanner.get_summary()
+                process_summary = process_scanner.get_summary()
+                traffic_summary = traffic_monitor.get_statistics()
+
+                logger.info(
+                    "📊 PROTECTION | up=%sm | intrusions=%s blocked=%s | activities=%s | threats=%s",
+                    uptime // 60,
+                    stats['intrusions_detected'],
+                    stats['intrusions_blocked'],
+                    stats['activities_logged'],
+                    stats['threats_detected'],
+                )
+                logger.info(
+                    "   monitors | ext=%s startup=%s quarantined=%s firewall=%s | net_conns=%s suspicious=%s | scans=%s queue=%s",
+                    stats['extended_events'],
+                    stats['startup_findings'],
+                    stats['files_quarantined'],
+                    stats['firewall_hardening_actions'],
+                    network_summary.get('connections_logged', 0),
+                    network_summary.get('suspicious_connections', 0),
+                    traffic_summary.get('scanned_artifacts_count', traffic_summary.get('artifacts_scanned', 0)),
+                    traffic_summary.get('queue_size', 0),
+                )
+                logger.info(
+                    "   security | vulns(C/H/M/L)=%s/%s/%s/%s | process_high=%s | behavioral_high=%s | usb_threats=%s | email_critical=%s | dns_threats=%s",
+                    vuln_summary.get('CRITICAL', 0),
+                    vuln_summary.get('HIGH', 0),
+                    vuln_summary.get('MEDIUM', 0),
+                    vuln_summary.get('LOW', 0),
+                    process_summary.get('process_alerts', {}).get('HIGH', 0),
+                    behavioral_summary.get('behavioral_alerts', {}).get('HIGH', 0),
+                    usb_summary.get('usb_threats', 0),
+                    email_summary.get('critical', 0),
+                    dns_summary.get('dns_threats', 0),
+                )
                 last_stats = time.time()
         
     except ImportError as e:

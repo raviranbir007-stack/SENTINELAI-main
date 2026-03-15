@@ -20,7 +20,7 @@ class TerminalActivityMonitor:
     Shows short summaries while the server is running
     """
     
-    def __init__(self, update_interval: int = 30):
+    def __init__(self, update_interval: int = 60):
         self.update_interval = update_interval  # Seconds between updates
         self.running = False
         self.monitor_thread = None
@@ -174,13 +174,21 @@ class TerminalActivityMonitor:
     
     def _has_new_activity(self):
         """Check if there's been any new activity since last print"""
+        scans_delta = self.stats['scans_performed'] - self.last_printed_stats['scans_performed']
+        connections_delta = self.stats['connections_monitored'] - self.last_printed_stats['connections_monitored']
+
+        # Print immediately for security-relevant events.
+        if self.stats['attack_events'] != self.last_printed_stats['attack_events']:
+            return True
+        if self.stats['threats_detected'] != self.last_printed_stats['threats_detected']:
+            return True
+
+        # For routine activity, only print on meaningful deltas.
         return (
             self.stats['websites_monitored'] != self.last_printed_stats['websites_monitored'] or
             self.stats['apps_monitored'] != self.last_printed_stats['apps_monitored'] or
-            self.stats['connections_monitored'] != self.last_printed_stats['connections_monitored'] or
-            self.stats['scans_performed'] != self.last_printed_stats['scans_performed'] or
-            self.stats['attack_events'] != self.last_printed_stats['attack_events'] or
-            self.stats['threats_detected'] != self.last_printed_stats['threats_detected']
+            scans_delta >= 5 or
+            connections_delta >= 50
         )
     
     def _update_last_printed_stats(self):
@@ -217,22 +225,25 @@ class TerminalActivityMonitor:
             else:
                 last_activity = f"{int(time_since.total_seconds() / 3600)}h ago"
         
-        latest_website = self.recent_websites[-1] if self.recent_websites else "-"
+        scans_delta = self.stats['scans_performed'] - self.last_printed_stats['scans_performed']
         latest_threat = self.recent_threats[-1] if self.recent_threats else None
         latest_attack = self.recent_attacks[-1] if self.recent_attacks else None
-        latest_threat_text = (
-            f" | last threat={latest_threat['type'].upper()}:{latest_threat['verdict'].upper()}"
-            if latest_threat else ""
-        )
-        latest_attack_text = (
-            f" | last attack={latest_attack['type'].upper()}@{latest_attack['source']}:{latest_attack['severity'].upper()}"
-            if latest_attack else ""
-        )
+
+        latest_event = "-"
+        if latest_attack:
+            latest_event = (
+                f"attack:{latest_attack['type'].upper()}@{latest_attack['source']}"
+                f"/{latest_attack['severity'].upper()}"
+            )
+        elif latest_threat:
+            latest_event = f"threat:{latest_threat['type'].upper()}/{latest_threat['verdict'].upper()}"
+        elif self.recent_websites:
+            latest_event = f"web:{self.recent_websites[-1]}"
+
         print(
-            f"📊 Uptime={uptime_str} | last={last_activity} | websites={self.stats['websites_monitored']} "
-            f"| apps={self.stats['apps_monitored']} | scans={self.stats['scans_performed']} "
-            f"| attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} "
-            f"| latest={latest_website}{latest_threat_text}{latest_attack_text}",
+            f"📊 Monitor | up={uptime_str} | last={last_activity} | scans={self.stats['scans_performed']} "
+            f"(+{max(scans_delta, 0)}) | attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} "
+            f"| latest={latest_event}",
             flush=True,
         )
         sys.stdout.flush()
@@ -252,5 +263,5 @@ class TerminalActivityMonitor:
         sys.stdout.flush()
 
 
-# Global instance
-terminal_monitor = TerminalActivityMonitor(update_interval=30)
+# Global instance (quiet-by-default cadence)
+terminal_monitor = TerminalActivityMonitor(update_interval=60)

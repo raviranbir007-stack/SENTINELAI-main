@@ -245,9 +245,18 @@ class DefenseCoordinator:
 
     def _notify_console(self, message: str, attack: Dict, alert_num: int):
         """Send console notification"""
-        print(f"\n{'='*60}")
-        print(message)
-        print(f"{'='*60}\n")
+        source_label = self._format_source_endpoint(attack)
+        short_desc = attack.get('short_description') or attack.get('description') or 'Suspicious activity detected'
+        remaining = self.MAX_ALERTS - alert_num
+        print(
+            f"🚨 ALERT {alert_num}/{self.MAX_ALERTS} | type={attack.get('type', 'unknown')} "
+            f"| sev={attack.get('severity', 'UNKNOWN')} | source={source_label}",
+            flush=True,
+        )
+        print(
+            f"   desc={short_desc[:120]} | remaining={remaining} | next={self.ALERT_INTERVAL}s | timeout={self.RESPONSE_TIMEOUT}s",
+            flush=True,
+        )
 
     def _notify_desktop(self, message: str, attack: Dict, alert_num: int):
         """Send desktop notification"""
