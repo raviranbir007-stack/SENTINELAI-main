@@ -36,6 +36,7 @@ class IntrusionDetector:
         self.suspicious_ports = defaultdict(list)  # IP -> [ports]
         self.blocked_ips = set()
         self.attack_cooldown = {}  # IP -> last_alert_time to prevent spam
+        self._hostname_cache: Dict[str, tuple[float, Optional[str]]] = {}
 
         # Multi-signal confirmation: IP -> set of attack types seen
         self.attack_signals: Dict[str, Set[str]] = defaultdict(set)
@@ -302,6 +303,27 @@ class IntrusionDetector:
         time_since_last = time.time() - self.attack_cooldown[ip]
         return time_since_last < self.ALERT_COOLDOWN
 
+    def _resolve_source_hostname(self, ip: str) -> Optional[str]:
+        """Best-effort reverse DNS lookup with caching for monitoring UX."""
+        try:
+            if not ip or ip == 'MULTIPLE' or self._is_whitelisted_ip(ip):
+                return None
+
+            now = time.time()
+            cached = self._hostname_cache.get(ip)
+            if cached and (now - cached[0]) < 1800:  # 30 min TTL
+                return cached[1]
+
+            try:
+                host = socket.gethostbyaddr(ip)[0]
+            except Exception:
+                host = None
+
+            self._hostname_cache[ip] = (now, host)
+            return host
+        except Exception:
+            return None
+
     def _build_mitigation_commands(self, ip: str, attack_family: str, target_port: Optional[int] = None) -> List[str]:
         """Build actionable mitigation commands shown in alerts/dashboard."""
         commands = [
@@ -541,6 +563,7 @@ class IntrusionDetector:
                     'type': 'CONNECTION_FLOOD',
                     'severity': 'CRITICAL',
                     'source_ip': ip,
+                    'source_hostname': self._resolve_source_hostname(ip),
                     'description': desc,
                     'short_description': f'High-rate inbound flood from {ip}',
                     'count': len(recent),
@@ -563,6 +586,7 @@ class IntrusionDetector:
                         'type': 'CONNECTION_FLOOD',
                         'severity': 'HIGH',
                         'source_ip': ip,
+                        'source_hostname': self._resolve_source_hostname(ip),
                         'description': desc,
                         'short_description': f'Inbound flood pattern detected from {ip}',
                         'count': len(recent),
@@ -598,6 +622,7 @@ class IntrusionDetector:
                             'type': 'BRUTE_FORCE_ATTEMPT',
                             'severity': 'CRITICAL' if top_hits >= self.BRUTE_FORCE_CONN_THRESHOLD * 2 else 'HIGH',
                             'source_ip': ip,
+                            'source_hostname': self._resolve_source_hostname(ip),
                             'description': desc,
                             'short_description': f'Likely brute-force on port {top_port}',
                             'target_port': top_port,
@@ -620,6 +645,7 @@ class IntrusionDetector:
                         'type': 'PORT_SCAN',
                         'severity': 'HIGH',
                         'source_ip': ip,
+                        'source_hostname': self._resolve_source_hostname(ip),
                         'description': desc,
                         'short_description': f'Likely {"Nmap" if tool_signature == "NMAP_RECON" else "recon"} scan against multiple ports',
                         'ports': list(unique_ports)[:20],  # First 20 ports
@@ -643,6 +669,7 @@ class IntrusionDetector:
                         'type': 'METASPLOIT_PROBE',
                         'severity': 'CRITICAL',
                         'source_ip': ip,
+                        'source_hostname': self._resolve_source_hostname(ip),
                         'description': desc,
                         'short_description': f'Metasploit-like probe observed on port {probe_port}',
                         'ports': metasploit_ports,
@@ -666,6 +693,7 @@ class IntrusionDetector:
                         'type': 'TARGETED_ATTACK',
                         'severity': 'CRITICAL',
                         'source_ip': ip,
+                        'source_hostname': self._resolve_source_hostname(ip),
                         'description': desc,
                         'short_description': f'Targeted service probing on {len(targeted_ports)} critical ports',
                         'target_ports': targeted_ports,
@@ -688,6 +716,7 @@ class IntrusionDetector:
                         'type': 'WEB_INJECTION_RECON',
                         'severity': 'HIGH',
                         'source_ip': ip,
+                        'source_hostname': self._resolve_source_hostname(ip),
                         'description': desc,
                         'short_description': 'Potential web attack reconnaissance (SQLi/XSS pre-stage)',
                         'attempt_count': web_hits,

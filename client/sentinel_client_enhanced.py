@@ -80,6 +80,7 @@ class SentinelClient:
         self.auto_block_threats = self.config.get("defense", {}).get("auto_block_threats", True)
         self.blocked_ips = set()
         self.blocked_domains = set()
+        self._hostname_cache: Dict[str, tuple[float, Optional[str]]] = {}
 
         # Lightweight IDS heuristics for broad attack monitoring
         self.connection_attempts = defaultdict(list)  # IP -> [timestamps]
@@ -156,6 +157,27 @@ class SentinelClient:
         for ip in list(self.alert_cooldown.keys()):
             if now.timestamp() - self.alert_cooldown[ip] > max(self.alert_cooldown_seconds * 3, 600):
                 del self.alert_cooldown[ip]
+
+    def _resolve_source_hostname(self, ip: Optional[str]) -> Optional[str]:
+        """Best-effort reverse DNS lookup with cache."""
+        try:
+            if not ip or self._is_private_or_local_ip(ip):
+                return None
+
+            now = time.time()
+            cached = self._hostname_cache.get(ip)
+            if cached and (now - cached[0]) < 1800:
+                return cached[1]
+
+            try:
+                host = socket.gethostbyaddr(ip)[0]
+            except Exception:
+                host = None
+
+            self._hostname_cache[ip] = (now, host)
+            return host
+        except Exception:
+            return None
 
     def _predict_attack(self, attack_type: str) -> Dict:
         """Predict likely next step for proactive defense."""
@@ -282,7 +304,9 @@ class SentinelClient:
             return
 
         prediction = self._predict_attack(attack_type)
+        source_hostname = self._resolve_source_hostname(remote_ip)
         indicators = {
+            "source_hostname": source_hostname,
             "short_description": short_description,
             "attack_family": attack_family,
             "tool_signature": tool_signature,
@@ -297,6 +321,7 @@ class SentinelClient:
         await self.report_attack(
             attack_type=attack_type,
             source_ip=remote_ip,
+            source_domain=source_hostname,
             severity=severity,
             description=description,
             indicators=indicators,
@@ -530,6 +555,7 @@ class SentinelClient:
         self,
         attack_type: str,
         source_ip: Optional[str] = None,
+        source_domain: Optional[str] = None,
         severity: str = "medium",
         description: str = "",
         indicators: Optional[Dict] = None,
@@ -540,6 +566,7 @@ class SentinelClient:
                 "client_id": self.client_id,
                 "attack_type": attack_type,
                 "source_ip": source_ip,
+                "source_domain": source_domain,
                 "severity": severity,
                 "description": description,
                 "indicators": indicators or {"timestamp": datetime.utcnow().isoformat()},
@@ -586,9 +613,11 @@ class SentinelClient:
                 source_ip = scan_result["ip"]
 
             # Report attack to server
+            source_hostname = self._resolve_source_hostname(source_ip)
             await self.report_attack(
                 attack_type="malicious_content",
                 source_ip=source_ip,
+                source_domain=source_hostname,
                 severity="high" if threat_level == "malicious" else "medium",
                 description=f"Detected {threat_level} content: {target}",
             )

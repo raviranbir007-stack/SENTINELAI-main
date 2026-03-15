@@ -610,6 +610,8 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
 
         severity = (attack.severity.value if attack.severity else "medium").lower()
         target = attack.source_ip or attack.source_domain or attack.destination_ip or "unknown"
+        source_hostname = indicators.get("source_hostname") or attack.source_domain
+        target_display = f"{attack.source_ip} ({source_hostname})" if attack.source_ip and source_hostname else target
         type_label = str(attack.attack_type or "intrusion").lower()
 
         threats.append({
@@ -619,6 +621,8 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "type": type_label,
             "icon": _icon_for(type_label),
             "target": target,
+            "target_display": target_display,
+            "source_hostname": source_hostname,
             "details": attack.description or short_desc,
             "description": attack.description or short_desc,
             "short_description": short_desc,

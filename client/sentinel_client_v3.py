@@ -351,6 +351,9 @@ class SentinelClientV3:
             if severity not in {'low', 'medium', 'high', 'critical'}:
                 severity = 'medium'
 
+            source_ip = attack.get('source_ip')
+            source_hostname = attack.get('source_hostname') or attack.get('source_domain')
+
             attack_timestamp = attack.get('timestamp')
             if hasattr(attack_timestamp, 'isoformat'):
                 attack_timestamp = attack_timestamp.isoformat()
@@ -360,11 +363,13 @@ class SentinelClientV3:
             payload = {
                 'client_id': self.client_id,
                 'attack_type': attack.get('type', 'intrusion_detected'),
-                'source_ip': attack.get('source_ip'),
+                'source_ip': source_ip,
+                'source_domain': source_hostname,
                 'destination_port': attack.get('target_port'),
                 'severity': severity,
                 'description': attack.get('description') or attack.get('short_description') or 'Intrusion detected by IDS',
                 'indicators': {
+                    'source_hostname': source_hostname,
                     'short_description': attack.get('short_description'),
                     'attack_family': attack.get('attack_family'),
                     'tool_signature': attack.get('tool_signature'),

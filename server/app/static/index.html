@@ -2075,7 +2075,7 @@
                             <span style="text-transform: capitalize;">${threat.type}</span>
                         </div>
                     </td>
-                    <td><code class="threat-target">${threat.target}</code></td>
+                    <td><code class="threat-target">${threat.target_display || threat.target}</code></td>
                     <td>${getSeverityBadge(threat.severity)}</td>
                     <td style="color: var(--muted-foreground);">${threat.source}</td>
                     <td>
@@ -3046,6 +3046,7 @@
                     const type = String(item.type || item.attack_type || item.name || 'threat').toLowerCase();
                     const severity = String(item.severity || item.threat_level || 'medium').toLowerCase();
                     const target = item.target || item.source_ip || item.source || item.name || 'unknown';
+                    const targetDisplay = item.target_display || (item.source_ip && item.source_hostname ? `${item.source_ip} (${item.source_hostname})` : target);
                     const id = String(item.id || item.event_id || item.threat_id || item.scan_id || `THR_AUTO_${idx}`);
                     const timestamp = item.timestamp || item.detected_at || item.created_at || new Date().toISOString();
                     const shortDesc = item.short_description || item.description || item.details || `${type} detected`;
@@ -3065,6 +3066,7 @@
                         type,
                         icon,
                         target,
+                        target_display: targetDisplay,
                         severity,
                         source: item.source || item.tool_signature || item.detected_by || 'SENTINEL IDS',
                         location: item.location || 'Endpoint Monitor',
@@ -3094,7 +3096,7 @@
                                 : '';
                             addNotification(
                                 `Attack Detected: ${String(t.type || 'threat').toUpperCase()}`,
-                                `${t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
+                                `${t.target_display || t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
                                 t.severity === 'critical' ? 'error' : 'warning',
                                 `live_attack_${t.id}`,
                                 45000

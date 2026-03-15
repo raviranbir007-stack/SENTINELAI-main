@@ -86,6 +86,14 @@ class DefenseCoordinator:
         self.suppressed_attacks.add(source_ip)
         logger.info(f"✅ Suppressed future alerts from: {source_ip} (marked as false positive)")
 
+    def _format_source_endpoint(self, attack: Dict) -> str:
+        """Build readable source label: ip (hostname)."""
+        ip = attack.get('source_ip', 'UNKNOWN')
+        host = attack.get('source_hostname') or attack.get('source_domain')
+        if host and host != ip:
+            return f"{ip} ({host})"
+        return str(ip)
+
     def handle_attack(self, attack: Dict):
         """
         Handle a detected attack
@@ -186,6 +194,8 @@ class DefenseCoordinator:
         
         # Format description to fit in box
         desc = attack['description'][:55] if len(attack['description']) > 55 else attack['description']
+        source_label = self._format_source_endpoint(attack)
+        source_label = source_label[:45] if len(source_label) > 45 else source_label
         
         message = f"""
 ╔═══════════════════════════════════════════════════════════════╗
@@ -193,7 +203,7 @@ class DefenseCoordinator:
 ╠═══════════════════════════════════════════════════════════════╣
 ║ Attack Type: {attack['type']:<45} ║
 ║ Severity:    {attack['severity']:<45} ║
-║ Source IP:   {attack.get('source_ip', 'N/A'):<45} ║
+║ Source:      {source_label:<45} ║
 ║ Description: {desc:<45} ║
 ║ Short Desc:  {short_desc:<45} ║
 ║ Mitigate:    {mitigation_cmd:<45} ║
@@ -245,8 +255,9 @@ class DefenseCoordinator:
             title = f"🚨 SECURITY ALERT #{alert_num}/{self.MAX_ALERTS}"
             mitigation_commands = attack.get('mitigation_commands') if isinstance(attack.get('mitigation_commands'), list) else []
             mitigation_cmd = mitigation_commands[0] if mitigation_commands else None
+            source_label = self._format_source_endpoint(attack)
             body = (
-                f"{attack['type']} from {attack.get('source_ip', 'UNKNOWN')}\n"
+                f"{attack['type']} from {source_label}\n"
                 f"{attack.get('short_description') or attack.get('description', '')}"
             )
             if mitigation_cmd:
