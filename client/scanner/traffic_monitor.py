@@ -129,12 +129,19 @@ class AutomaticTrafficMonitor:
         }
     
     def _is_private_ip(self, ip: str) -> bool:
-        """Check if IP is in private range"""
+        """Check if IP is in private or reserved range (should not be scanned/alerted)"""
         try:
             import ipaddress
             ip_obj = ipaddress.ip_address(ip)
-            return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
-        except:
+            return (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or getattr(ip_obj, 'is_reserved', False)
+                or getattr(ip_obj, 'is_unspecified', False)
+                or getattr(ip_obj, 'is_multicast', False)
+            )
+        except Exception:
             return False
     
     def _is_whitelisted(self, value: str, artifact_type: str) -> bool:

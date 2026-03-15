@@ -164,7 +164,15 @@ class IntrusionDetector:
             '::1/128',
             # Link-local
             '169.254.0.0/16',
-            'fe80::/10'
+            'fe80::/10',
+            # RFC 5737 documentation/example ranges — never real traffic
+            '192.0.2.0/24',    # TEST-NET-1
+            '198.51.100.0/24', # TEST-NET-2
+            '203.0.113.0/24',  # TEST-NET-3
+            # RFC 3849 IPv6 documentation range
+            '2001:db8::/32',
+            # Shared address space (RFC 6598 CGNAT)
+            '100.64.0.0/10',
         }
     
     def _persist_ip_block(self, ip: str, attack_type: str, severity: str, description: str):
@@ -253,6 +261,16 @@ class IntrusionDetector:
             
             # Check if private, loopback, or link-local
             if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                return True
+
+            # Reserved/documentation/special-use addresses are never real attackers
+            # Covers RFC 5737 TEST-NETs (192.0.2.x, 198.51.100.x, 203.0.113.x),
+            # multicast, unspecified, etc.
+            if (
+                getattr(ip_obj, 'is_reserved', False)
+                or getattr(ip_obj, 'is_unspecified', False)
+                or getattr(ip_obj, 'is_multicast', False)
+            ):
                 return True
             
             # Check against whitelisted networks

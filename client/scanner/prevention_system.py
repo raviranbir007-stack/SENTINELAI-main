@@ -79,7 +79,16 @@ class PreventionSystem:
             # Never block private, loopback, or link-local
             if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
                 return True
-                
+
+            # Never block reserved/documentation/special-use IPs
+            # (RFC 5737 TEST-NETs: 192.0.2.x, 198.51.100.x, 203.0.113.x, etc.)
+            if (
+                getattr(ip_obj, 'is_reserved', False)
+                or getattr(ip_obj, 'is_unspecified', False)
+                or getattr(ip_obj, 'is_multicast', False)
+            ):
+                return True
+
             # Never block legitimate CDN/services
             legitimate_ranges = [
                 '142.250.0.0/15',  # Google
