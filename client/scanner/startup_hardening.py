@@ -198,6 +198,18 @@ class StartupThreatMonitor:
 
         return findings
 
+    # Path fragments that indicate a Python library/virtualenv install — never real
+    # startup-persistence locations; scanning them produces false positives.
+    _PYTHON_LIB_SKIP_FRAGMENTS = (
+        "site-packages",
+        os.sep + "lib" + os.sep + "python",
+        os.sep + "venv" + os.sep,
+        os.sep + ".venv" + os.sep,
+        "-venv" + os.sep,
+        "venv-ml",
+        os.sep + "dist-packages" + os.sep,
+    )
+
     def _scan_startup_files(self) -> List[Dict]:
         """Inspect common startup and persistence locations for risky files."""
         findings: List[Dict] = []
@@ -212,6 +224,13 @@ class StartupThreatMonitor:
 
             for entry in candidates:
                 if not entry.is_file():
+                    continue
+
+                # Skip Python package/virtualenv library files — these are legitimate
+                # dependencies (e.g. yaml/loader.py, pydantic/_loader.py) that match
+                # malware keyword patterns but are not persistence threats.
+                entry_str = str(entry)
+                if any(frag in entry_str for frag in self._PYTHON_LIB_SKIP_FRAGMENTS):
                     continue
 
                 score, reasons = self._score_startup_file(entry)

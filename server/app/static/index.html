@@ -1254,9 +1254,13 @@
                         <h2>🗂️ Quarantine Inventory</h2>
                         <p>Files and entities isolated by the intrusion prevention system</p>
                     </div>
-                    <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <button id="toggleQuarantineBtn" class="btn btn-outline" title="Minimize/Maximize Quarantine Inventory">− Minimize</button>
+                        <button id="viewAllQuarantineBtn" class="btn btn-outline">View All →</button>
+                        <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
+                    </div>
                 </div>
-                <div class="card card-glass">
+                <div class="card card-glass" id="quarantineCard">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -1542,6 +1546,36 @@
         </div>
     </div>
 
+    <!-- All Quarantine Modal -->
+    <div id="allQuarantineModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
+        <div class="card card-cyber" style="max-width: 1300px; width: 95%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <div>
+                    <h2 style="margin: 0;">🗂️ All Quarantined Items</h2>
+                    <p id="allQuarantineCount" style="margin: 0.25rem 0 0; color: var(--muted-foreground); font-size: 0.875rem;"></p>
+                </div>
+                <button onclick="closeAllQuarantine()" class="icon-btn">✖️</button>
+            </div>
+            <div id="allQuarantineContent">
+                <table class="threats-table">
+                    <thead>
+                        <tr>
+                            <th>File / Entity</th>
+                            <th>Type</th>
+                            <th>Severity</th>
+                            <th>Source</th>
+                            <th>Quarantined At</th>
+                            <th>Original Path</th>
+                        </tr>
+                    </thead>
+                    <tbody id="allQuarantineModalTableBody">
+                        <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- All Threats Modal -->
     <div id="allThreatsModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
         <div class="card card-cyber" style="max-width: 1200px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
@@ -1737,7 +1771,9 @@
         let panelState = {
             recentThreatsCollapsed: false,
             recentLogsCollapsed: false,
+            quarantineCollapsed: false,
         };
+        let quarantineData = null;
 
         const API_ENDPOINTS = {
             // Dashboard
@@ -2790,8 +2826,10 @@
         function applyPanelState() {
             const threatsCard = document.getElementById('recentThreatsCard');
             const logsCard = document.getElementById('recentLogsCard');
+            const quarantineCard = document.getElementById('quarantineCard');
             const threatsBtn = document.getElementById('toggleRecentThreatsBtn');
             const logsBtn = document.getElementById('toggleRecentLogsBtn');
+            const quarantineBtn = document.getElementById('toggleQuarantineBtn');
 
             if (threatsCard && threatsBtn) {
                 threatsCard.style.display = panelState.recentThreatsCollapsed ? 'none' : 'block';
@@ -2801,6 +2839,11 @@
             if (logsCard && logsBtn) {
                 logsCard.style.display = panelState.recentLogsCollapsed ? 'none' : 'block';
                 logsBtn.textContent = panelState.recentLogsCollapsed ? '+ Maximize' : '− Minimize';
+            }
+
+            if (quarantineCard && quarantineBtn) {
+                quarantineCard.style.display = panelState.quarantineCollapsed ? 'none' : 'block';
+                quarantineBtn.textContent = panelState.quarantineCollapsed ? '+ Maximize' : '− Minimize';
             }
         }
 
@@ -2814,6 +2857,49 @@
             panelState.recentLogsCollapsed = !panelState.recentLogsCollapsed;
             persistPanelState();
             applyPanelState();
+        }
+
+        function toggleQuarantinePanel() {
+            panelState.quarantineCollapsed = !panelState.quarantineCollapsed;
+            persistPanelState();
+            applyPanelState();
+        }
+
+        function viewAllQuarantine() {
+            const modal = document.getElementById('allQuarantineModal');
+            if (!modal) return;
+            const tbody = document.getElementById('allQuarantineModalTableBody');
+            const data = quarantineData;
+            if (tbody) {
+                const items = (data && data.items) ? data.items : [];
+                if (items.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--success);">✅ No quarantined items — system is clean.</td></tr>';
+                } else {
+                    tbody.innerHTML = items.map(item => {
+                        const ts = parseQuarantineTimestamp(item);
+                        const origPath = item.original_path || item.path || '—';
+                        const sevColor = item.severity === 'critical' ? 'var(--destructive)' : item.severity === 'high' ? '#f97316' : 'var(--warning)';
+                        const typeLabel = (item.type || 'unknown').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                        return `<tr>
+                            <td><code class="threat-target">${item.name || item.filename || '—'}</code></td>
+                            <td><span class="badge" style="background:rgba(255,255,255,0.08);font-size:0.75rem;">${typeLabel}</span></td>
+                            <td style="color:${sevColor};font-weight:600;">${(item.severity || '—').toUpperCase()}</td>
+                            <td style="color:var(--muted-foreground);font-size:0.8rem;">${item.source || '—'}</td>
+                            <td><div class="threat-time">🕐 ${ts}</div></td>
+                            <td style="color:var(--muted-foreground);font-size:0.75rem;font-family:'JetBrains Mono',monospace;word-break:break-all;max-width:280px;">${origPath}</td>
+                        </tr>`;
+                    }).join('');
+                }
+                const total = (data && data.total) || 0;
+                const countEl = document.getElementById('allQuarantineCount');
+                if (countEl) countEl.textContent = `${total} quarantined item(s)`;
+            }
+            modal.style.display = 'flex';
+        }
+
+        function closeAllQuarantine() {
+            const modal = document.getElementById('allQuarantineModal');
+            if (modal) modal.style.display = 'none';
         }
 
         function persistNotifications() {
@@ -3722,6 +3808,7 @@
         }
 
         function renderQuarantineInventory(data) {
+            quarantineData = data;
             const tbody = document.getElementById('quarantineTableBody');
             const statsDiv = document.getElementById('quarantineStats');
             if (!tbody) return;
@@ -3991,6 +4078,23 @@
         const toggleRecentLogsBtn = document.getElementById('toggleRecentLogsBtn');
         if (toggleRecentLogsBtn) {
             toggleRecentLogsBtn.addEventListener('click', toggleRecentLogsPanel);
+        }
+
+        const toggleQuarantineBtn = document.getElementById('toggleQuarantineBtn');
+        if (toggleQuarantineBtn) {
+            toggleQuarantineBtn.addEventListener('click', toggleQuarantinePanel);
+        }
+
+        const viewAllQuarantineBtn = document.getElementById('viewAllQuarantineBtn');
+        if (viewAllQuarantineBtn) {
+            viewAllQuarantineBtn.addEventListener('click', viewAllQuarantine);
+        }
+
+        const allQuarantineModalEl = document.getElementById('allQuarantineModal');
+        if (allQuarantineModalEl) {
+            allQuarantineModalEl.addEventListener('click', (e) => {
+                if (e.target.id === 'allQuarantineModal') closeAllQuarantine();
+            });
         }
 
         // refreshSecurityPostureBtn and refreshQuarantineBtn use inline onclick — no extra listener needed
