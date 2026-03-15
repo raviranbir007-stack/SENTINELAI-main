@@ -2064,15 +2064,24 @@
             }
         }
 
+        function formatThreatTypeLabel(type) {
+            return String(type || 'threat')
+                .replace(/[_-]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .replace(/\b\w/g, char => char.toUpperCase());
+        }
+
         function renderThreats(tableId = 'threatsTableBody') {
             const tbody = document.getElementById(tableId);
+            if (!tbody) return;
             tbody.innerHTML = threats.map(threat => `
                 <tr>
                     <td><code class="threat-id">${threat.id}</code></td>
                     <td>
                         <div class="threat-type">
                             <span class="threat-type-icon">${threat.icon}</span>
-                            <span style="text-transform: capitalize;">${threat.type}</span>
+                            <span>${formatThreatTypeLabel(threat.type)}</span>
                         </div>
                     </td>
                     <td><code class="threat-target">${threat.target_display || threat.target}</code></td>
@@ -2421,20 +2430,136 @@
             if (modal) modal.style.display = 'none';
         }
 
-        function viewThreatDetail(threatId) {
-            // Find the threat in recent threats
-            const threat = recentThreats.find(t => t.id === threatId);
+        function openThreatDetailModal(threat, detail = null) {
+            const modal = document.getElementById('scanDetailModal');
+            const content = document.getElementById('scanDetailContent');
+            if (!modal || !content || !threat) return;
+
+            const merged = {
+                ...threat,
+                ...(detail && !detail.error ? detail : {})
+            };
+            const severity = String(merged.severity || 'unknown').toLowerCase();
+            const status = merged.status || 'active';
+            const badgeClass = getThreatBadgeClass(severity);
+            const description = typeof merged.details === 'string'
+                ? merged.details
+                : (merged.description || merged.short_description || 'Threat details unavailable.');
+            const timestamp = merged.timestamp ? new Date(merged.timestamp).toLocaleString() : 'Unknown';
+            const apiSources = Array.isArray(merged.api_sources) ? merged.api_sources : [];
+            const affectedSystems = Array.isArray(merged.affected_systems) ? merged.affected_systems : [];
+            const detailEntries = merged.details && typeof merged.details === 'object'
+                ? Object.entries(merged.details)
+                : [];
+
+            content.innerHTML = `
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Threat ID</div>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.125rem;">${merged.id || merged.threat_id || 'Unknown'}</div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Threat</div>
+                        <div>${merged.name || 'Threat Detected'}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Severity</div>
+                        <div><span class="badge ${badgeClass}">${severity || 'unknown'}</span></div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Target</div>
+                        <div style="font-family: 'JetBrains Mono', monospace; word-break: break-word;">${merged.target_display || merged.target || merged.source || 'Unknown'}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Status</div>
+                        <div><span class="badge">${status}</span></div>
+                    </div>
+                </div>
+                <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                    <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem;">📋 Description</div>
+                    <div style="font-size: 0.875rem; line-height: 1.6;">${description}</div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Source</div>
+                        <div>${merged.source || merged.detected_by || 'SENTINEL-AI'}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Detected</div>
+                        <div>${timestamp}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Location</div>
+                        <div>${merged.location || merged.source_country || 'Endpoint Monitor'}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Confidence</div>
+                        <div>${merged.confidence_score || merged.confidence || 'N/A'}${typeof (merged.confidence_score || merged.confidence) === 'number' ? '%' : ''}</div>
+                    </div>
+                </div>
+                ${merged.recommended_action ? `
+                    <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(245, 158, 11, 0.08); border-left: 3px solid var(--warning); border-radius: 8px;">
+                        <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem;">🛠 Recommended Action</div>
+                        <div style="font-size: 0.875rem; line-height: 1.6;">${merged.recommended_action}</div>
+                    </div>
+                ` : ''}
+                ${apiSources.length ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">🔍 API Sources</div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                            ${apiSources.map(source => `<span class="badge">${source}</span>`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                ${affectedSystems.length ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">💻 Affected Systems</div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                            ${affectedSystems.map(system => `<span class="badge">${system}</span>`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                ${detailEntries.length ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">🧾 Technical Details</div>
+                        <div style="display: grid; gap: 0.5rem;">
+                            ${detailEntries.map(([key, value]) => `
+                                <div style="padding: 0.75rem; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem; text-transform: capitalize;">${String(key).replace(/_/g, ' ')}</div>
+                                    <div style="font-size: 0.875rem; word-break: break-word;">${Array.isArray(value) ? value.join(', ') : value}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
+                    <button class="btn btn-outline" onclick="closeScanDetail()">Close</button>
+                </div>
+            `;
+
+            modal.style.display = 'flex';
+        }
+
+        async function viewThreatDetail(threatId) {
+            const threat = threats.find(t => String(t.id || t.threat_id || t.scan_id) === String(threatId));
             
             if (!threat) {
                 showToast('Threat details not found', 'error');
                 return;
             }
             
-            // Open scan detail modal with the associated scan
-            if (threat.scan_id) {
-                viewScanDetail(threat.scan_id);
-            } else {
-                showToast(`Threat: ${threat.target} - ${threat.description}`, 'info');
+            const resolvedScanId = threat.scan_id || (threat.target_type && threat.threat_id ? threat.threat_id : null);
+            if (resolvedScanId) {
+                viewScanDetail(resolvedScanId);
+                return;
+            }
+
+            try {
+                const detail = await apiRequest(API_ENDPOINTS.threat(threat.id || threat.threat_id));
+                openThreatDetailModal(threat, detail);
+            } catch (error) {
+                openThreatDetailModal(threat);
+                showToast('Showing locally available threat details', 'warning');
             }
         }
 
@@ -3048,6 +3173,7 @@
                     const target = item.target || item.source_ip || item.source || item.name || 'unknown';
                     const targetDisplay = item.target_display || (item.source_ip && item.source_hostname ? `${item.source_ip} (${item.source_hostname})` : target);
                     const id = String(item.id || item.event_id || item.threat_id || item.scan_id || `THR_AUTO_${idx}`);
+                    const scanId = item.scan_id || ((item.target_type && item.threat_id && !item.event_id) ? item.threat_id : null);
                     const timestamp = item.timestamp || item.detected_at || item.created_at || new Date().toISOString();
                     const shortDesc = item.short_description || item.description || item.details || `${type} detected`;
 
@@ -3065,6 +3191,7 @@
                         id,
                         type,
                         icon,
+                        scan_id: scanId,
                         target,
                         target_display: targetDisplay,
                         severity,
@@ -3095,7 +3222,7 @@
                                 ? ` | Predict: ${t.prediction_summary}${t.prediction_confidence ? ` (${Math.round(Number(t.prediction_confidence) * 100)}%)` : ''}`
                                 : '';
                             addNotification(
-                                `Attack Detected: ${String(t.type || 'threat').toUpperCase()}`,
+                                `Attack Detected: ${formatThreatTypeLabel(t.type)}`,
                                 `${t.target_display || t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
                                 t.severity === 'critical' ? 'error' : 'warning',
                                 `live_attack_${t.id}`,

@@ -17,6 +17,7 @@ from sqlalchemy.future import select
 
 from ....database import get_db
 from ....core.nids_ingestor import NIDSIngestor
+from ....core.terminal_monitor import terminal_monitor
 from ....models import (
     AttackEvent,
     ClientInstallation,
@@ -515,6 +516,14 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             alert_created = alert.alert_id
 
         await db.commit()
+
+        if created_attack_id or _is_security_event(event_name):
+            terminal_monitor.log_attack_activity(
+                attack_type=event_name,
+                source=source_ip or source_domain or request.client_id or "unknown",
+                severity=severity.value,
+                description=description,
+            )
 
         return {
             "status": "ingested",

@@ -32,6 +32,7 @@ class TerminalActivityMonitor:
             'apps_monitored': 0,
             'connections_monitored': 0,
             'scans_performed': 0,
+            'attack_events': 0,
             'threats_detected': 0,
             'last_activity_time': None
         }
@@ -42,6 +43,7 @@ class TerminalActivityMonitor:
             'apps_monitored': 0,
             'connections_monitored': 0,
             'scans_performed': 0,
+            'attack_events': 0,
             'threats_detected': 0
         }
         
@@ -49,6 +51,7 @@ class TerminalActivityMonitor:
         self.recent_websites: Deque[str] = deque(maxlen=5)
         self.recent_apps: Deque[str] = deque(maxlen=5)
         self.recent_threats: Deque[Dict] = deque(maxlen=5)
+        self.recent_attacks: Deque[Dict] = deque(maxlen=5)
         
         self.start_time = datetime.now(timezone.utc)
         
@@ -107,6 +110,38 @@ class TerminalActivityMonitor:
                 'verdict': verdict,
                 'time': datetime.now(timezone.utc)
             })
+
+    def log_attack_activity(
+        self,
+        attack_type: str,
+        source: str = 'unknown',
+        severity: str = 'medium',
+        description: str = '',
+    ):
+        """Log endpoint/network attack activity for terminal monitoring."""
+        self.stats['attack_events'] += 1
+        self.stats['last_activity_time'] = datetime.now(timezone.utc)
+
+        normalized_severity = str(severity or 'medium').lower()
+        if normalized_severity in ['high', 'critical']:
+            self.stats['threats_detected'] += 1
+
+        attack = {
+            'type': str(attack_type or 'unknown_attack'),
+            'source': str(source or 'unknown'),
+            'severity': normalized_severity,
+            'description': str(description or ''),
+            'time': datetime.now(timezone.utc),
+        }
+        self.recent_attacks.append(attack)
+
+        readable_type = attack['type'].replace('_', ' ').strip().title()
+        detail_suffix = f" | {attack['description']}" if attack['description'] else ''
+        print(
+            f"🚨 Attack Event | type={readable_type} | source={attack['source']} | severity={attack['severity'].upper()}{detail_suffix}",
+            flush=True,
+        )
+        sys.stdout.flush()
     
     def _monitor_loop(self):
         """Main monitoring loop that displays updates"""
@@ -144,6 +179,7 @@ class TerminalActivityMonitor:
             self.stats['apps_monitored'] != self.last_printed_stats['apps_monitored'] or
             self.stats['connections_monitored'] != self.last_printed_stats['connections_monitored'] or
             self.stats['scans_performed'] != self.last_printed_stats['scans_performed'] or
+            self.stats['attack_events'] != self.last_printed_stats['attack_events'] or
             self.stats['threats_detected'] != self.last_printed_stats['threats_detected']
         )
     
@@ -154,6 +190,7 @@ class TerminalActivityMonitor:
             'apps_monitored': self.stats['apps_monitored'],
             'connections_monitored': self.stats['connections_monitored'],
             'scans_performed': self.stats['scans_performed'],
+            'attack_events': self.stats['attack_events'],
             'threats_detected': self.stats['threats_detected']
         }
     
@@ -182,14 +219,20 @@ class TerminalActivityMonitor:
         
         latest_website = self.recent_websites[-1] if self.recent_websites else "-"
         latest_threat = self.recent_threats[-1] if self.recent_threats else None
+        latest_attack = self.recent_attacks[-1] if self.recent_attacks else None
         latest_threat_text = (
             f" | last threat={latest_threat['type'].upper()}:{latest_threat['verdict'].upper()}"
             if latest_threat else ""
         )
+        latest_attack_text = (
+            f" | last attack={latest_attack['type'].upper()}@{latest_attack['source']}:{latest_attack['severity'].upper()}"
+            if latest_attack else ""
+        )
         print(
             f"📊 Uptime={uptime_str} | last={last_activity} | websites={self.stats['websites_monitored']} "
             f"| apps={self.stats['apps_monitored']} | scans={self.stats['scans_performed']} "
-            f"| threats={self.stats['threats_detected']} | latest={latest_website}{latest_threat_text}",
+            f"| attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} "
+            f"| latest={latest_website}{latest_threat_text}{latest_attack_text}",
             flush=True,
         )
         sys.stdout.flush()
@@ -203,7 +246,7 @@ class TerminalActivityMonitor:
         print(
             f"📊 Monitor summary | duration={duration_str} | websites={self.stats['websites_monitored']} "
             f"| apps={self.stats['apps_monitored']} | scans={self.stats['scans_performed']} "
-            f"| threats={self.stats['threats_detected']} | rate={threat_rate:.1f}%",
+            f"| attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} | rate={threat_rate:.1f}%",
             flush=True,
         )
         sys.stdout.flush()
