@@ -4,6 +4,7 @@ Continuously monitors system activity and automatically scans all detected artif
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import platform
@@ -43,6 +44,27 @@ class AutomaticActivityMonitor:
         self.scan_callback = scan_callback
         self.db_path = db_path
         self.running = False
+        self.enable_network_monitoring = str(
+            os.getenv("SENTINEL_ENABLE_NETWORK_MONITORING", "true")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        self.network_scan_cooldown = max(
+            60,
+            int(os.getenv("SENTINEL_NETWORK_SCAN_COOLDOWN", "600") or 600),
+        )
+        self.network_poll_interval = max(
+            5,
+            int(os.getenv("SENTINEL_NETWORK_POLL_INTERVAL", "15") or 15),
+        )
+        self.monitored_remote_ports = {
+            21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587,
+            993, 995, 1433, 3306, 3389, 5432, 6379, 8080, 8443,
+        }
+        self.browser_process_markers = {
+            'firefox', 'firefox-esr', 'chrome', 'chromium', 'brave',
+            'brave-browser', 'microsoft-edge', 'edge', 'opera', 'vivaldi', 'arc'
+        }
+        self.last_network_scan_at = 0.0
+        self.ip_last_seen: Dict[str, float] = {}
         
         # Track what we've already scanned to avoid duplicates
         self.scanned_urls: Set[str] = set()
@@ -90,22 +112,33 @@ class AutomaticActivityMonitor:
     
     def _is_private_ip(self, ip: str) -> bool:
         """Check if IP is private/local"""
-        if ip in ['127.0.0.1', '0.0.0.0', 'localhost']:
-            return True
         try:
-            parts = ip.split('.')
-            if len(parts) != 4:
-                return False
-            # Private ranges: 10.x, 172.16-31.x, 192.168.x
-            if parts[0] == '10':
-                return True
-            if parts[0] == '172' and 16 <= int(parts[1]) <= 31:
-                return True
-            if parts[0] == '192' and parts[1] == '168':
-                return True
-        except:
+            ip_obj = ipaddress.ip_address(ip)
+            return (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or getattr(ip_obj, 'is_reserved', False)
+                or getattr(ip_obj, 'is_unspecified', False)
+                or getattr(ip_obj, 'is_multicast', False)
+            )
+        except Exception:
             pass
         return False
+
+    def _get_process_name(self, pid: Optional[int]) -> str:
+        """Best-effort process name lookup for network connections."""
+        if not pid or not psutil:
+            return "unknown"
+        try:
+            return (psutil.Process(pid).name() or "unknown").lower()
+        except Exception:
+            return "unknown"
+
+    def _is_browser_process(self, process_name: str) -> bool:
+        """Return True if process looks like a browser."""
+        name = (process_name or "").lower()
+        return any(marker in name for marker in self.browser_process_markers)
     
     def _get_hostname(self, ip: str) -> str:
         """Get hostname from IP address"""
@@ -346,7 +379,7 @@ class AutomaticActivityMonitor:
             dedup.append((engine, browser_name, path))
         return dedup
     
-    async def _scan_artifact(self, artifact_type: str, value: str):
+    async def _scan_artifact(self, artifact_type: str, value: str, show_prompt: bool = True):
         """Scan an artifact and log results - minimal terminal output, full database logging"""
         try:
             if not self.scan_callback:
@@ -369,8 +402,10 @@ class AutomaticActivityMonitor:
             if verdict in ['malicious', 'suspicious', 'critical']:
                 self.stats['threats_found'] += 1
             
-            # Detailed terminal output (3–4 lines) for each activity
-            self._print_activity_prompt(artifact_type, value, result, context=context)
+            # Detailed terminal output (3–4 lines) for each activity.
+            # For network monitoring we keep SAFE/UNKNOWN results quiet to avoid spam.
+            if show_prompt or verdict in ['malicious', 'suspicious', 'critical', 'error']:
+                self._print_activity_prompt(artifact_type, value, result, context=context)
             return result
             
         except Exception as e:
@@ -567,21 +602,72 @@ class AutomaticActivityMonitor:
             asyncio.create_task(self._scan_artifact('domain', domain))
     
     async def _monitor_network_connections(self):
-        """Monitor network connections - DISABLED for passive monitoring"""
-        # Disabled - we only monitor actual user browser visits
-        # Not automatic network scanning
-        return
+        """Monitor active network connections with low-noise public-IP scanning."""
+        if not self.enable_network_monitoring or not psutil:
+            return
+
+        now = time.time()
+        if now - self.last_network_scan_at < self.network_poll_interval:
+            return
+        self.last_network_scan_at = now
+
+        seen_this_cycle = set()
+
+        try:
+            for conn in psutil.net_connections(kind='inet'):
+                try:
+                    if getattr(conn, 'status', '') != 'ESTABLISHED' or not getattr(conn, 'raddr', None):
+                        continue
+
+                    ip = conn.raddr.ip
+                    port = conn.raddr.port
+                    if not ip or self._is_private_ip(ip) or ip in seen_this_cycle:
+                        continue
+
+                    process_name = self._get_process_name(getattr(conn, 'pid', None))
+                    if not self._is_browser_process(process_name) and port not in self.monitored_remote_ports:
+                        continue
+
+                    last_seen = self.ip_last_seen.get(ip, 0.0)
+                    if now - last_seen < self.network_scan_cooldown:
+                        continue
+
+                    seen_this_cycle.add(ip)
+                    self.ip_last_seen[ip] = now
+                    self.scanned_ips.add(ip)
+                    self.stats['ips_detected'] += 1
+
+                    hostname = self._get_hostname(ip)
+                    if hostname and self._is_safe_domain(hostname):
+                        continue
+
+                    result = await self._scan_artifact('ip', ip, show_prompt=False)
+                    verdict = str((result or {}).get('verdict', 'unknown')).lower()
+                    if verdict in {'malicious', 'suspicious', 'critical', 'error'}:
+                        logger.warning(
+                            "Network monitor flagged %s:%s via %s | verdict=%s",
+                            ip,
+                            port,
+                            process_name,
+                            verdict,
+                        )
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"Network connection monitoring error: {e}")
     
     async def _monitoring_loop(self):
-        """Main monitoring loop - only monitors user browser visits"""
-        logger.info("🔍 Monitoring user browser activity (passive mode)...")
+        """Main monitoring loop for browser activity plus optional network scanning."""
+        mode = "active+passive" if self.enable_network_monitoring else "passive"
+        logger.info("🔍 Monitoring user browser activity (%s mode)...", mode)
         
         while self.running:
             try:
-                # Only monitor browser activity (user visits)
+            # Monitor browser activity (user visits)
                 await self._monitor_browser_activity()
+            await self._monitor_network_connections()
                 
-                # Check every 10 seconds for new browser visits
+            # Check every 10 seconds for new browser visits / connection changes
                 await asyncio.sleep(10)
                 
             except Exception as e:
@@ -599,9 +685,13 @@ class AutomaticActivityMonitor:
         print("=" * 70)
         print("🤖 AUTOMATIC ACTIVITY MONITORING STARTED")
         print("=" * 70)
-        print("✓ Monitoring browser activity (passive mode)")
-        print("✓ Reading real user browser history only")
-        print("✓ Network connection monitoring disabled in passive mode")
+        print("✓ Monitoring browser activity (history + real visits)")
+        if self.enable_network_monitoring:
+            print("✓ Low-noise active network connection monitoring enabled")
+            print(f"✓ Public IP scans throttled ({self.network_scan_cooldown}s cooldown per IP)")
+        else:
+            print("✓ Passive browser-history mode only")
+            print("✓ Network connection monitoring disabled by configuration")
         print("✓ Auto-scanning all detected artifacts")
         print("✓ Brief messages shown here, full details in database")
         print("=" * 70)
