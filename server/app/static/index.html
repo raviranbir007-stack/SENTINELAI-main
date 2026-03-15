@@ -3956,7 +3956,7 @@
 
         async function fetchScanHistory() {
             try {
-                const scans = await apiRequest(API_ENDPOINTS.scans);
+                const scans = await apiRequest(`${API_ENDPOINTS.scans}?source=manual`);
                 renderScanHistory(scans);
             } catch (error) {
                 showToast('Could not load scan history: ' + error.message, 'error');

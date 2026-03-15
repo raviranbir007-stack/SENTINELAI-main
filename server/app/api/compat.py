@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
@@ -431,11 +432,18 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
 
 
 @router.get("/scans")
-async def list_scans(db: AsyncSession = Depends(get_db)):
-    """Return recent scans from database (fallback to memory)."""
-    result = await db.execute(
-        select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(100)
-    )
+async def list_scans(source: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """Return recent scans from database (fallback to memory).
+
+    Defaults to operator-triggered manual scans only so automated client-side
+    protection hash checks do not flood the dashboard history.
+    Pass source=all to include every scan source.
+    """
+    query = select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(100)
+    if source != "all":
+        query = query.where(ScanHistory.scan_source == "manual")
+
+    result = await db.execute(query)
     scans = result.scalars().all()
     if scans:
         return [
@@ -443,6 +451,7 @@ async def list_scans(db: AsyncSession = Depends(get_db)):
                 "scan_id": s.scan_id,
                 "target": s.target,
                 "type": s.target_type,
+                "source": s.scan_source or "manual",
                 "status": "complete",
                 "threat_level": s.threat_level or "unknown",
                 "verdict": (s.analysis_data or {}).get("verdict"),
@@ -451,6 +460,8 @@ async def list_scans(db: AsyncSession = Depends(get_db)):
             for s in scans
         ]
 
+    if source != "all":
+        return [s for s in SCANS_STORE if s.get("scan_source", "manual") == "manual"]
     return SCANS_STORE
 
 
