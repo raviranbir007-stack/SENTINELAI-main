@@ -101,13 +101,21 @@ class TerminalActivityMonitor:
         """Log threat scan activity"""
         self.stats['scans_performed'] += 1
         self.stats['last_activity_time'] = datetime.now(timezone.utc)
+
+        normalized_type = str(artifact_type or '').lower()
+        normalized_verdict = str(verdict or '').lower()
+
+        # Suppress noisy single-signal IP suspicious events from terminal threat ticker.
+        # These are already handled by deeper corroboration paths.
+        if normalized_type == 'ip' and normalized_verdict == 'suspicious':
+            return
         
-        if verdict in ['malicious', 'suspicious', 'critical']:
+        if normalized_verdict in ['malicious', 'suspicious', 'critical']:
             self.stats['threats_detected'] += 1
             self.recent_threats.append({
                 'type': artifact_type,
                 'value': artifact_value,
-                'verdict': verdict,
+                'verdict': normalized_verdict,
                 'time': datetime.now(timezone.utc)
             })
 
@@ -136,11 +144,16 @@ class TerminalActivityMonitor:
         self.recent_attacks.append(attack)
 
         readable_type = attack['type'].replace('_', ' ').strip().title()
-        detail_suffix = f" | {attack['description']}" if attack['description'] else ''
-        print(
-            f"🚨 Attack Event | type={readable_type} | source={attack['source']} | severity={attack['severity'].upper()}{detail_suffix}",
-            flush=True,
-        )
+        W = 68
+        VW = W - 15
+        title = "─[ ATTACK DETECTED ]"
+        print(f"\n┌{title}{'─' * (W - len(title))}┐", flush=True)
+        print(f"│  {'Type':<12} {readable_type[:VW]:<{VW}}│")
+        print(f"│  {'Source':<12} {attack['source'][:VW]:<{VW}}│")
+        print(f"│  {'Severity':<12} {attack['severity'].upper()[:VW]:<{VW}}│")
+        if attack['description']:
+            print(f"│  {'Detail':<12} {str(attack['description'])[:VW]:<{VW}}│")
+        print(f"└{'─' * W}┘", flush=True)
         sys.stdout.flush()
     
     def _monitor_loop(self):
@@ -169,7 +182,10 @@ class TerminalActivityMonitor:
     
     def _print_banner(self):
         """Print initial banner"""
-        print("📊 Activity monitor active", flush=True)
+        W = 68
+        print(f"\n┌{'─' * W}┐", flush=True)
+        print(f"│  {'SENTINEL-AI  ·  Activity Monitor  ·  Online':<{W - 2}}│")
+        print(f"└{'─' * W}┘", flush=True)
         sys.stdout.flush()
     
     def _has_new_activity(self):
@@ -187,8 +203,8 @@ class TerminalActivityMonitor:
         return (
             self.stats['websites_monitored'] != self.last_printed_stats['websites_monitored'] or
             self.stats['apps_monitored'] != self.last_printed_stats['apps_monitored'] or
-            scans_delta >= 5 or
-            connections_delta >= 50
+            scans_delta >= 10 or
+            connections_delta >= 100
         )
     
     def _update_last_printed_stats(self):
@@ -203,63 +219,74 @@ class TerminalActivityMonitor:
         }
     
     def _print_update(self):
-        """Print activity update"""
-        # Skip if no activity yet
-        if (self.stats['websites_monitored'] == 0 and 
-            self.stats['apps_monitored'] == 0 and 
-            self.stats['scans_performed'] == 0):
+        """Print periodic status update"""
+        if (self.stats['websites_monitored'] == 0 and
+                self.stats['apps_monitored'] == 0 and
+                self.stats['scans_performed'] == 0):
             return
-        
-        # Calculate uptime
-        uptime = datetime.now(timezone.utc) - self.start_time
-        uptime_str = str(uptime).split('.')[0]  # Remove microseconds
-        
-        # Get time since last activity
-        last_activity = "N/A"
+
+        now = datetime.now(timezone.utc)
+        uptime_str = str(now - self.start_time).split('.')[0]
+
+        last_str = "–"
         if self.stats['last_activity_time']:
-            time_since = datetime.now(timezone.utc) - self.stats['last_activity_time']
-            if time_since.total_seconds() < 60:
-                last_activity = f"{int(time_since.total_seconds())}s ago"
-            elif time_since.total_seconds() < 3600:
-                last_activity = f"{int(time_since.total_seconds() / 60)}m ago"
+            delta = (now - self.stats['last_activity_time']).total_seconds()
+            if delta < 60:
+                last_str = f"{int(delta)}s ago"
+            elif delta < 3600:
+                last_str = f"{int(delta / 60)}m ago"
             else:
-                last_activity = f"{int(time_since.total_seconds() / 3600)}h ago"
-        
-        scans_delta = self.stats['scans_performed'] - self.last_printed_stats['scans_performed']
-        latest_threat = self.recent_threats[-1] if self.recent_threats else None
-        latest_attack = self.recent_attacks[-1] if self.recent_attacks else None
+                last_str = f"{int(delta / 3600)}h ago"
 
-        latest_event = "-"
-        if latest_attack:
-            latest_event = (
-                f"attack:{latest_attack['type'].upper()}@{latest_attack['source']}"
-                f"/{latest_attack['severity'].upper()}"
-            )
-        elif latest_threat:
-            latest_event = f"threat:{latest_threat['type'].upper()}/{latest_threat['verdict'].upper()}"
+        delta_scans = max(0, self.stats['scans_performed'] - self.last_printed_stats['scans_performed'])
+
+        latest = ""
+        if self.recent_attacks:
+            a = self.recent_attacks[-1]
+            latest = f"  ·  {a['type'].replace('_', ' ').title()} / {a['severity'].upper()}"
+        elif self.recent_threats:
+            t = self.recent_threats[-1]
+            latest = f"  ·  {t['type'].upper()} / {t['verdict'].upper()}"
         elif self.recent_websites:
-            latest_event = f"web:{self.recent_websites[-1]}"
+            site = self.recent_websites[-1].split(' [')[0]
+            latest = f"  ·  {site}"
 
-        print(
-            f"📊 Monitor | up={uptime_str} | last={last_activity} | scans={self.stats['scans_performed']} "
-            f"(+{max(scans_delta, 0)}) | attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} "
-            f"| latest={latest_event}",
-            flush=True,
-        )
+        status_parts = [
+            f"◈ up {uptime_str}",
+            f"scans {self.stats['scans_performed']} (+{delta_scans})",
+        ]
+        if self.stats['threats_detected'] > 0:
+            status_parts.append(f"threats {self.stats['threats_detected']}")
+        if self.stats['attack_events'] > 0:
+            status_parts.append(f"attacks {self.stats['attack_events']}")
+        status_parts.append(f"Δ{last_str}")
+
+        status = " · ".join(status_parts)
+        if latest:
+            status = f"{status}{latest}"
+        print(status, flush=True)
         sys.stdout.flush()
     
     def print_summary(self):
         """Print final summary"""
-        # Calculate session duration
         duration = datetime.now(timezone.utc) - self.start_time
         duration_str = str(duration).split('.')[0]
-        threat_rate = (self.stats['threats_detected'] / self.stats['scans_performed']) * 100 if self.stats['scans_performed'] > 0 else 0.0
-        print(
-            f"📊 Monitor summary | duration={duration_str} | websites={self.stats['websites_monitored']} "
-            f"| apps={self.stats['apps_monitored']} | scans={self.stats['scans_performed']} "
-            f"| attacks={self.stats['attack_events']} | threats={self.stats['threats_detected']} | rate={threat_rate:.1f}%",
-            flush=True,
+        threat_rate = (
+            (self.stats['threats_detected'] / self.stats['scans_performed']) * 100
+            if self.stats['scans_performed'] > 0 else 0.0
         )
+        W = 68
+        VW = W - 15
+        title = "─[ SESSION SUMMARY ]"
+        print(f"\n┌{title}{'─' * (W - len(title))}┐", flush=True)
+        print(f"│  {'Duration':<12} {duration_str[:VW]:<{VW}}│")
+        print(f"│  {'Websites':<12} {self.stats['websites_monitored']:<{VW}}│")
+        print(f"│  {'Scans':<12} {self.stats['scans_performed']:<{VW}}│")
+        print(f"│  {'Threats':<12} {self.stats['threats_detected']:<{VW}}│")
+        print(f"│  {'Attacks':<12} {self.stats['attack_events']:<{VW}}│")
+        rate_str = f"{threat_rate:.1f}%"
+        print(f"│  {'Threat Rate':<12} {rate_str[:VW]:<{VW}}│")
+        print(f"└{'─' * W}┘", flush=True)
         sys.stdout.flush()
 
 

@@ -72,7 +72,7 @@ Scan Summary:
                 f"Create a professional cybersecurity vulnerability report:\n{base_text}"
             )
             return response.text
-        logger.warning("Gemini client does not expose GenerativeModel; using fallback report text")
+        logger.debug("Gemini client does not expose GenerativeModel; using fallback report text")
         return base_text + "\n\nNote: AI enhancement unavailable with current Gemini client."
     except Exception as e:
         logger.warning(f"Gemini AI unavailable, using fallback text: {e}")
@@ -124,7 +124,7 @@ async def generate_report(data: ReportRequest):
 
         filename = f"{data.target}_security_report.pdf"
 
-        logger.info(f"REPORT complete | target={data.target} | format=pdf")
+        logger.debug(f"REPORT ok | target={data.target} | fmt=pdf")
         return StreamingResponse(
             pdf_file,
             media_type="application/pdf",
@@ -149,10 +149,10 @@ async def download_report(report_id: str):
         
         # Check cache first
         if hasattr(report_generator, '_reports_cache') and report_id in report_generator._reports_cache:
-            logger.info(f"REPORT download | target={report_id} | source=cache")
+            logger.debug(f"REPORT dl | target={report_id} | src=cache")
             pdf_bytes = report_generator._reports_cache[report_id]
         else:
-            logger.info(f"REPORT download | target={report_id} | source=generated")
+            logger.debug(f"REPORT dl | target={report_id} | src=generated")
             # Build a minimal threat_analysis payload for the report
             threat_analysis = {
                 "input": report_id,

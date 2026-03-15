@@ -68,6 +68,17 @@ def _normalize_scan_source(scan_source: Optional[str]) -> str:
     return value
 
 
+def _log_scan_completion(scan_id: str, scan_type: str, result: dict) -> None:
+    """Emit concise scan completion logs and suppress benign INFO noise."""
+    level = str(result.get("threat_level", "unknown")).lower()
+    indicators = int(result.get("threats_detected", 0) or 0)
+    message = f"SCAN {scan_id} | type={scan_type} | lvl={level} | ind={indicators}"
+    if level in {"suspicious", "malicious", "critical"} or indicators > 0:
+        logger.info(message)
+    else:
+        logger.debug(message)
+
+
 class ThreatScanRequest(BaseModel):
     """Request model for threat scanning"""
 
@@ -327,7 +338,7 @@ async def scan_file(
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        logger.info(f"SCAN {scan_id} complete | type=file | level={result['threat_level']} | indicators={result['threats_detected']}")
+        _log_scan_completion(scan_id, "file", result)
         return result
 
     except HTTPException:
@@ -401,7 +412,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        logger.info(f"SCAN {scan_id} complete | type=url | level={result['threat_level']} | indicators={result['threats_detected']}")
+        _log_scan_completion(scan_id, "url", result)
         return result
 
     except Exception as e:
@@ -472,7 +483,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        logger.info(f"SCAN {scan_id} complete | type=ip | level={result['threat_level']} | indicators={result['threats_detected']}")
+        _log_scan_completion(scan_id, "ip", result)
         return result
 
     except Exception as e:
@@ -542,7 +553,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        logger.info(f"SCAN {scan_id} complete | type=hash | level={result['threat_level']} | indicators={result['threats_detected']}")
+        _log_scan_completion(scan_id, "hash", result)
         return result
 
     except Exception as e:
@@ -616,7 +627,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        logger.info(f"SCAN {scan_id} complete | type={input_type.value} | level={result['threat_level']} | indicators={result['threats_detected']}")
+        _log_scan_completion(scan_id, input_type.value, result)
         return result
 
     except Exception as e:

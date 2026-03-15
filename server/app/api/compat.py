@@ -285,7 +285,10 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             "ai_analysis": analysis_result.get("ai_analysis", {}),
             "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
-        logger.info(f"SCAN {scan_id} complete | level={threat_level} | indicators={threats_detected}")
+        if threat_level in {"suspicious", "malicious", "critical"} or threats_detected > 0:
+            logger.info(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")
+        else:
+            logger.debug(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")
     except Exception as e:
         # Fallback if analysis fails
         logger.error(f"SCAN {scan_id} failed | {str(e)}")
@@ -342,9 +345,30 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             'is_automated': req.metadata.get('automated', False) if hasattr(req, 'metadata') and req.metadata else False,
             'metadata': req.metadata if hasattr(req, 'metadata') else {}
         })
+
+        try:
+            confidence_value = float(result.get('confidence', 0.0) or 0.0)
+        except Exception:
+            confidence_value = 0.0
+        warnings_list = result.get('warnings') or []
+        indicators_list = result.get('threat_indicators') or []
+        summary_blob = " ".join([
+            str(result.get('summary', '') or ''),
+            " ".join(str(w) for w in warnings_list),
+            " ".join(str(r) for r in (result.get('recommendations') or [])),
+        ]).lower()
+        low_signal_suspicious_ip = (
+            artifact_type == 'ip'
+            and str(verdict).lower() == 'suspicious'
+            and confidence_value < 0.5
+            and len(indicators_list) <= 1
+            and len(warnings_list) <= 1
+            and 'single source' in summary_blob
+        )
         
         # Update terminal monitor for real-time display
-        terminal_monitor.log_scan_activity(artifact_type, req.target, verdict)
+        if not low_signal_suspicious_ip:
+            terminal_monitor.log_scan_activity(artifact_type, req.target, verdict)
         
         # Log additional activity based on type
         if artifact_type == 'url' or artifact_type == 'domain':
