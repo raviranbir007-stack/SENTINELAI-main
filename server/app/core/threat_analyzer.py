@@ -509,7 +509,7 @@ class ThreatAnalyzer:
                 "api_results": {},
                 "threat_indicators": [],
                 "verdict": ThreatLevel.CLEAN,
-                "confidence": 1.0,
+                "confidence": 0.9,
                 "summary": "Local/private target recognized as trusted local infrastructure.",
                 "use_external_apis": False,
                 "forensic_metadata": {
@@ -543,7 +543,7 @@ class ThreatAnalyzer:
         # Local/private infrastructure should not enter malicious blocking path.
         if self._is_local_or_private_target(input_type, normalized_value):
             analysis_result["verdict"] = ThreatLevel.CLEAN
-            analysis_result["confidence"] = 1.0
+            analysis_result["confidence"] = 0.9
             analysis_result["summary"] = "Local/private target recognized as trusted local infrastructure."
             analysis_result["forensic_metadata"] = {
                 "local_target": True,
@@ -2267,8 +2267,16 @@ class ThreatAnalyzer:
                 
                 checked_sources.append(source_info)
             
+            coverage_ratio = (len(apis_called) / len(apis_expected)) if apis_expected else 1.0
+            if apis_expected:
+                # Keep confidence realistic when external corroboration is partial or absent.
+                base_confidence = 0.68 if result.get("use_external_apis", True) else 0.62
+                result["confidence"] = min(0.95, round(base_confidence + (0.27 * coverage_ratio), 3))
+            else:
+                # Heuristic-only clean result without relevant external APIs.
+                result["confidence"] = 0.8
+
             result["verdict"] = ThreatLevel.CLEAN
-            result["confidence"] = 1.0
             if apis_expected:
                 if apis_called:
                     result["summary"] = f"No threats detected. Verified by {len(apis_called)}/{len(apis_expected)} relevant API(s)."

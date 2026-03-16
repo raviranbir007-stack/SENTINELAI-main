@@ -88,8 +88,9 @@ class Settings(BaseSettings):
     API_CACHE_TTL: int = int(os.getenv("API_CACHE_TTL", "300"))
 
     # External intelligence API policy
-    # Default local-only analysis to protect third-party API quotas.
-    EXTERNAL_APIS_ENABLED: bool = os.getenv("EXTERNAL_APIS_ENABLED", "False").lower() == "true"
+    # Default to enabled so configured API keys are actually exercised.
+    # Set EXTERNAL_APIS_ENABLED=false explicitly to force local-only analysis.
+    EXTERNAL_APIS_ENABLED: bool = os.getenv("EXTERNAL_APIS_ENABLED", "True").lower() == "true"
 
     # File upload
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
