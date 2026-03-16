@@ -111,7 +111,7 @@ cd ..
 # Wait for server to start
 echo -e "${YELLOW}⏳ Waiting for server to initialize...${NC}"
 for i in {1..30}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8000/api/v1/health > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Server started successfully (PID: $SERVER_PID)${NC}"
         break
     fi
@@ -160,7 +160,7 @@ echo ""
 echo -e "${BLUE}🌐 Server:${NC}"
 echo "  Dashboard : http://localhost:8000"
 echo "  API       : http://localhost:8000/api/v1"
-echo "  Status    : http://localhost:8000/health"
+echo "  Status    : http://localhost:8000/api/v1/health"
 echo ""
 echo -e "${BLUE}📂 Logs:${NC}"
 echo "  Server    : $SERVER_LOG"

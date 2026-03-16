@@ -4,16 +4,20 @@ Handles threat analysis for IPs, URLs, domains, and file hashes
 """
 
 import hashlib
+import asyncio
 import logging
+import math
 import os
 import re
+import struct
+from collections import defaultdict
 from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, field_validator
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -36,6 +40,203 @@ _RE_IP     = re.compile(
 )
 _RE_DOMAIN = re.compile(r'^[a-zA-Z0-9\-\.]{1,253}$')
 _ALLOWED_SCAN_SOURCES = {"manual", "client_protection", "background", "scheduled"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local file analysis (mirrors compat.py helpers — no external API keys needed)
+# ─────────────────────────────────────────────────────────────────────────────
+_BYTE_SIGS_V1 = [
+    ("EICAR",             b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+                          "EICAR AV test file",          "critical"),
+    ("SHELLCODE_NOP",     b"\x90\x90\x90\x90\x90\x90\x90\x90",
+                          "NOP sled – shellcode",        "high"),
+    ("REVERSE_SHELL",     b"/bin/sh\x00-i",
+                          "Reverse-shell string",        "critical"),
+    ("MSFVENOM",          b"msfvenom",
+                          "Metasploit payload marker",   "critical"),
+    ("XOR_DECODE_STUB",   b"xor eax",
+                          "XOR decode stub",             "high"),
+    ("JAVA_CLASS",        b"\xca\xfe\xba\xbe",
+                          "Java class file",             "medium"),
+]
+_REGEX_SIGS_V1 = [
+    ("POWERSHELL_ENC",     r"powershell.*-enc",                           "high"),
+    ("WGET_PIPE_SH",       r"wget\s+.*\|\s*(ba)?sh",                     "high"),
+    ("CURL_PIPE_BASH",     r"curl\s+.*\|\s*(ba)?bash",                   "high"),
+    ("BASE64_DECODE",      r"base64\s+--?decode",                        "medium"),
+    ("NET_USER_ADD",       r"net\s+user.*\/add",                         "high"),
+    ("SCHTASK_CREATE",     r"schtasks.*\/create",                        "high"),
+    ("CREATEREMOTETHREAD", r"CreateRemoteThread",                        "critical"),
+    ("VIRTUALALLOC",       r"VirtualAlloc",                              "high"),
+    ("WSCRIPT_SHELL",      r"WScript\.Shell",                            "high"),
+    ("OBFUSCATED_EVAL",    r"eval\s*\(\s*(?:unescape|base64|gzip|rot13)", "high"),
+]
+_MAGIC_MAP_V1: Dict[bytes, str] = {
+    b"MZ":               "Windows PE executable",
+    b"\x7fELF":          "Linux ELF executable",
+    b"\xca\xfe\xba\xbe": "Java class file",
+    b"#!/":              "Script file",
+    b"PK\x03\x04":       "ZIP archive",
+    b"Rar!":             "RAR archive",
+    b"\x1f\x8b":         "GZIP compressed",
+    b"\xd0\xcf\x11\xe0": "OLE2 / Office macro",
+    b"%PDF":             "PDF document",
+}
+_DANGEROUS_EXTS_V1 = {
+    ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js",
+    ".jse", ".wsf", ".wsh", ".msi", ".scr", ".pif", ".com", ".hta",
+    ".cpl", ".reg", ".lnk", ".inf", ".jar", ".docm", ".xlsm",
+    ".pptm", ".dotm", ".xltm", ".xlam",
+}
+_HIGH_ENT = 7.2
+_MED_ENT  = 6.5
+_MAX_FILE_UPLOAD = 100 * 1024 * 1024  # 100 MB
+
+_PHISHING_LURE_PATTERNS_V1 = [
+    ("PHISHING_VERIFY_ACCOUNT", r"verify\s+your\s+account|account\s+verification|confirm\s+your\s+account", "high"),
+    ("PHISHING_ACCOUNT_SUSPENDED", r"account\s+(?:has\s+been\s+)?suspended|unusual\s+login\s+attempt", "high"),
+    ("PHISHING_PAYMENT_URGENT", r"payment\s+failed|billing\s+issue|update\s+payment\s+method", "high"),
+    ("PHISHING_CREDENTIAL_HARVEST", r"(enter|confirm|re-enter)\s+(your\s+)?(password|otp|one-time\s+password|2fa\s+code)", "medium"),
+    ("PHISHING_WALLET_SEED", r"seed\s+phrase|recovery\s+phrase|wallet\s+verification", "high"),
+]
+
+
+def _entropy_v1(data: bytes) -> float:
+    if not data:
+        return 0.0
+    freq: Dict[int, int] = defaultdict(int)
+    for b in data:
+        freq[b] += 1
+    n = len(data)
+    return -sum((c / n) * math.log2(c / n) for c in freq.values() if c)
+
+
+def _local_scan_v1(content: bytes, filename: str) -> Dict:
+    """Fast in-process file analysis for the v1 /scan/file endpoint."""
+    from pathlib import Path as _P
+    ext    = _P(filename).suffix.lower() if filename else ""
+    sample = content[: 1 * 1024 * 1024]
+    entropy = _entropy_v1(sample)
+
+    magic_type = "Unknown"
+    for magic, desc in _MAGIC_MAP_V1.items():
+        if sample[: len(magic)] == magic:
+            magic_type = desc
+            break
+
+    text = sample.decode("latin-1", errors="replace")
+    matched: List[Dict] = []
+
+    for name, pat, desc, sev in _BYTE_SIGS_V1:
+        if isinstance(pat, bytes) and pat in sample:
+            matched.append({"name": name, "desc": desc, "severity": sev})
+    for name, pat, sev in _REGEX_SIGS_V1:
+        try:
+            if re.search(pat, text, re.IGNORECASE):
+                matched.append({"name": name, "desc": name.replace("_", " ").title(), "severity": sev})
+        except Exception:
+            pass
+
+    # Phishing-focused text heuristics for workshop kits and credential-harvest pages
+    text_lower = text.lower()
+    has_password_input = bool(re.search(r"<input[^>]+type\s*=\s*['\"]?password", text, re.IGNORECASE))
+    has_form = "<form" in text_lower
+    has_remote_action = bool(re.search(r"<form[^>]+action\s*=\s*['\"]https?://", text, re.IGNORECASE))
+
+    if has_form and has_password_input and (has_remote_action or "action=" in text_lower):
+        matched.append({
+            "name": "PHISHING_LOGIN_FORM",
+            "desc": "Credential login form with explicit action target",
+            "severity": "high",
+        })
+
+    for name, pat, sev in _PHISHING_LURE_PATTERNS_V1:
+        try:
+            if re.search(pat, text, re.IGNORECASE):
+                matched.append({"name": name, "desc": name.replace("_", " ").title(), "severity": sev})
+        except Exception:
+            pass
+
+    if "window.location" in text_lower and ("atob(" in text_lower or "fromcharcode(" in text_lower):
+        matched.append({
+            "name": "OBFUSCATED_REDIRECT",
+            "desc": "Obfuscated JavaScript redirect logic",
+            "severity": "high",
+        })
+
+    # PE header
+    pe_info = None
+    if sample[:2] == b"MZ":
+        try:
+            if len(sample) >= 0x40:
+                pe_off = struct.unpack_from("<I", sample, 0x3C)[0]
+                if pe_off + 24 <= len(sample) and sample[pe_off: pe_off + 4] == b"PE\x00\x00":
+                    chars   = struct.unpack_from("<H", sample, pe_off + 22)[0]
+                    opt_mag = struct.unpack_from("<H", sample, pe_off + 24)[0]
+                    is_dll  = bool(chars & 0x2000)
+                    no_reloc = bool(chars & 0x0001)
+                    pe_info  = {
+                        "arch": "x86" if opt_mag == 0x10B else "x64" if opt_mag == 0x20B else "unknown",
+                        "is_dll": is_dll,
+                        "no_reloc": no_reloc,
+                        "suspicious": no_reloc and not is_dll,
+                    }
+        except Exception:
+            pass
+
+    indicators: List[Dict] = []
+    _CONF = {"critical": 1.0, "high": 0.85, "medium": 0.65}
+
+    for sig in matched:
+        sev  = sig.get("severity", "medium")
+        indicators.append({
+            "source": "Local Analysis",
+            "severity": sev,
+            "indicator": f"Signature match: {sig.get('desc', sig['name'])}",
+            "type": sig["name"],
+            "confidence": _CONF.get(sev, 0.5),
+        })
+
+    if entropy >= _HIGH_ENT:
+        indicators.append({"source": "Local Analysis", "severity": "high",
+                           "indicator": f"Very high entropy ({entropy:.2f}) — likely packed/encrypted",
+                           "type": "HIGH_ENTROPY", "confidence": 0.78})
+    elif entropy >= _MED_ENT:
+        indicators.append({"source": "Local Analysis", "severity": "medium",
+                           "indicator": f"Elevated entropy ({entropy:.2f}) — possible obfuscation",
+                           "type": "MED_ENTROPY", "confidence": 0.55})
+
+    if ext in _DANGEROUS_EXTS_V1:
+        indicators.append({"source": "Local Analysis", "severity": "medium",
+                           "indicator": f"Dangerous extension: {ext}",
+                           "type": "DANGEROUS_EXT", "confidence": 0.60})
+
+    if pe_info and pe_info.get("suspicious"):
+        indicators.append({"source": "Local Analysis", "severity": "high",
+                           "indicator": "PE header anomaly — no relocation, not a DLL",
+                           "type": "PE_ANOMALY", "confidence": 0.80})
+
+    _SEV_SCORE = {"critical": 5, "high": 3, "medium": 2, "low": 1}
+    score = sum(_SEV_SCORE.get(ind.get("severity", "low"), 1) for ind in indicators)
+
+    risk = ("CRITICAL" if score >= 8 else "HIGH" if score >= 5
+            else "MEDIUM" if score >= 2 else "LOW" if score >= 1 else "CLEAN")
+
+    _VERDICT = {"CRITICAL": "malicious", "HIGH": "malicious",
+                "MEDIUM": "suspicious", "LOW": "suspicious", "CLEAN": "clean"}
+
+    return {
+        "risk_level": risk,
+        "risk_score": score,
+        "entropy": round(entropy, 3),
+        "magic_type": magic_type,
+        "file_extension": ext,
+        "signatures": [s["name"] for s in matched],
+        "pe_info": pe_info,
+        "threat_indicators": indicators,
+        "local_verdict": _VERDICT.get(risk, "clean"),
+    }
+
+
 
 
 def _generate_scan_id(prefix: str) -> str:
@@ -68,9 +269,31 @@ def _normalize_scan_source(scan_source: Optional[str]) -> str:
     return value
 
 
+def _normalize_verdict(verdict: object, default: str = "unknown") -> str:
+    """Normalize threat verdict values from enum/string/object forms."""
+    value = verdict if verdict is not None else default
+    if hasattr(value, "value"):
+        value = getattr(value, "value")
+    elif hasattr(value, "name"):
+        value = getattr(value, "name")
+
+    normalized = str(value or default).strip().lower()
+    if normalized.startswith("threatlevel."):
+        normalized = normalized.split(".", 1)[1]
+
+    alias_map = {
+        "safe": "clean",
+        "benign": "clean",
+        "ok": "clean",
+        "danger": "malicious",
+        "critical": "malicious",
+    }
+    return alias_map.get(normalized, normalized or default)
+
+
 def _log_scan_completion(scan_id: str, scan_type: str, result: dict) -> None:
     """Emit concise scan completion logs and suppress benign INFO noise."""
-    level = str(result.get("threat_level", "unknown")).lower()
+    level = _normalize_verdict(result.get("threat_level", "unknown"))
     indicators = int(result.get("threats_detected", 0) or 0)
     message = f"SCAN {scan_id} | type={scan_type} | lvl={level} | ind={indicators}"
     if level in {"malicious", "critical"} or indicators > 1:
@@ -178,7 +401,8 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
         current_scan_id = scan_data["scan_id"]
         id_prefix = current_scan_id.split("_", 1)[0] if "_" in current_scan_id else "SCAN"
 
-        for attempt in range(2):
+        max_attempts = 4
+        for attempt in range(max_attempts):
             try:
                 scan_record = ScanHistory(
                     scan_id=current_scan_id,
@@ -223,6 +447,22 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
                         "scan_id collision detected; retrying with regenerated id %s",
                         current_scan_id,
                     )
+                    continue
+                raise
+            except OperationalError as oe:
+                await db.rollback()
+                msg = str(oe).lower()
+                locked = "database is locked" in msg or "database table is locked" in msg
+                if locked and attempt < (max_attempts - 1):
+                    backoff = 0.2 * (attempt + 1)
+                    logger.warning(
+                        "Database locked while storing scan %s (attempt %s/%s); retrying in %.1fs",
+                        current_scan_id,
+                        attempt + 1,
+                        max_attempts,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
                     continue
                 raise
     except Exception as e:
@@ -273,31 +513,63 @@ async def scan_file(
         Threat analysis results with optional PDF report
     """
     try:
-        # Read file content and compute hash
+        # Read file content and compute hashes
         file_content = await file.read()
         file_size = len(file_content)
 
-        # Check file size limit (10MB)
-        if file_size > 10 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+        # Check file size limit (100 MB)
+        if file_size > _MAX_FILE_UPLOAD:
+            raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
 
         # Compute SHA256 hash
         file_hash = hashlib.sha256(file_content).hexdigest()
+        md5_hash  = hashlib.md5(file_content).hexdigest()
 
         logger.debug(f"SCAN FILE started | target={file.filename}")
 
-        # Run threat analysis on file hash
-        analysis_result = await threat_analyzer.analyze(
-            file_hash,
-            use_external_apis=include_external_apis,
+        # ── LOCAL analysis (primary, always runs) ─────────────────────────
+        local = _local_scan_v1(file_content, file.filename or "unknown")
+
+        # ── EXTERNAL API hash lookup (secondary, requires API keys) ────────
+        try:
+            analysis_result = await threat_analyzer.analyze(
+                file_hash,
+                use_external_apis=include_external_apis,
+            )
+        except Exception as api_err:
+            logger.warning(f"External API file-hash lookup failed: {api_err}")
+            analysis_result = {"verdict": "clean", "confidence": 0.0,
+                               "threat_indicators": [], "api_results": {},
+                               "forensic_metadata": {}}
+
+        # ── Merge and determine final verdict ────────────────────────────
+        _PRIO = {"malicious": 3, "suspicious": 2, "clean": 1, "safe": 1, "unknown": 0}
+        api_verdict    = _normalize_verdict(analysis_result.get("verdict", "clean"), default="clean")
+        analysis_result["verdict"] = api_verdict
+        local_verdict  = local["local_verdict"]
+        final_verdict  = (
+            local_verdict
+            if _PRIO.get(local_verdict, 0) >= _PRIO.get(api_verdict, 0)
+            else api_verdict
         )
 
-        # Add file metadata
+        _TL = {"malicious": "malicious", "suspicious": "suspicious",
+               "clean": "safe", "safe": "safe"}
+        threat_level_str = _TL.get(final_verdict, "unknown")
+
+        all_indicators = local["threat_indicators"] + analysis_result.get("threat_indicators", [])
+
+        local_conf = min(local["risk_score"] / 10.0, 1.0) if local["risk_score"] > 0 else 0.0
+        api_conf   = float(analysis_result.get("confidence", 0.0) or 0.0)
+        confidence = max(local_conf, api_conf)
+
+        # Add file metadata to analysis result
         analysis_result["file_info"] = {
             "filename": file.filename,
             "size": file_size,
             "content_type": file.content_type,
             "sha256": file_hash,
+            "md5": md5_hash,
         }
 
         scan_id = _generate_scan_id("FILE")
@@ -309,7 +581,6 @@ async def scan_file(
                 pdf_bytes = await report_generator.generate_analysis_report(analysis_result)
                 if pdf_bytes:
                     report_url = f"/api/v1/reports/download/{scan_id}"
-                    # Store report for later retrieval (in-memory for now)
                     if not hasattr(report_generator, '_reports_cache'):
                         report_generator._reports_cache = {}
                     report_generator._reports_cache[scan_id] = pdf_bytes
@@ -317,22 +588,35 @@ async def scan_file(
             logger.error(f"Report generation failed: {str(e)}")
         
         result = {
-            "scan_id": scan_id,
-            "filename": file.filename,
-            "file_hash": file_hash,
-            "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
-            "confidence": analysis_result.get("confidence", 0.0),
-            "threats_detected": len(analysis_result.get("threat_indicators", [])),
-            "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
-            "report_url": report_url,
-            "target_type": "file",
-            "target_name": file.filename,
-            "client_id": client_id,
-            "scan_source": _normalize_scan_source(scan_source),
-            # Include forensic metadata
-            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
+            "scan_id":          scan_id,
+            "filename":         file.filename,
+            "file_hash":        file_hash,
+            "md5_hash":         md5_hash,
+            "status":           "complete",
+            "threat_level":     threat_level_str,
+            "confidence":       round(confidence, 4),
+            "threats_detected": len(all_indicators),
+            "verdict":          final_verdict,
+            "analysis":         analysis_result,
+            "timestamp":        datetime.utcnow().isoformat(),
+            "report_url":       report_url,
+            "target_type":      "file",
+            "target":           file.filename,
+            "target_name":      file.filename,
+            "client_id":        client_id,
+            "scan_source":      _normalize_scan_source(scan_source),
+            # Local analysis breakdown
+            "local_analysis": {
+                "risk_level":     local["risk_level"],
+                "risk_score":     local["risk_score"],
+                "entropy":        local["entropy"],
+                "magic_type":     local["magic_type"],
+                "file_extension": local["file_extension"],
+                "signatures":     local["signatures"],
+                "pe_info":        local["pe_info"],
+            },
+            "threat_indicators":  all_indicators,
+            "forensic_metadata":  analysis_result.get("forensic_metadata", {}),
         }
         
         # Store in scan history and database
@@ -374,6 +658,8 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             url,
             use_external_apis=request.include_external_apis,
         )
+        normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
+        analysis_result["verdict"] = normalized_verdict
 
         scan_id = _generate_scan_id("URL")
         
@@ -395,7 +681,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "scan_id": scan_id,
             "url": url,
             "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
+            "threat_level": normalized_verdict,
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
@@ -445,6 +731,8 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             ip,
             use_external_apis=request.include_external_apis,
         )
+        normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
+        analysis_result["verdict"] = normalized_verdict
 
         scan_id = _generate_scan_id("IP")
         
@@ -466,7 +754,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "scan_id": scan_id,
             "ip": ip,
             "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
+            "threat_level": normalized_verdict,
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
@@ -516,6 +804,8 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             file_hash,
             use_external_apis=request.include_external_apis,
         )
+        normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
+        analysis_result["verdict"] = normalized_verdict
 
         scan_id = _generate_scan_id("HASH")
         
@@ -536,7 +826,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "scan_id": scan_id,
             "hash": file_hash,
             "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
+            "threat_level": normalized_verdict,
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
@@ -586,6 +876,8 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             target,
             use_external_apis=request.include_external_apis,
         )
+        normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
+        analysis_result["verdict"] = normalized_verdict
 
         scan_id = _generate_scan_id("SCAN")
         
@@ -607,7 +899,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "target": target,
             "detected_type": input_type.value,
             "status": "complete",
-            "threat_level": analysis_result.get("verdict", "unknown"),
+            "threat_level": normalized_verdict,
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,

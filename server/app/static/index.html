@@ -2318,6 +2318,69 @@
             </div>
         </section>
 
+        <!-- Live Activity Monitor Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🌐 Live Activity Monitor</h2>
+                        <p>Browser history surveillance — websites visited with scan verdicts &amp; recent scan events</p>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <button id="toggleLiveActivityBtn" class="btn btn-outline" title="Minimize/Maximize">− Minimize</button>
+                        <button id="refreshLiveActivityBtn" class="btn btn-outline btn-sm" onclick="refreshLiveActivity()" title="Refresh">↺ Refresh</button>
+                    </div>
+                </div>
+                <div id="liveActivityCard" class="card card-glass" style="padding:0;">
+                    <!-- Tab bar -->
+                    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+                        <button id="liveTabWebsites" class="btn btn-ghost" style="border-radius:0;border-right:1px solid var(--border);padding:0.6rem 1.1rem;font-size:0.82rem;font-weight:600;" onclick="switchLiveTab('websites')">🌐 Websites Visited</button>
+                        <button id="liveTabActivity" class="btn btn-ghost" style="border-radius:0;padding:0.6rem 1.1rem;font-size:0.82rem;" onclick="switchLiveTab('activity')">📡 All Scan Events</button>
+                        <div style="flex:1;"></div>
+                        <span id="liveActivityCount" style="align-self:center;padding:0 1rem;font-size:0.78rem;color:var(--muted-foreground);"></span>
+                    </div>
+                    <!-- Websites tab -->
+                    <div id="liveTabContentWebsites" style="overflow-x:auto;">
+                        <table class="threats-table">
+                            <thead>
+                                <tr>
+                                    <th>Domain</th>
+                                    <th>Host IP</th>
+                                    <th>Browser</th>
+                                    <th>Verdict</th>
+                                    <th>Confidence</th>
+                                    <th>Status</th>
+                                    <th>Visited</th>
+                                </tr>
+                            </thead>
+                            <tbody id="liveWebsitesBody">
+                                <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading websites…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Activity tab (hidden by default) -->
+                    <div id="liveTabContentActivity" style="display:none;overflow-x:auto;">
+                        <table class="threats-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Target</th>
+                                    <th>Verdict</th>
+                                    <th>Confidence</th>
+                                    <th>Indicators</th>
+                                    <th>Source</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="liveActivityBody">
+                                <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading activity…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Security Posture Section -->
         <section class="section">
             <div class="container">
@@ -2437,89 +2500,128 @@
     <div class="page" id="scans">
         <section class="section">
             <div class="container">
-                <div style="margin-bottom: 3rem;">
-                    <h2 style="margin-bottom: 0.5rem;">Threat Scanner</h2>
-                    <p style="color: var(--muted-foreground); margin-bottom: 2rem;">Analyze IPs, domains, URLs, and files for potential threats</p>
-                    
-                    <!-- Scan Type Options -->
-                    <div class="api-grid" style="grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 3rem;">
-                        <div class="card card-cyber api-card" style="cursor: pointer; text-align: center; padding: 2rem 1.5rem;" data-scan-type="ip">
-                            <div style="font-size: 2rem; margin-bottom: 1rem;">🌐</div>
-                            <h3>IP Address</h3>
-                            <p>Scan IP for reputation</p>
-                        </div>
-                        <div class="card card-cyber api-card" style="cursor: pointer; text-align: center; padding: 2rem 1.5rem;" data-scan-type="domain">
-                            <div style="font-size: 2rem; margin-bottom: 1rem;">📋</div>
-                            <h3>Domain</h3>
-                            <p>Analyze domain threats</p>
-                        </div>
-                        <div class="card card-cyber api-card" style="cursor: pointer; text-align: center; padding: 2rem 1.5rem;" data-scan-type="url">
-                            <div style="font-size: 2rem; margin-bottom: 1rem;">🔍</div>
-                            <h3>URL</h3>
-                            <p>Check URL safety</p>
-                        </div>
-                        <div class="card card-cyber api-card" style="cursor: pointer; text-align: center; padding: 2rem 1.5rem;" data-scan-type="file">
-                            <div style="font-size: 2rem; margin-bottom: 1rem;">📤</div>
-                            <h3>File Upload</h3>
-                            <p>Upload file for analysis</p>
-                        </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="margin-bottom: 0.4rem;">Threat Scanner</h2>
+                    <p style="color: var(--muted-foreground);">Analyze IPs, domains, URLs, files, or entire folders for potential threats</p>
+                </div>
+
+                <!-- Scan Type Quick-pick -->
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 2rem;">
+                    <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="ip">
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
+                        <div style="font-weight:600;font-size:0.875rem;">IP Address</div>
+                        <div style="font-size:0.75rem;color:var(--muted-foreground);">Reputation check</div>
+                    </div>
+                    <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="domain">
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">📋</div>
+                        <div style="font-weight:600;font-size:0.875rem;">Domain</div>
+                        <div style="font-size:0.75rem;color:var(--muted-foreground);">Domain threats</div>
+                    </div>
+                    <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="url">
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">🔗</div>
+                        <div style="font-weight:600;font-size:0.875rem;">URL</div>
+                        <div style="font-size:0.75rem;color:var(--muted-foreground);">URL safety</div>
+                    </div>
+                    <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="file">
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">📁</div>
+                        <div style="font-weight:600;font-size:0.875rem;">File / Folder</div>
+                        <div style="font-size:0.75rem;color:var(--muted-foreground);">Deep inspection</div>
                     </div>
                 </div>
 
-                <!-- New Scan Section -->
-                <div class="card card-cyber" style="padding: 2rem; margin-bottom: 3rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
-                        <span style="font-size: 1.5rem;">🔍</span>
-                        <h3 style="margin: 0;">New Scan</h3>
+                <!-- New Scan Card -->
+                <div class="card card-cyber" style="padding:1.75rem;margin-bottom:2rem;">
+                    <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:1.25rem;">
+                        <span style="font-size:1.25rem;">🔍</span>
+                        <h3 style="margin:0;font-size:1rem;">New Scan</h3>
                     </div>
-                    
-                    <!-- Text/URL/IP Scan -->
-                    <div style="margin-bottom: 1.5rem;">
-                        <label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.75rem;">Scan Target (IP, Domain, URL, Hash)</label>
-                        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                            <input type="text" id="newScanInput" class="scan-input" placeholder="Enter IP, domain, URL, or hash to scan..." style="flex: 1; min-width: 300px;">
-                            <button class="btn btn-cyber" id="newScanBtn" style="white-space: nowrap;">🔍 Start Scan</button>
+
+                    <!-- Text / IP / URL / Domain / Hash scan -->
+                    <div style="margin-bottom:1.25rem;">
+                        <label style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Scan Target — IP · Domain · URL · Hash</label>
+                        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+                            <input type="text" id="newScanInput" class="scan-input"
+                                   placeholder="192.168.1.1 · example.com · https://site.com · sha256..."
+                                   style="flex:1;min-width:280px;">
+                            <button class="btn btn-cyber" id="newScanBtn" style="white-space:nowrap;min-width:130px;">🔍 Start Scan</button>
                         </div>
                     </div>
 
-                    <!-- File Upload Scan -->
-                    <div>
-                        <label style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.75rem;">Upload File for Analysis</label>
-                        <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                            <input type="file" id="fileUploadInput" style="flex: 1; min-width: 300px; padding: 0.75rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); cursor: pointer;">
-                            <button class="btn btn-cyber" id="uploadScanBtn" style="white-space: nowrap;">📤 Upload & Scan</button>
-                        </div>
-                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.5rem;">Max file size: 100MB. Supported: exe, dll, pdf, zip, etc.</div>
+                    <!-- Divider -->
+                    <div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0;color:var(--muted-foreground);font-size:0.8rem;">
+                        <div style="flex:1;height:1px;background:var(--border);"></div>
+                        <span>OR upload file / folder</span>
+                        <div style="flex:1;height:1px;background:var(--border);"></div>
                     </div>
-                    
-                    <div id="scanStatus" style="margin-top: 1rem; font-size: 0.875rem; color: var(--muted-foreground); display: none;"></div>
+
+                    <!-- File + Folder upload -->
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                        <!-- Single file -->
+                        <div>
+                            <label style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Single File</label>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <label style="flex:1;min-width:160px;display:flex;align-items:center;gap:0.5rem;padding:0.65rem 0.9rem;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.85rem;color:var(--foreground);transition:border-color 0.2s;">
+                                    <span>📄</span>
+                                    <span id="fileUploadLabel">Choose file…</span>
+                                    <input type="file" id="fileUploadInput" style="display:none;" onchange="handleFileSelected(this)">
+                                </label>
+                                <button class="btn btn-cyber" id="uploadScanBtn" style="white-space:nowrap;" disabled>📤 Scan</button>
+                            </div>
+                            <div style="font-size:0.72rem;color:var(--muted-foreground);margin-top:0.4rem;">Max 100 MB · exe, dll, pdf, zip, ps1…</div>
+                        </div>
+
+                        <!-- Folder -->
+                        <div>
+                            <label style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Folder (all files)</label>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <label style="flex:1;min-width:160px;display:flex;align-items:center;gap:0.5rem;padding:0.65rem 0.9rem;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.85rem;color:var(--foreground);transition:border-color 0.2s;">
+                                    <span>📂</span>
+                                    <span id="folderUploadLabel">Choose folder…</span>
+                                    <input type="file" id="folderUploadInput" style="display:none;" webkitdirectory multiple onchange="handleFolderSelected(this)">
+                                </label>
+                                <button class="btn btn-cyber" id="folderScanBtn" style="white-space:nowrap;" disabled>📂 Scan All</button>
+                            </div>
+                            <div style="font-size:0.72rem;color:var(--muted-foreground);margin-top:0.4rem;">Scans every file in the selected folder</div>
+                        </div>
+                    </div>
+
+                    <!-- Scan status / progress -->
+                    <div id="scanStatus" style="margin-top:1rem;font-size:0.85rem;color:var(--muted-foreground);display:none;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:6px;border-left:3px solid var(--primary);"></div>
+
+                    <!-- Inline file scan result panel -->
+                    <div id="fileScanResultPanel" style="display:none;margin-top:1rem;padding:1rem;border-radius:8px;border:1px solid var(--border);">
+                        <div id="fileScanResultContent"></div>
+                    </div>
                 </div>
 
-                <!-- Scan History Section -->
+                <!-- Scan History -->
                 <div>
-                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
-                        <span style="font-size: 1.5rem;">⏱️</span>
-                        <h3 style="margin: 0;">Scan History</h3>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.65rem;margin-bottom:1rem;">
+                        <div style="display:flex;align-items:center;gap:0.65rem;">
+                            <span style="font-size:1.25rem;">⏱️</span>
+                            <h3 style="margin:0;font-size:1rem;">Recent Scans</h3>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="toggleScansHistoryBtn" title="Minimize/Maximize scan history">🗕 Minimize</button>
                     </div>
-                    <div class="card card-glass">
+                    <div class="card card-glass" id="scansHistoryCard">
                         <div class="table-shell">
-                        <table class="threats-table">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>TARGET</th>
-                                    <th>TYPE</th>
-                                    <th>STATUS</th>
-                                    <th>RESULT</th>
-                                    <th style="text-align: right;">ACTION</th>
-                                </tr>
-                            </thead>
-                            <tbody id="scanHistoryBody">
-                                <tr>
-                                    <td colspan="6" style="text-align: center; padding: 2rem; color: var(--muted-foreground);">Loading scan history...</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                            <table class="threats-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>TARGET</th>
+                                        <th>TYPE</th>
+                                        <th>STATUS</th>
+                                        <th>RESULT</th>
+                                        <th style="text-align:right;">ACTION</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scanHistoryBody">
+                                    <tr>
+                                        <td colspan="6" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading scan history…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -2536,8 +2638,9 @@
                         <h2>All Threats</h2>
                         <p>Complete threat intelligence database</p>
                     </div>
+                    <button class="btn btn-ghost btn-sm" id="toggleThreatsPageBtn" title="Minimize/Maximize threats table">🗕 Minimize</button>
                 </div>
-                <div class="card card-glass">
+                <div class="card card-glass" id="allThreatsPageCard">
                     <div class="table-shell">
                     <table class="threats-table">
                         <thead>
@@ -2570,9 +2673,12 @@
                         <h2>Security Reports</h2>
                         <p>AI-generated threat analysis reports</p>
                     </div>
-                    <button class="btn btn-cyber" onclick="generateReport()">✨ Generate New Report</button>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <button class="btn btn-ghost btn-sm" id="toggleReportsPageBtn" title="Minimize/Maximize reports panel">🗕 Minimize</button>
+                        <button class="btn btn-cyber" onclick="generateReport()">✨ Generate New Report</button>
+                    </div>
                 </div>
-                <div class="card card-glass" style="padding: 1.5rem;">
+                <div class="card card-glass" id="allReportsPageCard" style="padding: 1.5rem;">
                     <div id="allReportsPage">
                         <p style="color: var(--muted-foreground); text-align: center; padding: 2rem;">Loading reports...</p>
                     </div>
@@ -2872,6 +2978,9 @@
             activePage: 'dashboard',
             selectedReportType: 'executive_summary',
             searchQuery: '',
+            scansHistoryCollapsed: false,
+            threatsPageCollapsed: false,
+            reportsPageCollapsed: false,
         };
         let isPageVisible = true;
         let panelState = {
@@ -2908,6 +3017,10 @@
             dashboardMonitoringStats: '/api/v1/dashboard/monitoring-stats',
             dashboardSecurityPosture: '/api/v1/dashboard/security-posture',
             dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
+
+            // Monitoring activity feeds
+            monitoringWebsites: '/api/v1/monitoring/websites',
+            monitoringActivity: '/api/v1/monitoring/activity',
             
             // Scans
             scan: '/api/scan',
@@ -3137,7 +3250,13 @@
             const dataState = classifyFreshnessAge(dataAgeMs);
 
             let state = fetchState;
-            if (dataState === 'offline' || dataState === 'stale') {
+            // Only let data-content age worsen the state when the FETCH itself is
+            // already questionable (delayed/stale/offline).  If we just fetched
+            // successfully (live/normal), trust that the feed is fresh regardless of
+            // the age of the records it returned — e.g. a clean environment with no
+            // recent threat events should not appear as an offline feed.
+            if ((fetchState === 'delayed' || fetchState === 'stale' || fetchState === 'offline') &&
+                (dataState === 'offline' || dataState === 'stale')) {
                 state = dataState;
             }
             if (fetchState === 'offline' || signal.error) {
@@ -3338,6 +3457,7 @@
                 fetchThreats(),
                 fetchLogs(),
                 fetchQuarantineInventory(),
+                refreshLiveActivity(),
             ]).then(() => {
                 renderSecurityTaskMonitor();
             });
@@ -3844,6 +3964,7 @@
                     const effectiveForensic = scan.forensic_metadata || scanAnalysis.forensic_metadata || {};
                     const effectiveThreatIndicators = scan.threat_indicators || scanAnalysis.threat_indicators || [];
                     const effectiveApiResults = scan.api_results || scanAnalysis.api_results || null;
+                    const effectiveLocalAnalysis = scan.local_analysis || scanAnalysis.local_analysis || null;
                     const normalizedThreatLevel = normalizeThreatLevel(scan.threat_level, scan.verdict);
                     const threatColor = getThreatColor(normalizedThreatLevel);
                     const threatBadgeClass = getThreatBadgeClass(normalizedThreatLevel);
@@ -4012,6 +4133,29 @@
                             </div>
                         `;
                     }
+
+                    // Build local analysis section
+                    let localAnalysisHTML = '';
+                    if (effectiveLocalAnalysis) {
+                        const la = effectiveLocalAnalysis;
+                        const signatures = Array.isArray(la.signatures) ? la.signatures : [];
+                        localAnalysisHTML = `
+                            <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(59, 130, 246, 0.06); border-radius: 8px; border-left: 3px solid var(--primary);">
+                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🧪 Local File Analysis</div>
+                                <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.75rem;font-size:0.82rem;">
+                                    <div><span style="color:var(--muted-foreground);">Risk Level:</span> <strong>${la.risk_level || 'unknown'}</strong></div>
+                                    <div><span style="color:var(--muted-foreground);">Entropy:</span> <strong>${la.entropy ?? 'n/a'}</strong></div>
+                                    <div><span style="color:var(--muted-foreground);">Magic Type:</span> <strong>${la.magic_type || 'unknown'}</strong></div>
+                                    <div><span style="color:var(--muted-foreground);">Extension:</span> <strong>${la.file_extension || 'n/a'}</strong></div>
+                                </div>
+                                ${signatures.length ? `
+                                    <div style="margin-top:0.75rem;display:flex;flex-wrap:wrap;gap:0.4rem;">
+                                        ${signatures.map(sig => `<span class="badge">${sig}</span>`).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    }
                     
                     content.innerHTML = `
                         <div style="margin-bottom: 1.5rem;">
@@ -4053,6 +4197,7 @@
                                 <div style="font-size: 0.875rem; line-height: 1.6;">${scan.summary}</div>
                             </div>
                         ` : ''}
+                        ${localAnalysisHTML}
                         ${apiResultsHTML}
                         ${forensicHTML}
                         ${threatIndicatorsHTML}
@@ -4752,6 +4897,7 @@
                 fetchMonitoringStats(),
                 fetchSecurityPosture(),
                 fetchQuarantineInventory(),
+                refreshLiveActivity(),
             ]).then(() => {
                 showToast('Operational refresh complete', 'success');
             }).finally(() => {
@@ -4869,6 +5015,10 @@
                 fetchScanHistory();
             } else if (page === 'reports') {
                 renderAllReportsPage();
+            } else if (page === 'dashboard') {
+                // Refresh live activity feed when returning to dashboard
+                refreshLiveActivity();
+                fetchMonitoringStats();
             }
         }
 
@@ -4916,6 +5066,48 @@
             panelState.quarantineCollapsed = !panelState.quarantineCollapsed;
             persistPanelState();
             applyPanelState();
+        }
+
+        function applyPageSectionState() {
+            const scansCard = document.getElementById('scansHistoryCard');
+            const scansBtn = document.getElementById('toggleScansHistoryBtn');
+            const threatsCard = document.getElementById('allThreatsPageCard');
+            const threatsBtn = document.getElementById('toggleThreatsPageBtn');
+            const reportsCard = document.getElementById('allReportsPageCard');
+            const reportsBtn = document.getElementById('toggleReportsPageBtn');
+
+            if (scansCard && scansBtn) {
+                scansCard.style.display = uiState.scansHistoryCollapsed ? 'none' : 'block';
+                scansBtn.textContent = uiState.scansHistoryCollapsed ? '🗖 Maximize' : '🗕 Minimize';
+            }
+
+            if (threatsCard && threatsBtn) {
+                threatsCard.style.display = uiState.threatsPageCollapsed ? 'none' : 'block';
+                threatsBtn.textContent = uiState.threatsPageCollapsed ? '🗖 Maximize' : '🗕 Minimize';
+            }
+
+            if (reportsCard && reportsBtn) {
+                reportsCard.style.display = uiState.reportsPageCollapsed ? 'none' : 'block';
+                reportsBtn.textContent = uiState.reportsPageCollapsed ? '🗖 Maximize' : '🗕 Minimize';
+            }
+        }
+
+        function toggleScansHistoryPanel() {
+            uiState.scansHistoryCollapsed = !uiState.scansHistoryCollapsed;
+            persistUIState();
+            applyPageSectionState();
+        }
+
+        function toggleThreatsPagePanel() {
+            uiState.threatsPageCollapsed = !uiState.threatsPageCollapsed;
+            persistUIState();
+            applyPageSectionState();
+        }
+
+        function toggleReportsPagePanel() {
+            uiState.reportsPageCollapsed = !uiState.reportsPageCollapsed;
+            persistUIState();
+            applyPageSectionState();
         }
 
         function viewAllQuarantine() {
@@ -4975,6 +5167,7 @@
                     fetchMonitoringStats();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
+                    refreshLiveActivity();
                 }, interval);
             }
         }
@@ -5444,11 +5637,10 @@
                 } else if (!threatFeedPrimed) {
                     threatFeedPrimed = true;
                 }
-                const newestThreatTs = normalized
-                    .map(item => toEpochMs(item?.timestamp))
-                    .filter(ms => ms !== null)
-                    .sort((a, b) => b - a)[0] || Date.now();
-                updateSourceSignal('threats', { ok: true, dataTimestamp: newestThreatTs });
+                // Use the query time as the freshness anchor, not the age of the
+                // most-recent threat event.  Threats are historical records; a clean
+                // environment with no recent attacks should not mark the feed "stale".
+                updateSourceSignal('threats', { ok: true, dataTimestamp: Date.now() });
             } catch (error) {
                 console.log('Using static threats data');
                 updateSourceSignal('threats', { ok: false, error: error?.message || 'threats_failed' });
@@ -6008,12 +6200,188 @@
                     dataTimestamp: toEpochMs(payload.generated_at) || Date.now(),
                 });
                 renderSecurityTaskMonitor();
+                // Also populate activity feed from cached payload if available
+                if (Array.isArray(payload.visited_websites) && payload.visited_websites.length > 0) {
+                    renderLiveWebsites(payload.visited_websites);
+                }
+                if (Array.isArray(payload.recent_activity) && payload.recent_activity.length > 0) {
+                    renderLiveActivity(payload.recent_activity);
+                }
             } catch (error) {
                 latestMonitoringStats = null;
                 updateSourceSignal('monitor', { ok: false, error: error?.message || 'monitoring_stats_failed' });
                 renderSecurityTaskMonitor();
             }
         }
+
+        // ── Live Activity Monitor ────────────────────────────────────────────
+
+        let _liveActiveTab = 'websites';
+
+        function switchLiveTab(tab) {
+            _liveActiveTab = tab;
+            const websitesContent = document.getElementById('liveTabContentWebsites');
+            const activityContent = document.getElementById('liveTabContentActivity');
+            const tabW = document.getElementById('liveTabWebsites');
+            const tabA = document.getElementById('liveTabActivity');
+            if (websitesContent) websitesContent.style.display = tab === 'websites' ? '' : 'none';
+            if (activityContent) activityContent.style.display = tab === 'activity' ? '' : 'none';
+            if (tabW) tabW.style.fontWeight = tab === 'websites' ? '700' : '400';
+            if (tabA) tabA.style.fontWeight = tab === 'activity' ? '700' : '400';
+        }
+
+        function verdictBadgeHtml(verdict) {
+            const v = (verdict || 'unknown').toLowerCase();
+            const map = {
+                safe:      { color: 'var(--success)',     label: '✅ SAFE' },
+                clean:     { color: 'var(--success)',     label: '✅ SAFE' },
+                unknown:   { color: 'var(--muted-foreground)', label: '❓ UNKNOWN' },
+                suspicious:{ color: 'var(--warning)',     label: '⚠️ SUSPICIOUS' },
+                malicious: { color: 'var(--destructive)', label: '🚨 MALICIOUS' },
+                critical:  { color: 'var(--destructive)', label: '🚨 CRITICAL' },
+                error:     { color: 'var(--muted-foreground)', label: '⚠️ ERROR' },
+            };
+            const cfg = map[v] || { color: 'var(--muted-foreground)', label: v.toUpperCase() };
+            return `<span style="color:${cfg.color};font-weight:600;font-size:0.8rem;">${cfg.label}</span>`;
+        }
+
+        function renderLiveWebsites(items) {
+            const tbody = document.getElementById('liveWebsitesBody');
+            if (!tbody) return;
+            const countEl = document.getElementById('liveActivityCount');
+            if (!items || !items.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No websites recorded yet — visit some pages while the monitor is active.</td></tr>';
+                if (countEl) countEl.textContent = '0 sites';
+                return;
+            }
+            if (countEl && _liveActiveTab === 'websites') countEl.textContent = `${items.length} site${items.length !== 1 ? 's' : ''}`;
+            tbody.innerHTML = items.map(site => {
+                const domain = site.domain || site.url || '—';
+                const hostIp = site.host_ip || '—';
+                const browser = (site.browser || 'unknown').replace(/^\w/, c => c.toUpperCase());
+                const verdict = (site.verdict || 'unknown').toLowerCase();
+                const conf = site.confidence != null ? site.confidence.toFixed(0) + '%' : '—';
+                const status = (site.scan_status || 'pending');
+                const statusColor = status === 'allowlisted' ? 'var(--success)' : status === 'completed' ? 'var(--primary)' : 'var(--muted-foreground)';
+                const timeStr = site.time ? formatRelativeTime(site.time) : '—';
+                return `<tr>
+                    <td><code class="threat-target" style="font-size:0.8rem;">${escHtml(domain)}</code></td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--muted-foreground);">${escHtml(hostIp)}</td>
+                    <td style="color:var(--muted-foreground);font-size:0.8rem;">${escHtml(browser)}</td>
+                    <td>${verdictBadgeHtml(verdict)}</td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;">${conf}</td>
+                    <td><span style="color:${statusColor};font-size:0.78rem;">${escHtml(status)}</span></td>
+                    <td style="color:var(--muted-foreground);font-size:0.78rem;">${escHtml(timeStr)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderLiveActivity(items) {
+            const tbody = document.getElementById('liveActivityBody');
+            if (!tbody) return;
+            const countEl = document.getElementById('liveActivityCount');
+            if (!items || !items.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No scan events recorded yet.</td></tr>';
+                if (countEl && _liveActiveTab === 'activity') countEl.textContent = '0 events';
+                return;
+            }
+            if (countEl && _liveActiveTab === 'activity') countEl.textContent = `${items.length} event${items.length !== 1 ? 's' : ''}`;
+            tbody.innerHTML = items.map(item => {
+                const type = (item.type || '—').toUpperCase();
+                const target = item.value || '—';
+                const shortTarget = target.length > 55 ? target.slice(0, 52) + '…' : target;
+                const verdict = (item.verdict || 'unknown').toLowerCase();
+                const conf = item.confidence != null ? (item.confidence * 100).toFixed(0) + '%' : '—';
+                const indicators = item.indicator_count != null ? item.indicator_count : '—';
+                const source = item.automated ? 'auto' : 'manual';
+                const timeStr = item.time ? formatRelativeTime(item.time) : '—';
+                return `<tr>
+                    <td style="font-size:0.78rem;font-weight:600;color:var(--primary);">${escHtml(type)}</td>
+                    <td><code class="threat-target" style="font-size:0.78rem;" title="${escHtml(target)}">${escHtml(shortTarget)}</code></td>
+                    <td>${verdictBadgeHtml(verdict)}</td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;">${conf}</td>
+                    <td style="text-align:center;font-size:0.78rem;">${indicators}</td>
+                    <td style="color:var(--muted-foreground);font-size:0.78rem;">${escHtml(source)}</td>
+                    <td style="color:var(--muted-foreground);font-size:0.78rem;">${escHtml(timeStr)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function formatRelativeTime(timeStr) {
+            if (!timeStr) return '—';
+            try {
+                const d = new Date(timeStr);
+                if (isNaN(d.getTime())) return timeStr;
+                const diffMs = Date.now() - d.getTime();
+                const diffSec = Math.floor(diffMs / 1000);
+                if (diffSec < 60) return `${diffSec}s ago`;
+                if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+                if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+                return d.toLocaleDateString();
+            } catch { return timeStr; }
+        }
+
+        function escHtml(str) {
+            return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        async function refreshLiveActivity() {
+            const executeRefresh = async () => {
+                const cacheBuster = Date.now();
+                const [wsData, actData] = await Promise.allSettled([
+                    apiRequest(`${API_ENDPOINTS.monitoringWebsites}?limit=50&_=${cacheBuster}`),
+                    apiRequest(`${API_ENDPOINTS.monitoringActivity}?limit=50&_=${cacheBuster}`),
+                ]);
+
+                const websiteOk = wsData.status === 'fulfilled';
+                const activityOk = actData.status === 'fulfilled';
+
+                if (websiteOk) {
+                    const ws = asObject(wsData.value);
+                    renderLiveWebsites(Array.isArray(ws?.items) ? ws.items : []);
+                }
+                if (activityOk) {
+                    const act = asObject(actData.value);
+                    renderLiveActivity(Array.isArray(act?.items) ? act.items : []);
+                }
+
+                if (!websiteOk && !activityOk) {
+                    const wsErr = wsData.reason?.message || 'websites_refresh_failed';
+                    const actErr = actData.reason?.message || 'activity_refresh_failed';
+                    throw new Error(`${wsErr}; ${actErr}`);
+                }
+
+                updateSourceSignal('monitor', { ok: true, dataTimestamp: Date.now() });
+            };
+
+            try {
+                const refreshBtn = document.getElementById('refreshLiveActivityBtn');
+                if (refreshBtn && typeof runWithRefreshIndicator === 'function') {
+                    await runWithRefreshIndicator('refreshLiveActivityBtn', executeRefresh);
+                } else {
+                    await executeRefresh();
+                }
+            } catch (e) {
+                console.warn('Live activity refresh failed:', e);
+                updateSourceSignal('monitor', { ok: false, error: e?.message || 'live_activity_refresh_failed' });
+            }
+        }
+
+        // Toggle Live Activity card
+        document.addEventListener('DOMContentLoaded', () => {
+            const liveToggleBtn = document.getElementById('toggleLiveActivityBtn');
+            const liveCard = document.getElementById('liveActivityCard');
+            if (liveToggleBtn && liveCard) {
+                liveToggleBtn.addEventListener('click', () => {
+                    const collapsed = liveCard.style.display === 'none';
+                    liveCard.style.display = collapsed ? '' : 'none';
+                    liveToggleBtn.textContent = collapsed ? '− Minimize' : '+ Maximize';
+                });
+            }
+            // Set default active tab style
+            switchLiveTab('websites');
+        });
+
 
         async function fetchSystemHealth() {
             const card = document.getElementById('systemHealthCard');
@@ -6179,6 +6547,102 @@
             }
         }
 
+        // ── File / folder selection helpers ──────────────────────────────
+        function handleFileSelected(input) {
+            const file = input.files[0];
+            const label = document.getElementById('fileUploadLabel');
+            const btn   = document.getElementById('uploadScanBtn');
+            if (file) {
+                label.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+                btn.disabled = false;
+            } else {
+                label.textContent = 'Choose file…';
+                btn.disabled = true;
+            }
+        }
+
+        function handleFolderSelected(input) {
+            const files = input.files;
+            const label = document.getElementById('folderUploadLabel');
+            const btn   = document.getElementById('folderScanBtn');
+            if (files && files.length) {
+                label.textContent = `${files.length} file(s) selected`;
+                btn.disabled = false;
+                showToast(`Folder selected: ${files.length} file(s) ready to scan`, 'info');
+            } else {
+                label.textContent = 'Choose folder…';
+                btn.disabled = true;
+            }
+        }
+
+        // ── Render inline file scan result panel ─────────────────────────
+        function renderFileScanResult(result, filename) {
+            const panel   = document.getElementById('fileScanResultPanel');
+            const content = document.getElementById('fileScanResultContent');
+            if (!panel || !content) return;
+
+            const verdict   = result.verdict || result.threat_level || 'unknown';
+            const toneMap   = {
+                malicious:  { color: 'var(--destructive)', icon: '⛔', bg: 'rgba(239,68,68,0.08)', border: 'var(--destructive)' },
+                suspicious: { color: 'var(--warning)',     icon: '⚠️', bg: 'rgba(245,158,11,0.08)', border: 'var(--warning)' },
+                safe:       { color: 'var(--success)',     icon: '✅', bg: 'rgba(34,197,94,0.08)',  border: 'var(--success)' },
+                clean:      { color: 'var(--success)',     icon: '✅', bg: 'rgba(34,197,94,0.08)',  border: 'var(--success)' },
+            };
+            const tone    = toneMap[verdict] || toneMap[normalizeThreatLevel(verdict)] || { color: 'var(--muted-foreground)', icon: '❓', bg: 'rgba(255,255,255,0.03)', border: 'var(--border)' };
+            const local   = result.local_analysis || {};
+            const inds    = result.threat_indicators || [];
+            const critInds = inds.filter(i => i.severity === 'critical');
+            const highInds = inds.filter(i => i.severity === 'high');
+
+            panel.style.background = tone.bg;
+            panel.style.borderColor = tone.border;
+
+            let sigHtml = '';
+            if (local.signatures && local.signatures.length) {
+                sigHtml = `<div style="font-size:0.78rem;color:var(--muted-foreground);margin-top:0.5rem;">
+                    Signatures: ${local.signatures.map(s => `<code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;">${s}</code>`).join(' ')}
+                </div>`;
+            }
+
+            let indHtml = '';
+            if (inds.length) {
+                const topInds = inds.slice(0, 4);
+                indHtml = `<div style="margin-top:0.75rem;">
+                    <div style="font-size:0.78rem;font-weight:600;margin-bottom:0.35rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Indicators (${inds.length})</div>
+                    ${topInds.map(ind => {
+                        const ic = ind.severity === 'critical' ? 'var(--destructive)' : ind.severity === 'high' ? 'var(--warning)' : 'var(--muted-foreground)';
+                        return `<div style="font-size:0.8rem;padding:0.35rem 0.5rem;margin-bottom:0.25rem;background:rgba(255,255,255,0.03);border-left:2px solid ${ic};border-radius:3px;">${ind.indicator}</div>`;
+                    }).join('')}
+                    ${inds.length > 4 ? `<div style="font-size:0.75rem;color:var(--muted-foreground);">…and ${inds.length - 4} more</div>` : ''}
+                </div>`;
+            }
+
+            content.innerHTML = `
+                <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+                    <div style="font-size:1.75rem;flex-shrink:0;">${tone.icon}</div>
+                    <div style="flex:1;">
+                        <div style="font-size:1rem;font-weight:700;color:${tone.color};margin-bottom:0.25rem;">
+                            ${verdict.toUpperCase()} — ${filename}
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:1rem;font-size:0.82rem;color:var(--muted-foreground);">
+                            ${local.entropy !== undefined ? `<span>Entropy: <strong>${local.entropy}</strong></span>` : ''}
+                            ${local.magic_type ? `<span>Type: <strong>${local.magic_type}</strong></span>` : ''}
+                            ${local.risk_level ? `<span>Local Risk: <strong style="color:${tone.color}">${local.risk_level}</strong></span>` : ''}
+                            <span>SHA256: <code style="font-size:0.75rem;">${(result.file_hash||'').slice(0,16)}…</code></span>
+                            <span>Confidence: <strong>${((result.confidence||0)*100).toFixed(0)}%</strong></span>
+                        </div>
+                        ${sigHtml}
+                        ${indHtml}
+                        <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted-foreground);">
+                            Scan ID: <code>${result.scan_id}</code>
+                            ${result.report_url ? ` · <a href="${result.report_url}" target="_blank" style="color:var(--primary);">📄 Report</a>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+            panel.style.display = 'block';
+        }
+
         async function performFileUpload() {
             const fileInput = document.getElementById('fileUploadInput');
             const file = fileInput.files[0];
@@ -6190,53 +6654,164 @@
                 return;
             }
 
-            // Check file size (100MB max)
+            // Client-side size guard (100 MB)
             if (file.size > 100 * 1024 * 1024) {
-                showToast('File size exceeds 100MB limit', 'error');
+                showToast('File size exceeds 100 MB limit', 'error');
                 return;
             }
 
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> Uploading...';
+            btn.innerHTML = '<span class="spinner"></span> Scanning…';
             statusDiv.style.display = 'block';
-            statusDiv.textContent = `Uploading ${file.name}...`;
+            statusDiv.textContent = `Scanning ${file.name}…`;
+            document.getElementById('fileScanResultPanel').style.display = 'none';
 
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                
+
                 const response = await fetch(`${API_BASE_URL}/api/scan/file`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: AbortSignal.timeout(120000),
                 });
 
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${response.status}`);
+                }
+
                 const result = await response.json();
                 const isThreat = isThreatResult(result);
+                const threatLabel = normalizeThreatLevel(result.threat_level, result.verdict).toUpperCase();
 
-                showToast(`File scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ File is safe'}`, isThreat ? 'error' : 'success');
+                renderFileScanResult(result, file.name);
+                showToast(`File scan: ${isThreat ? `⚠️ ${threatLabel} detected` : '✅ File appears safe'}`, isThreat ? 'error' : 'success');
+                statusDiv.textContent = `Done — ${result.scan_id}`;
+
                 lastScanMeta = { target: file.name, time: new Date().toISOString() };
                 updateSystemStatusPanel();
+
                 if (isThreat) {
-                    addNotification('Threat Detected', `${file.name} - ${normalizeThreatLevel(result.threat_level, result.verdict)}`, 'warning');
+                    addNotification('Threat Detected', `${file.name} — ${threatLabel}`, 'warning');
                 } else if (!dashboardSettings.threatOnlyNotifications) {
-                    addNotification('File Scan Completed', `${file.name} - SAFE`, 'info');
+                    addNotification('File Scan Complete', `${file.name} — SAFE`, 'info');
                 }
+
                 fileInput.value = '';
-                statusDiv.textContent = `Scan ID: ${result.scan_id} - ${result.status}`;
-                
-                // Refresh scan history
+                document.getElementById('fileUploadLabel').textContent = 'Choose file…';
+                btn.disabled = true;
                 await fetchScanHistory();
                 fetchLogs();
             } catch (error) {
-                showToast('File upload failed: ' + error.message, 'error');
+                showToast('File scan failed: ' + error.message, 'error');
                 addNotification('File Scan Failed', error.message, 'error');
-                statusDiv.textContent = 'File upload failed';
+                statusDiv.textContent = 'Scan failed: ' + error.message;
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '📤 Upload & Scan';
+                btn.innerHTML = '📤 Scan';
             }
+        }
+
+        // ── Folder scanning ───────────────────────────────────────────────
+        async function performFolderScan() {
+            const folderInput = document.getElementById('folderUploadInput');
+            const files = Array.from(folderInput.files || []);
+            const btn   = document.getElementById('folderScanBtn');
+            const statusDiv = document.getElementById('scanStatus');
+
+            if (!files.length) {
+                showToast('Please select a folder first', 'error');
+                return;
+            }
+
+            // Filter oversized files
+            const validFiles = files.filter(f => f.size <= 100 * 1024 * 1024);
+            const skipped    = files.length - validFiles.length;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Scanning…';
+            statusDiv.style.display = 'block';
+            document.getElementById('fileScanResultPanel').style.display = 'none';
+
+            const results = [];
+            let threats = 0;
+
+            for (let i = 0; i < validFiles.length; i++) {
+                const f = validFiles[i];
+                statusDiv.textContent = `Scanning ${i + 1}/${validFiles.length}: ${f.name}…`;
+                try {
+                    const formData = new FormData();
+                    formData.append('file', f);
+                    const resp = await fetch(`${API_BASE_URL}/api/scan/file`, {
+                        method: 'POST',
+                        body: formData,
+                        signal: AbortSignal.timeout(120000),
+                    });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const r = await resp.json();
+                    results.push({ file: f.name, result: r });
+                    if (isThreatResult(r)) threats++;
+                } catch (err) {
+                    results.push({ file: f.name, result: { error: err.message, verdict: 'error', threat_level: 'unknown' } });
+                }
+            }
+
+            // Render folder summary panel
+            const panel   = document.getElementById('fileScanResultPanel');
+            const content = document.getElementById('fileScanResultContent');
+            const threatColor = threats > 0 ? 'var(--destructive)' : 'var(--success)';
+            panel.style.background = threats > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(34,197,94,0.06)';
+            panel.style.borderColor = threatColor;
+
+            const rowsHtml = results.slice(0, 20).map(({ file, result: r }) => {
+                const v  = normalizeThreatLevel(r.threat_level, r.verdict);
+                const ic = v === 'malicious' ? '⛔' : v === 'suspicious' ? '⚠️' : r.error ? '❌' : '✅';
+                const c  = v === 'malicious' ? 'var(--destructive)' : v === 'suspicious' ? 'var(--warning)' : r.error ? 'var(--muted-foreground)' : 'var(--success)';
+                return `<tr>
+                    <td style="font-size:0.8rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${file}">${file}</td>
+                    <td style="color:${c};font-size:0.8rem;">${ic} ${v.toUpperCase()}</td>
+                    <td style="font-size:0.75rem;color:var(--muted-foreground);">${r.local_analysis ? r.local_analysis.risk_level : '—'}</td>
+                    <td style="font-size:0.75rem;color:var(--muted-foreground);">${r.local_analysis ? r.local_analysis.entropy : '—'}</td>
+                </tr>`;
+            }).join('');
+
+            content.innerHTML = `
+                <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;">
+                    <span style="font-size:1.5rem;">${threats > 0 ? '⛔' : '✅'}</span>
+                    <div>
+                        <div style="font-weight:700;color:${threatColor};">
+                            Folder Scan Complete — ${threats} threat${threats !== 1 ? 's' : ''} found in ${validFiles.length} file${validFiles.length !== 1 ? 's' : ''}
+                        </div>
+                        ${skipped ? `<div style="font-size:0.78rem;color:var(--muted-foreground);">${skipped} file(s) skipped (>100 MB)</div>` : ''}
+                    </div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                    <thead><tr>
+                        <th style="text-align:left;padding:0.35rem 0;border-bottom:1px solid var(--border);color:var(--muted-foreground);font-size:0.72rem;">File</th>
+                        <th style="text-align:left;padding:0.35rem 0;border-bottom:1px solid var(--border);color:var(--muted-foreground);font-size:0.72rem;">Verdict</th>
+                        <th style="text-align:left;padding:0.35rem 0;border-bottom:1px solid var(--border);color:var(--muted-foreground);font-size:0.72rem;">Local Risk</th>
+                        <th style="text-align:left;padding:0.35rem 0;border-bottom:1px solid var(--border);color:var(--muted-foreground);font-size:0.72rem;">Entropy</th>
+                    </tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+                ${results.length > 20 ? `<div style="font-size:0.75rem;color:var(--muted-foreground);margin-top:0.5rem;">Showing 20 of ${results.length} files</div>` : ''}
+            `;
+            panel.style.display = 'block';
+
+            statusDiv.textContent = `Folder scan complete: ${threats} threat(s) in ${validFiles.length} file(s)`;
+            showToast(`Folder scan done: ${threats > 0 ? `⚠️ ${threats} threat(s) found` : '✅ All clear'}`, threats > 0 ? 'error' : 'success');
+
+            if (threats > 0) addNotification('Folder Threats Found', `${threats} threat(s) in ${validFiles.length} scanned files`, 'warning');
+
+            btn.disabled = false;
+            btn.innerHTML = '📂 Scan All';
+            folderInput.value = '';
+            document.getElementById('folderUploadLabel').textContent = 'Choose folder…';
+            btn.disabled = true;
+
+            await fetchScanHistory();
+            fetchLogs();
         }
 
         async function fetchScanHistory() {
@@ -6391,6 +6966,23 @@
         });
 
         document.getElementById('uploadScanBtn').addEventListener('click', performFileUpload);
+        document.getElementById('folderScanBtn').addEventListener('click', performFolderScan);
+
+        const toggleScansHistoryBtn = document.getElementById('toggleScansHistoryBtn');
+        if (toggleScansHistoryBtn) {
+            toggleScansHistoryBtn.addEventListener('click', toggleScansHistoryPanel);
+        }
+
+        const toggleThreatsPageBtn = document.getElementById('toggleThreatsPageBtn');
+        if (toggleThreatsPageBtn) {
+            toggleThreatsPageBtn.addEventListener('click', toggleThreatsPagePanel);
+        }
+
+        const toggleReportsPageBtn = document.getElementById('toggleReportsPageBtn');
+        if (toggleReportsPageBtn) {
+            toggleReportsPageBtn.addEventListener('click', toggleReportsPagePanel);
+        }
+
         document.getElementById('fileUploadInput').addEventListener('change', () => {
             const file = document.getElementById('fileUploadInput').files[0];
             if (file) {
@@ -6462,6 +7054,7 @@
             loadNotifications();
             loadPanelState();
             loadUIState();
+            applyPageSectionState();
 
             document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
 
@@ -6498,6 +7091,7 @@
             fetchMonitoringStats();
             fetchSecurityPosture();
             fetchQuarantineInventory();
+            refreshLiveActivity();
             initLogStream();
             setupRefreshScheduler();
 
@@ -6536,6 +7130,7 @@
                     fetchMonitoringStats();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
+                    refreshLiveActivity();
                 }
             });
         });

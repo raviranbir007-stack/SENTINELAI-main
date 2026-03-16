@@ -44,7 +44,9 @@ RAPID_FILE_CHANGE_THRESHOLD = 100
 RAPID_FILE_CHANGE_WINDOW_SECS = 30
 
 # Data exfil threshold (bytes/min outbound, avg over 5-min window)
-EXFIL_BYTES_PER_MIN = 10 * 1024 * 1024   # 10 MB/min
+# Keep conservative enough to catch large sustained upload bursts without
+# flagging ordinary browsing, updates, or conferencing traffic.
+EXFIL_BYTES_PER_MIN = 50 * 1024 * 1024   # 50 MB/min
 
 # CPU spike: if a single process > this % for this long
 CPU_SPIKE_PCT = 80
@@ -78,7 +80,10 @@ MINER_PATTERNS = [
 BENIGN_HIGH_CPU_PROCESSES = {
     "python", "python3", "python3.11", "python3.12", "python3.13",
     "code", "code-insiders", "codium",
-    "chrome", "chromium", "firefox", "brave", "electron",
+    "chrome", "chromium", "firefox", "brave", "electron", "x-www-browser",
+    "google-chrome", "google-chrome-stable", "microsoft-edge", "brave-browser",
+    "xfdesktop", "gnome-shell", "plasmashell", "kwin_x11", "kwin_wayland",
+    "xorg", "xwayland", "mutter", "compiz",
 }
 
 
@@ -93,6 +98,8 @@ def _is_benign_high_cpu(name: str, cmdline: str) -> bool:
     # Handle process naming variations (e.g., code-oss, chromium-browser)
     benign_prefixes = (
         "code", "chrom", "firefox", "brave", "electron", "python", "node",
+        "x-www-browser", "google-chrome", "microsoft-edge",
+        "xfdesktop", "gnome", "plasma", "kwin", "xorg", "xwayland", "mutter",
     )
     if any(n.startswith(prefix) for prefix in benign_prefixes):
         return True
@@ -101,6 +108,8 @@ def _is_benign_high_cpu(name: str, cmdline: str) -> bool:
     benign_cmd_markers = (
         "/code", "vscode", "code-insiders", "codium",
         "chromium", "chrome", "firefox", "brave", "electron",
+        "x-www-browser", "google-chrome", "microsoft-edge", "brave-browser",
+        "xfdesktop", "gnome-shell", "plasmashell", "kwin", "xorg", "xwayland", "mutter",
     )
     return any(marker in c for marker in benign_cmd_markers)
 
@@ -202,7 +211,7 @@ class BehavioralMonitor:
             target=self._monitor_loop, daemon=True, name="BehavioralMonitor"
         )
         self._thread.start()
-        logger.info("🧠 Behavioral Monitor started")
+        logger.debug("Behavioral monitor started")
 
     def stop(self):
         self.running = False

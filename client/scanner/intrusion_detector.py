@@ -435,7 +435,7 @@ class IntrusionDetector:
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
-            logger.info("🛡️  Intrusion Detection System started")
+            logger.debug("IDS started")
 
     def stop(self):
         """Stop the intrusion detection system"""

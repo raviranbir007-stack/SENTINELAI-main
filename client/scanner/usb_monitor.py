@@ -254,7 +254,7 @@ class USBMonitor:
         self.running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True, name="USBMonitor")
         self._thread.start()
-        logger.info("🔌 USB Monitor started")
+        logger.debug("USB monitor started")
 
     def stop(self):
         self.running = False

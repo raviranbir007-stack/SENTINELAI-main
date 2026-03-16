@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -33,7 +34,12 @@ logger = logging.getLogger(__name__)
 
 def _startup_monitors_enabled() -> bool:
     """Return whether background monitoring should auto-start with the API server."""
-    return os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "false").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def _legacy_activity_monitor_enabled() -> bool:
+    """Enable legacy activity monitor only when explicitly requested."""
+    return os.getenv("SENTINEL_ENABLE_LEGACY_ACTIVITY_MONITOR", "false").lower() in {"1", "true", "yes", "on"}
 
 # Gemini API Configuration with multiple fallback options
 GEMINI_API_KEY = (
@@ -60,10 +66,8 @@ def initialize_gemini_configuration():
             validation_result = validate_gemini_config()
             
             if validation_result:
-                logger.info("✅ Gemini configuration validated successfully")
-                
-                # Print configuration (without sensitive data)
-                config.print_config(show_sensitive=False)
+                model = config.get_config('model', 'gemini-1.5-pro')
+                logger.info(f"✅ Gemini is configured (model: {model})")
                 
                 # Initialize Gemini integration
                 initialize_gemini_integration()
@@ -209,13 +213,13 @@ async def lifespan(app: FastAPI):
     
     if _startup_monitors_enabled():
         # Start activity monitoring
-        try:
-            from app.activity_monitor import activity_monitor
-            import asyncio
-            asyncio.create_task(activity_monitor.start())
-            logger.info("🔍 Activity monitor started")
-        except Exception as e:
-            logger.error(f"Failed to start activity monitor: {e}")
+        if _legacy_activity_monitor_enabled():
+            try:
+                from app.activity_monitor import activity_monitor
+                asyncio.create_task(activity_monitor.start())
+                logger.info("🔍 Legacy activity monitor started")
+            except Exception as e:
+                logger.error(f"Failed to start legacy activity monitor: {e}")
         
         # Initialize and start enhanced monitoring components
         logger.info("🤖 Initializing monitoring components")
@@ -247,6 +251,27 @@ async def lifespan(app: FastAPI):
                     
                     # Log to database
                     corroboration = result.get('corroboration_analysis', {})
+                    verdict_value = str(result.get('verdict', 'unknown')).lower()
+                    try:
+                        confidence_value = float(result.get('confidence', 0.0) or 0.0)
+                    except Exception:
+                        confidence_value = 0.0
+                    indicators = result.get('threat_indicators') or []
+                    warnings = result.get('warnings') or []
+                    summary_blob = " ".join([
+                        str(result.get('summary', '') or ''),
+                        " ".join(str(w) for w in warnings),
+                        " ".join(str(r) for r in (result.get('recommendations') or [])),
+                    ]).lower()
+                    low_signal_suspicious_ip = (
+                        artifact_type == 'ip'
+                        and verdict_value == 'suspicious'
+                        and confidence_value < 0.5
+                        and len(indicators) <= 1
+                        and len(warnings) <= 1
+                        and 'single source' in summary_blob
+                    )
+
                     activity_db.log_threat_scan({
                         'artifact_type': artifact_type,
                         'artifact_value': value,
@@ -266,7 +291,8 @@ async def lifespan(app: FastAPI):
                     })
                     
                     # Update terminal monitor
-                    terminal_monitor.log_scan_activity(artifact_type, value, result.get('verdict', 'unknown'))
+                    if not low_signal_suspicious_ip:
+                        terminal_monitor.log_scan_activity(artifact_type, value, result.get('verdict', 'unknown'))
                     
                     return result
                 except asyncio.TimeoutError:
@@ -304,11 +330,12 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down SENTINEL-AI Application...")
     
     # Stop activity monitoring
-    try:
-        from app.activity_monitor import activity_monitor
-        await activity_monitor.stop()
-    except Exception as e:
-        logger.error(f"Failed to stop activity monitor: {e}")
+    if _legacy_activity_monitor_enabled():
+        try:
+            from app.activity_monitor import activity_monitor
+            await activity_monitor.stop()
+        except Exception as e:
+            logger.error(f"Failed to stop legacy activity monitor: {e}")
     
     # Stop enhanced monitoring and print summary
     try:

@@ -213,7 +213,7 @@ class DNSMonitor:
                 target=self._poll_loop, daemon=True, name="DNSMonitor-Poll"
             )
         self._thread.start()
-        logger.info("🌐 DNS Monitor started")
+        logger.debug("DNS monitor started")
 
     def stop(self):
         self.running = False

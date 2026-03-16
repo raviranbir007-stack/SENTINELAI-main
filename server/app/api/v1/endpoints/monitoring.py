@@ -116,6 +116,36 @@ async def get_recent_activity(
 
 
 # ---------------------------------------------------------------------------
+# /websites  — visited browser sites with verdicts
+# ---------------------------------------------------------------------------
+
+@router.get("/websites")
+async def get_visited_websites(
+    limit: int = Query(50, ge=1, le=200, description="Max entries"),
+    hours: int = Query(24, ge=1, le=720, description="Lookback window hours"),
+):
+    """
+    Recently visited websites captured by the browser history monitor.
+    Each entry includes the domain, verdict (safe/suspicious/malicious), browser, and time.
+    """
+    adb = _adb()
+    if not adb:
+        return {"available": False, "items": []}
+
+    try:
+        items = adb.get_visited_websites(limit=limit, hours=hours)
+        return {
+            "available": True,
+            "count": len(items),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "items": items,
+        }
+    except Exception as exc:
+        logger.error("monitoring /websites error: %s", exc)
+        return {"available": False, "items": [], "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # /threat-feed  — recent background threats only
 # ---------------------------------------------------------------------------
 

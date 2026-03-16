@@ -46,7 +46,8 @@ SUSPICIOUS_PROCESS_NAMES: Set[str] = {
 }
 
 SUSPICIOUS_CMDLINE_PATTERNS = [
-    r"-[eE]\s+[A-Za-z0-9+/=]{20,}",          # Base64 encoded PowerShell
+    r"powershell(?:\.exe)?\s+.*-(?:enc|encodedcommand|e)\s+[A-Za-z0-9+/=]{20,}",
+    r"pwsh\s+.*-(?:enc|encodedcommand|e)\s+[A-Za-z0-9+/=]{20,}",
     r"powershell.*bypass",                      # ExecutionPolicy bypass
     r"powershell.*hidden",                      # Hidden window
     r"powershell.*downloadstring",             # Download & execute
@@ -170,7 +171,7 @@ class ProcessScanner:
             target=self._monitor_loop, daemon=True, name="ProcessScanner"
         )
         self._thread.start()
-        logger.info("⚙️  Process Scanner started")
+        logger.debug("Process scanner started")
 
     def stop(self):
         self.running = False

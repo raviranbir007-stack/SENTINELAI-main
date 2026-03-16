@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .config import settings
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -48,7 +48,7 @@ if is_sqlite_async:
     engine_kwargs.update(
         {
             "poolclass": NullPool,
-            "connect_args": {"timeout": 30},
+            "connect_args": {"timeout": 60},
         }
     )
 else:
@@ -63,6 +63,20 @@ engine = create_async_engine(
     db_url,
     **engine_kwargs,
 )
+
+
+if is_sqlite_async:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+        """Harden sqlite for concurrent read/write workloads."""
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=60000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+        finally:
+            cursor.close()
 
 # Create async session factory
 AsyncSessionLocal = sessionmaker(

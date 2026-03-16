@@ -224,7 +224,7 @@ class ReportGenerator:
                         self._failure_count += 1
                         if self._failure_count >= self.circuit_threshold:
                             self._circuit_open_until = time.time() + self.circuit_open_seconds
-                            logger.error("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
+                            logger.debug("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
                             return None
 
                         if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
@@ -256,7 +256,7 @@ class ReportGenerator:
                         self._failure_count += 1
                         if self._failure_count >= self.circuit_threshold:
                             self._circuit_open_until = time.time() + self.circuit_open_seconds
-                            logger.error("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
+                            logger.debug("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
                             return None
 
                         if ("429" in msg) or ("quota" in msg.lower()) or ("exceed" in msg.lower()):
@@ -832,7 +832,7 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 project_root / "client" / "activity_logs.db",
             ]
 
-            cutoff = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
 
             for db_path in candidates:
                 if not db_path.exists():

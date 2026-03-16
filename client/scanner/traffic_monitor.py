@@ -480,8 +480,7 @@ class AutomaticTrafficMonitor:
         self.capture_thread.start()
         
         # Start scan loop in asyncio
-        logger.info("✅ Automatic Traffic Monitor started")
-        logger.info(f"📊 Scan interval: {self.scan_interval}s, Batch size: {self.batch_size}")
+        logger.debug("Traffic monitor started | interval=%ss batch=%s", self.scan_interval, self.batch_size)
     
     async def start_scan_loop(self):
         """Start the async scanning loop"""

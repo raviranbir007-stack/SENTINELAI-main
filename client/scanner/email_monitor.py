@@ -195,7 +195,7 @@ class EmailMonitor:
             target=self._monitor_loop, daemon=True, name="EmailMonitor"
         )
         self._thread.start()
-        logger.info("📧 Email Monitor started")
+        logger.debug("Email monitor started")
 
     def stop(self):
         self.running = False

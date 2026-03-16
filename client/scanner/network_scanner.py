@@ -151,7 +151,7 @@ class NetworkScanner:
             target=self._monitor_loop, daemon=True, name="NetworkScanner"
         )
         self._thread.start()
-        logger.info("🌐 Network Scanner started")
+        logger.debug("Network scanner started")
 
     def stop(self):
         self.running = False

@@ -74,7 +74,7 @@ class DefenseCoordinator:
         """Start the defense coordinator"""
         if not self.running:
             self.running = True
-            logger.info("🛡️  Defense Coordinator started")
+            logger.debug("Response coordinator started")
 
     def stop(self):
         """Stop the defense coordinator"""
@@ -93,6 +93,10 @@ class DefenseCoordinator:
         if host and host != ip:
             return f"{ip} ({host})"
         return str(ip)
+
+    def _is_quarantine_notice(self, attack: Dict, alert_num: int) -> bool:
+        """Return True when the notification is for quarantine state rather than alert escalation."""
+        return attack.get('notification_kind') == 'quarantine' or alert_num > self.MAX_ALERTS
 
     def handle_attack(self, attack: Dict):
         """
@@ -247,6 +251,18 @@ class DefenseCoordinator:
         """Send console notification"""
         source_label = self._format_source_endpoint(attack)
         short_desc = attack.get('short_description') or attack.get('description') or 'Suspicious activity detected'
+        if self._is_quarantine_notice(attack, alert_num):
+            print(
+                f"🔒 QUARANTINE ACTIVE | type={attack.get('type', 'unknown')} "
+                f"| sev={attack.get('severity', 'UNKNOWN')} | source={source_label}",
+                flush=True,
+            )
+            print(
+                f"   reason={short_desc[:120]} | admin_action=required",
+                flush=True,
+            )
+            return
+
         remaining = self.MAX_ALERTS - alert_num
         print(
             f"🚨 ALERT {alert_num}/{self.MAX_ALERTS} | type={attack.get('type', 'unknown')} "
@@ -261,7 +277,8 @@ class DefenseCoordinator:
     def _notify_desktop(self, message: str, attack: Dict, alert_num: int):
         """Send desktop notification"""
         try:
-            title = f"🚨 SECURITY ALERT #{alert_num}/{self.MAX_ALERTS}"
+            is_quarantine_notice = self._is_quarantine_notice(attack, alert_num)
+            title = "🔒 SYSTEM QUARANTINED" if is_quarantine_notice else f"🚨 SECURITY ALERT #{alert_num}/{self.MAX_ALERTS}"
             mitigation_commands = attack.get('mitigation_commands') if isinstance(attack.get('mitigation_commands'), list) else []
             mitigation_cmd = mitigation_commands[0] if mitigation_commands else None
             source_label = self._format_source_endpoint(attack)
@@ -269,7 +286,7 @@ class DefenseCoordinator:
                 f"{attack['type']} from {source_label}\n"
                 f"{attack.get('short_description') or attack.get('description', '')}"
             )
-            if mitigation_cmd:
+            if mitigation_cmd and not is_quarantine_notice:
                 body += f"\nMitigate: {mitigation_cmd}"
             
             system = platform.system()
@@ -314,9 +331,10 @@ class DefenseCoordinator:
         """Send audio alert"""
         try:
             system = platform.system()
+            beep_count = 2 if self._is_quarantine_notice(attack, alert_num) else alert_num
             
             # Play system beep multiple times based on alert number
-            for _ in range(alert_num):
+            for _ in range(max(1, min(beep_count, 3))):
                 if system == "Linux":
                     subprocess.run(['paplay', '/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga'], 
                                  check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -418,17 +436,18 @@ class DefenseCoordinator:
 
     def _execute_quarantine(self, attack_id: str, attack: Dict, user_initiated: bool = False):
         """Execute full system quarantine"""
+        if self.is_quarantined:
+            logger.warning("System already quarantined")
+            return
+
         reason = "User-initiated" if user_initiated else "Automatic (No response to alerts)"
-        
-        logger.critical("")
-        logger.critical("="*70)
-        logger.critical("🔒 SYSTEM QUARANTINE INITIATED")
-        logger.critical("="*70)
-        logger.critical(f"Reason: {reason}")
-        logger.critical(f"Attack: {attack['type']} from {attack.get('source_ip', 'UNKNOWN')}")
-        logger.critical(f"Time: {datetime.now().isoformat()}")
-        logger.critical("="*70)
-        logger.critical("")
+        logger.critical(
+            "🔒 Quarantine initiated | reason=%s | type=%s | source=%s | time=%s",
+            reason,
+            attack['type'],
+            attack.get('source_ip', 'UNKNOWN'),
+            datetime.now().isoformat(),
+        )
         
         self.is_quarantined = True
         self.quarantine_start_time = datetime.now()
@@ -446,34 +465,10 @@ class DefenseCoordinator:
         # Log quarantine
         self._log_quarantine(attack_id, attack, reason)
         
-        # Execute quarantine actions
-        quarantine_actions = [
-            "🔒 BLOCKING ALL NEW CONNECTIONS",
-            "🔒 TERMINATING SUSPICIOUS PROCESSES",
-            "🔒 ISOLATING NETWORK INTERFACES",
-            "🔒 LOCKING USER SESSIONS",
-            "🔒 CREATING FORENSIC SNAPSHOT"
-        ]
-        
-        for action in quarantine_actions:
-            logger.critical(action)
-            time.sleep(0.5)
-        
-        logger.critical("")
-        logger.critical("="*70)
-        logger.critical("⚠️  SYSTEM IS NOW IN QUARANTINE MODE")
-        logger.critical("="*70)
-        logger.critical("All network activity is restricted.")
-        logger.critical("System is locked down to prevent further damage.")
-        logger.critical("")
-        logger.critical("To release quarantine, administrator must:")
-        logger.critical("  1. Review the attack details")
-        logger.critical("  2. Verify system integrity")
-        logger.critical("  3. Manually release quarantine")
-        logger.critical("")
-        logger.critical(f"Quarantine log: {self.quarantine_log_path}")
-        logger.critical("="*70)
-        logger.critical("")
+        logger.critical(
+            "🔒 Quarantine actions applied | network=restricted | processes=contained | forensic_snapshot=queued | log=%s",
+            self.quarantine_log_path,
+        )
         
         # Send critical notification
         self._send_quarantine_notification(attack)
@@ -520,10 +515,11 @@ class DefenseCoordinator:
 
     def _send_quarantine_notification(self, attack: Dict):
         """Send critical quarantine notification"""
+        quarantine_attack = {**attack, 'notification_kind': 'quarantine'}
         message = f"""
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║              🚨 CRITICAL: SYSTEM QUARANTINED 🚨           ║
+    ║              🚨 CRITICAL: SYSTEM QUARANTINED 🚨           ║
 ║                                                          ║
 ╠══════════════════════════════════════════════════════════╣
 ║                                                          ║
@@ -548,7 +544,7 @@ class DefenseCoordinator:
         # Send through all notification methods
         for notify_method in self.notification_methods:
             try:
-                notify_method(message, attack, 999)  # 999 = critical
+                notify_method(message, quarantine_attack, self.MAX_ALERTS)
             except Exception as e:
                 logger.error(f"Failed to send quarantine notification: {e}")
 
@@ -677,6 +673,10 @@ class DefenseCoordinator:
 
     def _notify_quarantine(self):
         """Send quarantine notification"""
+        quarantine_attack = {
+            **(self.quarantine_reason.get('attack', {}) if isinstance(self.quarantine_reason, dict) else {}),
+            'notification_kind': 'quarantine'
+        }
         message = f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║            🚨 SYSTEM UNDER QUARANTINE 🚨                     ║
@@ -691,7 +691,7 @@ class DefenseCoordinator:
         # Send through all notification methods
         for notify_method in self.notification_methods:
             try:
-                notify_method(message, self.quarantine_reason, 999)  # 999 = critical
+                notify_method(message, quarantine_attack, self.MAX_ALERTS)
             except Exception as e:
                 logger.error(f"Failed to send quarantine notification: {e}")
 

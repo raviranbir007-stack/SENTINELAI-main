@@ -119,7 +119,7 @@ class PreventionSystem:
             # Backup hosts file
             self._backup_hosts_file()
             
-            logger.info("🛡️  Prevention System started")
+            logger.debug("Protection shield started")
 
     def stop(self):
         """Stop the prevention system"""
@@ -717,8 +717,11 @@ Recommendations:
                 self.blocked_files = set(data.get('files', []))
                 self.blocked_apps = set(data.get('apps', []))
                 
-                logger.info(f"Loaded {len(self.blocked_domains)} blocked domains, "
-                          f"{len(self.blocked_ips)} blocked IPs")
+                logger.debug(
+                    "Loaded blocked entities | domains=%s ips=%s",
+                    len(self.blocked_domains),
+                    len(self.blocked_ips),
+                )
                 
         except Exception as e:
             logger.error(f"Failed to load blocked entities: {e}")

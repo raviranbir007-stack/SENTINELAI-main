@@ -8,7 +8,9 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger("ActivityDatabase")
 
@@ -29,9 +31,51 @@ class ActivityDatabase:
             resolved_path = server_root / db_path
 
         self.db_path = str(resolved_path)
+        self._required_tables = {
+            "websites",
+            "applications",
+            "network_connections",
+            "file_operations",
+            "dns_queries",
+            "threat_scans",
+            "activity_summary",
+        }
+        self._schema_lock = Lock()
+        self._last_schema_check = datetime.min.replace(tzinfo=timezone.utc)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_enhanced_schema()
         logger.info(f"📊 Activity database initialized: {self.db_path}")
+
+    def _ensure_schema_ready(self, force: bool = False):
+        """Ensure expected tables exist; recreate missing schema when needed."""
+        now = datetime.now(timezone.utc)
+        if not force and (now - self._last_schema_check).total_seconds() < 30:
+            return
+
+        with self._schema_lock:
+            now = datetime.now(timezone.utc)
+            if not force and (now - self._last_schema_check).total_seconds() < 30:
+                return
+
+            conn = sqlite3.connect(self.db_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                existing = {row[0] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+            missing = self._required_tables - existing
+            if missing:
+                logger.warning("Activity DB schema drift detected; rebuilding missing tables: %s", sorted(missing))
+                self._init_enhanced_schema()
+
+            self._last_schema_check = now
+
+    def _connect(self):
+        """Return a database connection after schema verification."""
+        self._ensure_schema_ready()
+        return sqlite3.connect(self.db_path)
     
     def _init_enhanced_schema(self):
         """Initialize comprehensive database schema"""
@@ -221,7 +265,7 @@ class ActivityDatabase:
     def log_website(self, data: Dict) -> int:
         """Log website visit with full details"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -263,7 +307,7 @@ class ActivityDatabase:
     def log_application(self, data: Dict) -> int:
         """Log application activity with full details"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -307,7 +351,7 @@ class ActivityDatabase:
                 logger.warning("Detected missing applications table; reinitializing activity DB schema")
                 try:
                     self._init_enhanced_schema()
-                    conn = sqlite3.connect(self.db_path)
+                    conn = self._connect()
                     cursor = conn.cursor()
                     cursor.execute('''
                         INSERT INTO applications (
@@ -354,7 +398,7 @@ class ActivityDatabase:
     def log_network_connection(self, data: Dict) -> int:
         """Log network connection with full details"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -403,7 +447,7 @@ class ActivityDatabase:
     def log_threat_scan(self, data: Dict) -> int:
         """Log threat scan with full details"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -444,7 +488,7 @@ class ActivityDatabase:
     def get_activity_summary(self, hours: int = 24) -> Dict:
         """Get activity summary for the last N hours"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -518,7 +562,7 @@ class ActivityDatabase:
     def get_recent_threats(self, limit: int = 10) -> List[Dict]:
         """Get recent threats detected"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -552,7 +596,7 @@ class ActivityDatabase:
     def get_scan_trends(self, hours: int = 24, interval_minutes: int = 60) -> List[Dict]:
         """Return scan counts bucketed into time intervals for trend charts."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
@@ -592,7 +636,7 @@ class ActivityDatabase:
     def get_threat_distribution(self, hours: int = 24) -> Dict:
         """Return threat type and verdict distribution for the given period."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
@@ -629,7 +673,7 @@ class ActivityDatabase:
     def get_background_stats(self, hours: int = 24) -> Dict:
         """Return comprehensive background monitoring statistics."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
@@ -643,11 +687,50 @@ class ActivityDatabase:
             )
             auto_threats = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM websites WHERE visit_time > ?", (cutoff_str,))
-            sites_visited = cursor.fetchone()[0]
+            # Unique websites monitored: merge website table domains + URL scan hosts
+            # so dashboard reflects actual sites observed (not raw row volume).
+            site_keys = set()
+
+            cursor.execute("SELECT domain, url FROM websites WHERE visit_time > ?", (cutoff_str,))
+            for domain, url in cursor.fetchall():
+                dom = (domain or "").strip().lower()
+                if not dom and url:
+                    try:
+                        dom = (urlparse(url).hostname or "").strip().lower()
+                    except Exception:
+                        dom = ""
+                if dom:
+                    site_keys.add(dom)
+
+            cursor.execute(
+                "SELECT DISTINCT artifact_value FROM threat_scans "
+                "WHERE scan_time > ? AND is_automated=1 AND artifact_type='url'",
+                (cutoff_str,)
+            )
+            for (value,) in cursor.fetchall():
+                if not value:
+                    continue
+                host = ""
+                try:
+                    host = (urlparse(value).hostname or "").strip().lower()
+                except Exception:
+                    host = ""
+                if host:
+                    site_keys.add(host)
+
+            sites_visited = len(site_keys)
 
             cursor.execute("SELECT COUNT(*) FROM network_connections WHERE connection_time > ?", (cutoff_str,))
             net_conns = cursor.fetchone()[0]
+
+            # Also count distinct IPs observed via automated network monitoring
+            cursor.execute(
+                "SELECT COUNT(DISTINCT artifact_value) FROM threat_scans "
+                "WHERE scan_time > ? AND is_automated=1 AND artifact_type='ip'",
+                (cutoff_str,)
+            )
+            net_auto_ips = cursor.fetchone()[0]
+            net_conns = net_conns + net_auto_ips
 
             cursor.execute(
                 "SELECT COUNT(DISTINCT artifact_value) FROM threat_scans WHERE scan_time > ? AND is_automated=1",
@@ -679,7 +762,7 @@ class ActivityDatabase:
     def get_recent_activity(self, limit: int = 50) -> List[Dict]:
         """Return the most recent background activity entries across all monitored artifact types."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT artifact_type, artifact_value, verdict, confidence, scan_time, is_automated, threat_indicators "
@@ -703,11 +786,53 @@ class ActivityDatabase:
         except Exception as e:
             logger.error(f"Error getting recent activity: {e}")
             return []
-    
+
+    def get_visited_websites(self, limit: int = 50, hours: int = 24) -> List[Dict]:
+        """Return recently visited websites with their scan verdicts for the dashboard feed."""
+        try:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute(
+                "SELECT url, domain, title, browser, risk_level, risk_score, "
+                "threat_verdict, scan_status, visit_time, metadata "
+                "FROM websites WHERE visit_time > ? ORDER BY visit_time DESC LIMIT ?",
+                (cutoff_str, limit)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            results = []
+            for r in rows:
+                url, domain, title, browser, risk_level, risk_score, verdict, status, ts, metadata = r
+                display = domain or (urlparse(url).hostname if url else None) or url or "unknown"
+                meta_obj = {}
+                try:
+                    meta_obj = json.loads(metadata or "{}") if isinstance(metadata, str) else (metadata or {})
+                except Exception:
+                    meta_obj = {}
+                host_ip = meta_obj.get("host_ip")
+                results.append({
+                    "url": url or "",
+                    "domain": display,
+                    "host_ip": host_ip,
+                    "title": title or "",
+                    "browser": browser or "unknown",
+                    "verdict": (verdict or "unknown").lower(),
+                    "risk_level": (risk_level or "LOW").upper(),
+                    "confidence": round(float(risk_score or 0.0), 1),
+                    "scan_status": status or "pending",
+                    "time": ts,
+                })
+            return results
+        except Exception as e:
+            logger.error(f"Error getting visited websites: {e}")
+            return []
+
     def get_full_report_data(self, hours: int = 24) -> Dict:
         """Get comprehensive data for report generation"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._connect()
             cursor = conn.cursor()
             
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)

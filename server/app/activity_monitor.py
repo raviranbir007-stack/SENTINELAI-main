@@ -98,8 +98,11 @@ class ActivityMonitor:
         self.last_connections = set()
         self.website_cache_duration = 3600  # 1 hour - don't re-analyze same URL for 1 hour
         
-        # Initialize BEFORE first check to capture everything
-        self.last_browser_check_time = (datetime.now().timestamp() - 600)  # Start from 10 minutes ago to catch recent activity
+        # Start from the current point in time and build a silent first-cycle
+        # baseline so previous-session browser history does not replay as fresh
+        # activity on startup.
+        self.last_browser_check_time = datetime.now().timestamp()
+        self._browser_baseline_ready = False
         
         self._init_database()
         # Limit concurrent external API scans to reduce lag
@@ -419,6 +422,7 @@ class ActivityMonitor:
         new_visits = []
         seen_keys = set()
         current_time = datetime.now().timestamp()
+        baseline_mode = not self._browser_baseline_ready
         
         # Clean old cached URLs (older than 1 hour)
         old_urls = [url for url, ts in self.last_websites.items() 
@@ -495,6 +499,11 @@ class ActivityMonitor:
                             continue
 
                         if url and url_key:
+                            if baseline_mode:
+                                self.last_websites[url_key] = current_time
+                                seen_keys.add(url_key)
+                                continue
+
                             new_visits.append({
                                 'url': url,
                                 'url_key': url_key,
@@ -505,10 +514,7 @@ class ActivityMonitor:
                             })
                             self.last_websites[url_key] = current_time
                             seen_keys.add(url_key)
-                            # Show detection immediately
-                            print(f"\n🌐 [DETECTED] {url}", flush=True)
-                            print(f"   📦 Browser: Firefox | 📝 Title: {title or 'Untitled'}", flush=True)
-                            logger.info(f"🌐 NEW VISIT: {url} (Firefox)")
+                            logger.debug("NEW VISIT | browser=Firefox | url=%s", url)
                     
                     conn.close()
                     self._cleanup_sqlite_temp(temp_db)
@@ -568,6 +574,11 @@ class ActivityMonitor:
                             continue
 
                         if url and url_key:
+                            if baseline_mode:
+                                self.last_websites[url_key] = current_time
+                                seen_keys.add(url_key)
+                                continue
+
                             new_visits.append({
                                 'url': url,
                                 'url_key': url_key,
@@ -578,10 +589,7 @@ class ActivityMonitor:
                             })
                             self.last_websites[url_key] = current_time
                             seen_keys.add(url_key)
-                            # Show detection immediately
-                            print(f"\n🌐 [DETECTED] {url}", flush=True)
-                            print(f"   📦 Browser: {browser_name} | 📝 Title: {title or 'Untitled'}", flush=True)
-                            logger.info(f"🌐 NEW VISIT: {url} ({browser_name})")
+                            logger.debug("NEW VISIT | browser=%s | url=%s", browser_name, url)
                     
                     conn.close()
                     self._cleanup_sqlite_temp(temp_db)
@@ -590,6 +598,10 @@ class ActivityMonitor:
                     logger.debug(f"{browser_name}: {e}")
                     self._cleanup_sqlite_temp(temp_db)
         
+        if baseline_mode:
+            self._browser_baseline_ready = True
+            return []
+
         # Fallback: also monitor browser network connections for URLs
         fallback_visits = await self._monitor_browser_connections()
         if fallback_visits:
@@ -761,14 +773,15 @@ class ActivityMonitor:
         
         logger.debug(f"Analysis complete for {domain} - risk={risk_level}")
 
-        # Single-line prompt for user
+        # Keep the legacy monitor quiet for non-actionable pages. The enhanced
+        # monitor is responsible for operator-facing terminal prompts.
         if is_blocked:
             print(f"🚫 [ACTION REQUIRED] {domain} blocked ({risk_level}). Document and monitor for recurrence.", flush=True)
             self._block_domain(domain)
         elif risk_level in ['MEDIUM']:
-            print(f"🟡 [REVIEW] {domain} needs monitoring and documentation (risk: {risk_level})", flush=True)
+            logger.info("◈ review %s · risk=%s", domain, risk_level)
         else:
-            print(f"✅ [SAFE] {domain} is safe to access", flush=True)
+            logger.debug("SAFE site observed: %s", domain)
         
         # Save to database
         conn = sqlite3.connect(self.db_path)

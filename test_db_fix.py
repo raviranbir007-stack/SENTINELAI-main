@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 # Test client database
-def test_client_db():
+def _check_client_db() -> bool:
     print("=" * 60)
     print("Testing CLIENT Database (activity_logs.db)")
     print("=" * 60)
@@ -59,12 +59,12 @@ def test_client_db():
     return True
 
 # Test server database
-def test_server_db():
+def _check_server_db() -> bool:
     print("\n" + "=" * 60)
     print("Testing SERVER Database (activity_monitoring.db)")
     print("=" * 60)
     
-    db_path = Path("server/activity_monitoring.db")
+    db_path = (Path(__file__).parent / "server" / "activity_monitoring.db").resolve()
     
     # Clean up if exists
     if db_path.exists():
@@ -85,7 +85,7 @@ def test_server_db():
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cursor.fetchall()]
     
-    required_tables = ['websites', 'applications', 'network_connections', 'file_operations', 'dns_queries', 'threat_scans', 'monitoring_sessions']
+    required_tables = ['websites', 'applications', 'network_connections', 'file_operations', 'dns_queries', 'threat_scans', 'activity_summary']
     
     print(f"\nTables found: {tables}")
     print(f"Required tables: {required_tables}")
@@ -108,9 +108,17 @@ def test_server_db():
     conn.close()
     return True
 
+
+def test_client_db():
+    assert _check_client_db() is True
+
+
+def test_server_db():
+    assert _check_server_db() is True
+
 if __name__ == "__main__":
     try:
-        client_ok = test_client_db()
+        client_ok = _check_client_db()
     except Exception as e:
         print(f"❌ Client DB test failed: {e}")
         import traceback
@@ -118,7 +126,7 @@ if __name__ == "__main__":
         client_ok = False
     
     try:
-        server_ok = test_server_db()
+        server_ok = _check_server_db()
     except Exception as e:
         print(f"❌ Server DB test failed: {e}")
         import traceback

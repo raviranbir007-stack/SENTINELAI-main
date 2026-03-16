@@ -120,6 +120,39 @@ class ThreatAnalyzer:
         else:
             self.ai_analyzer = None
 
+    async def _call_api_with_retry(self, name: str, call_factory, retries: int = 1, delay: float = 0.35):
+        """Execute API coroutine with lightweight retry on transient failures."""
+        transient_markers = (
+            "timeout", "timed out", "temporar", "connection", "reset", "unavailable", "503", "502", "gateway"
+        )
+        non_retry_markers = ("rate limit", "quota", "not configured", "forbidden", "401", "403")
+
+        last_error = None
+        for attempt in range(retries + 1):
+            try:
+                result = await call_factory()
+                if not isinstance(result, dict) or not result.get("error"):
+                    return result
+
+                err_text = str(result.get("error", "")).lower()
+                if any(marker in err_text for marker in non_retry_markers):
+                    return result
+                if any(marker in err_text for marker in transient_markers) and attempt < retries:
+                    await asyncio.sleep(delay * (attempt + 1))
+                    continue
+                return result
+            except Exception as exc:
+                last_error = exc
+                err_text = str(exc).lower()
+                if any(marker in err_text for marker in transient_markers) and attempt < retries:
+                    await asyncio.sleep(delay * (attempt + 1))
+                    continue
+                break
+
+        if last_error:
+            return {"error": f"{name} transient failure: {last_error}"}
+        return {"error": f"{name} transient failure"}
+
     def _build_mitre_attack_mapping(self, threats: List[Dict[str, Any]], input_type: str = "") -> List[Dict[str, Any]]:
         """Map observed behaviors to likely MITRE ATT&CK techniques (heuristic, non-attributional)."""
         mapping: List[Dict[str, Any]] = []
@@ -466,6 +499,29 @@ class ThreatAnalyzer:
         # Normalize common obfuscated indicators before detection
         normalized_value = self._normalize_input(value)
 
+        local_token = str(normalized_value or "").strip().lower().rstrip('.')
+        if local_token in {'localhost', 'localhost.localdomain', '127.0.0.1', '0.0.0.0', '::1'} or local_token.startswith('127.'):
+            return {
+                "input": value,
+                "input_type": InputType.DOMAIN.value,
+                "metadata": {"local_target": True},
+                "timestamp": datetime.utcnow().isoformat(),
+                "api_results": {},
+                "threat_indicators": [],
+                "verdict": ThreatLevel.CLEAN,
+                "confidence": 1.0,
+                "summary": "Local/private target recognized as trusted local infrastructure.",
+                "use_external_apis": False,
+                "forensic_metadata": {
+                    "local_target": True,
+                    "corroboration_count": 0,
+                    "corroboration_threshold_met": False,
+                    "evidence_sources": [],
+                    "apis_checked": 0,
+                    "scan_coverage": "0/0 relevant APIs",
+                },
+            }
+
         # Detect input type
         input_type, metadata = self.detector.detect(normalized_value)
 
@@ -483,6 +539,21 @@ class ThreatAnalyzer:
             "summary": "",
             "use_external_apis": effective_external_api_mode,
         }
+
+        # Local/private infrastructure should not enter malicious blocking path.
+        if self._is_local_or_private_target(input_type, normalized_value):
+            analysis_result["verdict"] = ThreatLevel.CLEAN
+            analysis_result["confidence"] = 1.0
+            analysis_result["summary"] = "Local/private target recognized as trusted local infrastructure."
+            analysis_result["forensic_metadata"] = {
+                "local_target": True,
+                "corroboration_count": 0,
+                "corroboration_threshold_met": False,
+                "evidence_sources": [],
+                "apis_checked": 0,
+                "scan_coverage": "0/0 relevant APIs",
+            }
+            return analysis_result
 
         try:
             # Route to appropriate analysis based on input type
@@ -518,6 +589,36 @@ class ThreatAnalyzer:
             analysis_result["summary"] = f"Error during analysis: {str(e)}"
 
         return analysis_result
+
+    def _is_local_or_private_target(self, input_type: InputType, value: str) -> bool:
+        """Return True if target resolves to localhost/private scope."""
+        try:
+            import ipaddress
+            from urllib.parse import urlparse
+
+            if input_type == InputType.IP:
+                ip_obj = ipaddress.ip_address(str(value).strip())
+                return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+
+            if input_type == InputType.URL:
+                host = (urlparse(str(value)).hostname or '').strip().lower().rstrip('.')
+            elif input_type == InputType.DOMAIN:
+                host = str(value).split(':', 1)[0].strip().lower().rstrip('.')
+            else:
+                return False
+
+            if not host:
+                return False
+            if host in {'localhost', 'localhost.localdomain', '127.0.0.1', '0.0.0.0', '::1'} or host.startswith('127.'):
+                return True
+
+            try:
+                ip_obj = ipaddress.ip_address(host)
+                return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+            except Exception:
+                return False
+        except Exception:
+            return False
 
     def _analyze_ip_heuristics(self, ip: str) -> List[Dict]:
         """
@@ -654,8 +755,16 @@ class ThreatAnalyzer:
         try:
             logger.debug(f"Checking AbuseIPDB and Shodan concurrently for {ip}")
             abuseipdb_result, shodan_result = await asyncio.gather(
-                asyncio.wait_for(self.abuseipdb.check_ip(ip), timeout=10),
-                asyncio.wait_for(self.shodan.search_ip(ip), timeout=10),
+                self._call_api_with_retry(
+                    "AbuseIPDB",
+                    lambda: asyncio.wait_for(self.abuseipdb.check_ip(ip), timeout=10),
+                    retries=1,
+                ),
+                self._call_api_with_retry(
+                    "Shodan",
+                    lambda: asyncio.wait_for(self.shodan.search_ip(ip), timeout=10),
+                    retries=1,
+                ),
                 return_exceptions=True,
             )
         except Exception as e:
@@ -988,19 +1097,63 @@ class ThreatAnalyzer:
                     "type": "suspicious_tld",
                     "confidence": 0.6
                 })
+
+            # ============================================
+            # 5.5 PUNYCODE / HOMOGRAPH RISK
+            # ============================================
+            host_for_shape = (domain or "").split(":", 1)[0].strip().lower().rstrip('.')
+            if "xn--" in host_for_shape:
+                severity = "critical" if any(brand in host_for_shape for brand in brand_impersonation) else "high"
+                confidence = 0.88 if severity == "critical" else 0.72
+                threats.append({
+                    "source": "Heuristic Analysis",
+                    "severity": severity,
+                    "indicator": "Punycode hostname detected (possible homograph impersonation)",
+                    "type": "punycode_homograph",
+                    "confidence": confidence
+                })
+
+            # Excessive symbols/hyphens in host are common in disposable phishing infrastructure.
+            hyphen_count = host_for_shape.count('-')
+            digit_count = sum(1 for c in host_for_shape if c.isdigit())
+            if hyphen_count >= 4 or digit_count >= 6:
+                threats.append({
+                    "source": "Heuristic Analysis",
+                    "severity": "medium",
+                    "indicator": "Host format resembles generated/disposable phishing infrastructure",
+                    "type": "suspicious_host_format",
+                    "confidence": 0.58
+                })
             
             # ============================================
             # 6. TYPOSQUATTING & HOMOGRAPH DETECTION
             # ============================================
-            # Common typosquatting patterns
+            # Detect look-alikes, but avoid flagging legitimate brand domains.
+            host_no_port = (domain or "").split(":", 1)[0].strip().lower().rstrip('.')
+            legitimate_brand_domains = {
+                "paypal": ["paypal.com", "paypal.co.uk"],
+                "microsoft": ["microsoft.com", "live.com", "outlook.com", "office.com"],
+                "google": ["google.com", "gmail.com", "youtube.com", "gstatic.com"],
+                "amazon": ["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr"],
+                "facebook": ["facebook.com", "fb.com", "fbcdn.net"],
+                "apple": ["apple.com", "icloud.com", "me.com"],
+            }
+
+            # Use only actual look-alike forms (avoid exact brand literal regexes).
             typosquat_patterns = [
-                (r'paypa1', 'paypal'), (r'micros0ft', 'microsoft'),
-                (r'g00gle', 'google'), (r'amaz0n', 'amazon'),
-                (r'faceboo[k0]', 'facebook'), (r'app1e', 'apple'),
+                (r'paypa1|paypa\-secure', 'paypal'),
+                (r'micr0soft|micros0ft', 'microsoft'),
+                (r'g00gle|go0gle', 'google'),
+                (r'amaz0n|amason', 'amazon'),
+                (r'facebo0k|f4cebook|faceb00k', 'facebook'),
+                (r'app1e|appl3', 'apple'),
             ]
-            
+
             for pattern, original in typosquat_patterns:
-                if re.search(pattern, domain):
+                is_legit = any(host_no_port.endswith(ld) for ld in legitimate_brand_domains.get(original, []))
+                if is_legit:
+                    continue
+                if re.search(pattern, host_no_port):
                     threats.append({
                         "source": "Heuristic Analysis",
                         "severity": "critical",
@@ -1114,6 +1267,37 @@ class ThreatAnalyzer:
                         "confidence": 0.55
                     })
                     break
+
+            # ============================================
+            # 13. OAUTH / TOKEN THEFT FLOWS
+            # ============================================
+            oauth_abuse_markers = [
+                'response_type=token', 'access_token=', 'id_token=',
+                'redirect_uri=', 'client_id=', 'code_challenge=', 'oauth', 'openid'
+            ]
+            oauth_hits = sum(1 for marker in oauth_abuse_markers if marker in decoded_query)
+            if oauth_hits >= 3 and any(k in decoded_path for k in ('login', 'auth', 'callback', 'verify')):
+                threats.append({
+                    "source": "Heuristic Analysis",
+                    "severity": "high",
+                    "indicator": "OAuth/token workflow with suspicious URL structure (possible token theft flow)",
+                    "type": "oauth_token_abuse",
+                    "confidence": 0.72
+                })
+
+            # ============================================
+            # 14. CLIENT-SIDE CREDENTIAL CAPTURE HINTS
+            # ============================================
+            js_capture_markers = ['document.cookie', 'localstorage', 'sessionstorage', 'navigator.clipboard']
+            capture_hits = sum(1 for marker in js_capture_markers if marker in decoded_url)
+            if capture_hits >= 2 and any(k in decoded_query for k in ('password', 'token', 'session', 'auth')):
+                threats.append({
+                    "source": "Heuristic Analysis",
+                    "severity": "high",
+                    "indicator": "Client-side storage/cookie access combined with auth parameter leakage",
+                    "type": "credential_capture_flow",
+                    "confidence": 0.74
+                })
                     
         except Exception as e:
             logger.warning(f"Heuristic analysis failed: {str(e)}")
@@ -1146,8 +1330,16 @@ class ThreatAnalyzer:
         try:
             logger.debug(f"Scanning URL concurrently with VirusTotal and URLScan.io: {url}")
             vt_result, urlscan_result = await asyncio.gather(
-                asyncio.wait_for(self.virustotal.scan_url(url), timeout=15),
-                asyncio.wait_for(self.urlscan.scan_url(url), timeout=10),
+                self._call_api_with_retry(
+                    "VirusTotal",
+                    lambda: asyncio.wait_for(self.virustotal.scan_url(url), timeout=15),
+                    retries=1,
+                ),
+                self._call_api_with_retry(
+                    "URLScan",
+                    lambda: asyncio.wait_for(self.urlscan.scan_url(url), timeout=10),
+                    retries=1,
+                ),
                 return_exceptions=True,
             )
         except Exception as e:
@@ -1412,6 +1604,20 @@ class ThreatAnalyzer:
                             "confidence": 0.75
                         })
                         break
+
+            # Brand + lure tokens in the same domain are strongly suspicious,
+            # even if exact typosquatting regex doesn't match.
+            lure_tokens = ['secure', 'verify', 'account', 'auth', 'update', 'signin', 'support', 'billing']
+            has_brand = any(b in domain for b in brand_keywords)
+            lure_hits = sum(1 for token in lure_tokens if token in domain)
+            if has_brand and lure_hits >= 2:
+                threats.append({
+                    "source": "Heuristic Analysis",
+                    "severity": "high",
+                    "indicator": "Brand keyword mixed with multiple lure/auth tokens in domain",
+                    "type": "brand_lure_domain",
+                    "confidence": 0.73
+                })
             
             # ============================================
             # 4. PHISHING KEYWORDS
@@ -1455,7 +1661,7 @@ class ThreatAnalyzer:
                 })
             
             # Check for IDN domains (punycode)
-            if domain.startswith('xn--'):
+            if 'xn--' in domain:
                 threats.append({
                     "source": "Heuristic Analysis",
                     "severity": "medium",
@@ -1615,8 +1821,16 @@ class ThreatAnalyzer:
         try:
             logger.debug(f"Scanning file hash concurrently with VirusTotal and Hybrid Analysis: {file_hash}")
             vt_result, ha_result = await asyncio.gather(
-                asyncio.wait_for(self.virustotal.scan_file(file_hash), timeout=12),
-                asyncio.wait_for(self.hybrid_analysis.search_hash(file_hash), timeout=12),
+                self._call_api_with_retry(
+                    "VirusTotal",
+                    lambda: asyncio.wait_for(self.virustotal.scan_file(file_hash), timeout=12),
+                    retries=1,
+                ),
+                self._call_api_with_retry(
+                    "HybridAnalysis",
+                    lambda: asyncio.wait_for(self.hybrid_analysis.search_hash(file_hash), timeout=12),
+                    retries=1,
+                ),
                 return_exceptions=True,
             )
         except Exception as e:
@@ -2127,13 +2341,29 @@ class ThreatAnalyzer:
         
         # Analyze threat severity with corroboration
         critical_count = sum(1 for t in threats if t.get("severity") == "critical")
+        high_count = sum(1 for t in threats if t.get("severity") == "high")
         medium_count = sum(1 for t in threats if t.get("severity") == "medium")
         low_count = sum(1 for t in threats if t.get("severity") == "low")
         
         # Count heuristic threats separately
         heuristic_critical = sum(1 for t in heuristic_threats if t.get("severity") == "critical")
+        heuristic_high = sum(1 for t in heuristic_threats if t.get("severity") == "high")
         heuristic_medium = sum(1 for t in heuristic_threats if t.get("severity") == "medium")
         heuristic_low = sum(1 for t in heuristic_threats if t.get("severity") == "low")
+
+        # Weighted severity scoring to better fuse multiple weak/medium findings.
+        weighted_score = (
+            (critical_count * 5)
+            + (high_count * 3)
+            + (medium_count * 2)
+            + low_count
+        )
+        heuristic_weighted_score = (
+            (heuristic_critical * 5)
+            + (heuristic_high * 3)
+            + (heuristic_medium * 2)
+            + heuristic_low
+        )
         
         # Calculate average confidence from heuristic threats
         heuristic_confidences = [t.get("confidence", 0.5) for t in heuristic_threats if "confidence" in t]
@@ -2143,10 +2373,18 @@ class ThreatAnalyzer:
         critical_heuristic_confidences = [t.get("confidence", 0.5) for t in heuristic_threats if t.get("severity") == "critical" and "confidence" in t]
         max_critical_confidence = max(critical_heuristic_confidences) if critical_heuristic_confidences else 0.5
 
-        # Enhanced Multi-source corroboration logic with heuristic confidence support
-        # If heuristics found critical threats with high confidence, treat seriously
+        # Enhanced multi-source corroboration logic with conservative defaults
+        # to reduce false positives when external APIs fail or are unavailable.
+        api_status_map = (result.get("api_results") or {}).get("api_status") or {}
+        api_checked = len((result.get("api_results") or {}).get("apis_called") or [])
+        api_error_count = 0
+        for api_meta in api_status_map.values():
+            status = str((api_meta or {}).get("status", "")).lower()
+            if status == "error":
+                api_error_count += 1
+        has_api_corroboration = len(api_threats) > 0
+
         if heuristic_critical >= 3:
-            # 3+ critical heuristic indicators = very high confidence malicious
             result["verdict"] = ThreatLevel.MALICIOUS
             result["confidence"] = min(0.95, max_critical_confidence + 0.10)
             result["summary"] = (
@@ -2154,33 +2392,55 @@ class ThreatAnalyzer:
                 f"Multiple malicious patterns confirmed through heuristic analysis."
             )
         elif heuristic_critical >= 2:
-            # 2 critical heuristic indicators = high confidence malicious
             result["verdict"] = ThreatLevel.MALICIOUS
             result["confidence"] = min(0.90, max_critical_confidence + 0.05)
             result["summary"] = (
                 f"MALICIOUS - {heuristic_critical} critical threat indicators detected. "
                 f"Pattern-based analysis identified malicious characteristics."
             )
-        elif heuristic_critical >= 1 and len(api_threats) > 0:
-            # Heuristic + any API threat = corroborated malicious
+        elif heuristic_critical >= 1 and has_api_corroboration:
+            # Heuristic + API threat = corroborated malicious
             result["verdict"] = ThreatLevel.MALICIOUS
             result["confidence"] = min(0.95, max_critical_confidence + (len(api_threats) * 0.05))
             result["summary"] = (
-                f"MALICIOUS (CORROBORATED) - Critical threat patterns confirmed by external analysis."
+                "MALICIOUS (CORROBORATED) - Critical threat patterns confirmed by external analysis."
+            )
+        elif heuristic_high >= 2 and has_api_corroboration:
+            # Multiple high-severity heuristic indicators corroborated by APIs is strong malicious evidence.
+            result["verdict"] = ThreatLevel.MALICIOUS
+            result["confidence"] = min(0.90, 0.75 + (heuristic_high * 0.05) + (len(api_threats) * 0.03))
+            result["summary"] = (
+                f"MALICIOUS (CORROBORATED) - {heuristic_high} high-severity patterns confirmed by external analysis."
+            )
+        elif heuristic_weighted_score >= 8 and has_api_corroboration:
+            result["verdict"] = ThreatLevel.SUSPICIOUS
+            result["confidence"] = min(0.82, 0.62 + (heuristic_weighted_score * 0.02))
+            result["summary"] = (
+                "SUSPICIOUS (CORROBORATED) - Multiple layered risk indicators detected across heuristic and API analysis."
             )
         elif heuristic_critical >= 1 and max_critical_confidence >= 0.85:
-            # Single critical heuristic with very high confidence
-            result["verdict"] = ThreatLevel.MALICIOUS
-            result["confidence"] = max_critical_confidence
+            # Single high-confidence heuristic without corroboration should remain suspicious,
+            # especially when APIs were not checked or returned errors.
+            result["verdict"] = ThreatLevel.SUSPICIOUS
+            result["confidence"] = min(0.80, max_critical_confidence)
+            api_hint = "limited corroboration"
+            if api_checked == 0 or api_error_count > 0:
+                api_hint = "API corroboration unavailable"
             result["summary"] = (
-                f"MALICIOUS - High-confidence threat pattern: {heuristic_threats[0].get('indicator', 'Unknown')}"
+                f"SUSPICIOUS - High-confidence threat pattern detected: {heuristic_threats[0].get('indicator', 'Unknown')} "
+                f"({api_hint})."
             )
         elif heuristic_critical >= 1:
-            # Single critical heuristic = suspicious with good confidence
             result["verdict"] = ThreatLevel.SUSPICIOUS
-            result["confidence"] = min(0.80, max_critical_confidence + 0.05)
+            result["confidence"] = min(0.75, max_critical_confidence + 0.05)
             result["summary"] = (
                 f"SUSPICIOUS - Critical threat pattern detected: {heuristic_threats[0].get('indicator', 'Unknown')}"
+            )
+        elif heuristic_high >= 2:
+            result["verdict"] = ThreatLevel.SUSPICIOUS
+            result["confidence"] = min(0.78, 0.62 + (heuristic_high * 0.06))
+            result["summary"] = (
+                f"SUSPICIOUS - {heuristic_high} high-severity suspicious patterns detected."
             )
         elif heuristic_medium >= 3:
             # 3+ medium heuristics = likely malicious
@@ -2203,6 +2463,13 @@ class ThreatAnalyzer:
                 result["confidence"] = min(1.0, 0.85 + (corroboration_count * 0.05))
                 result["summary"] = (
                     f"MALICIOUS (CORROBORATED) - {critical_count} critical threat(s) "
+                    f"confirmed by {corroboration_count} independent sources."
+                )
+            elif high_count >= 2:
+                result["verdict"] = ThreatLevel.MALICIOUS
+                result["confidence"] = min(1.0, 0.80 + (corroboration_count * 0.05))
+                result["summary"] = (
+                    f"MALICIOUS (CORROBORATED) - {high_count} high-severity threat(s) "
                     f"confirmed by {corroboration_count} independent sources."
                 )
             elif medium_count >= 2:
@@ -2235,6 +2502,13 @@ class ThreatAnalyzer:
                     f"MALICIOUS - {critical_count} critical threat(s) detected "
                     f"(limited corroboration - additional validation recommended)."
                 )
+            elif high_count >= 2:
+                result["verdict"] = ThreatLevel.SUSPICIOUS
+                result["confidence"] = 0.62
+                result["summary"] = (
+                    f"SUSPICIOUS - {high_count} high-severity threat(s) detected "
+                    f"(limited corroboration - manual review recommended)."
+                )
             elif medium_count >= 2:
                 result["verdict"] = ThreatLevel.SUSPICIOUS
                 result["confidence"] = 0.55
@@ -2266,12 +2540,16 @@ class ThreatAnalyzer:
             "unique_sources": list(unique_sources),
             "total_indicators": len(threats),
             "critical_indicators": critical_count,
+            "high_indicators": high_count,
             "medium_indicators": medium_count,
             "low_indicators": low_count,
+            "weighted_score": weighted_score,
             "heuristic_indicators": {
                 "critical": heuristic_critical,
+                "high": heuristic_high,
                 "medium": heuristic_medium,
                 "low": heuristic_low,
+                "weighted_score": heuristic_weighted_score,
                 "avg_confidence": round(avg_heuristic_confidence, 2),
                 "max_critical_confidence": round(max_critical_confidence, 2)
             },

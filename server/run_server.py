@@ -8,11 +8,16 @@ import logging
 import logging.handlers
 import multiprocessing
 import os
+import ipaddress
 import signal
+import socket
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, UTC
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Ensure we run with the project venv interpreter when available (important for Gemini deps)
 def _reexec_with_venv_if_needed():
@@ -205,6 +210,33 @@ def run_protection_client():
             if text in {"SUSPICIOUS", "WARNING"}:
                 return "MEDIUM"
             return "LOW"
+
+        trusted_domains = {
+            'facebook.com', 'fb.com', 'fbcdn.net',
+            'wikipedia.org', 'wikimedia.org',
+            'reddit.com', 'redd.it',
+            'google.com', 'youtube.com', 'gstatic.com',
+            'microsoft.com', 'outlook.com', 'live.com',
+            'amazon.com', 'apple.com', 'icloud.com',
+        }
+
+        def _is_local_or_private_host(host: str) -> bool:
+            h = str(host or '').strip().lower().rstrip('.')
+            if not h:
+                return False
+            if h in {'localhost', 'localhost.localdomain', '127.0.0.1', '0.0.0.0', '::1'} or h.startswith('127.'):
+                return True
+            try:
+                ip_obj = ipaddress.ip_address(h)
+                return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+            except Exception:
+                return False
+
+        def _is_trusted_domain(host: str) -> bool:
+            h = str(host or '').strip().lower().rstrip('.')
+            if not h:
+                return False
+            return any(h == td or h.endswith(f'.{td}') for td in trusted_domains)
         
         def handle_intrusion(intrusion):
             stats["intrusions_detected"] += 1
@@ -231,20 +263,37 @@ def run_protection_client():
             verdict_value = str(verdict.get('verdict', '')).upper()
             artifact_type = verdict.get('artifact_type', 'artifact')
             artifact_value = verdict.get('artifact', 'UNKNOWN')
+            source_count = int(verdict.get('sources', 0) or 0)
 
             if verdict_value != 'MALICIOUS':
                 return
 
-            stats['threats_detected'] += 1
-            logger.warning("⚠️  Threat intel verdict: %s -> %s", artifact_type, artifact_value)
-
             if artifact_type == 'ip':
+                if _is_local_or_private_host(artifact_value):
+                    logger.info("ℹ️  Threat verdict ignored for local/private IP: %s", artifact_value)
+                    return
+                stats['threats_detected'] += 1
+                logger.warning("⚠️  Threat intel verdict: %s -> %s", artifact_type, artifact_value)
                 ips.block_ip(artifact_value, reason="Threat intelligence malicious IP")
             elif artifact_type in {'domain', 'url'}:
-                from urllib.parse import urlparse
-
                 domain = artifact_value if artifact_type == 'domain' else urlparse(artifact_value).netloc
                 if domain:
+                    host = domain.split(':', 1)[0].strip().lower().rstrip('.')
+                    if _is_local_or_private_host(host):
+                        logger.info("ℹ️  Threat verdict ignored for local/private domain: %s", domain)
+                        return
+
+                    # Protect common legitimate domains from single-source false positives.
+                    if _is_trusted_domain(host) and source_count < 2:
+                        logger.warning(
+                            "⚠️  Suppressed auto-block for trusted domain %s (insufficient corroboration: %s source)",
+                            host,
+                            source_count,
+                        )
+                        return
+
+                    stats['threats_detected'] += 1
+                    logger.warning("⚠️  Threat intel verdict: %s -> %s", artifact_type, artifact_value)
                     ips.block_domain(domain, reason="Threat intelligence malicious domain")
         
         def handle_artifact(artifact):
@@ -272,8 +321,8 @@ def run_protection_client():
 
             summary = event.get('report', {}).get('summary', {})
             stats['startup_findings'] += summary.get('total_findings', 0)
-            logger.info(
-                "🧪 Startup assessment complete | findings=%s critical=%s high=%s",
+            logger.debug(
+                "Startup assessment complete | findings=%s critical=%s high=%s",
                 summary.get('total_findings', 0),
                 summary.get('critical_findings', 0),
                 summary.get('high_findings', 0),
@@ -290,21 +339,22 @@ def run_protection_client():
             if risk not in {'HIGH', 'CRITICAL'}:
                 return
 
-            stats['threats_detected'] += 1
             description = event.get('description') or event.get('reason') or event_type
-            logger.warning("⚠️  Extended monitor alert [%s]: %s", risk, description)
 
             remote_ip = event.get('source_ip') or event.get('remote_ip') or event.get('ip')
             domain = event.get('domain') or event.get('source_domain')
             file_path = event.get('file_path') or event.get('original_path')
 
             # Avoid noisy SOC popup alerts for local host-only heuristics
-            # (e.g. browser helper path or short-lived Python CPU spikes)
+            # unless corroborated by a remote endpoint or domain.
             alert_type = str(event.get('alert_type') or '').upper()
             if event_type in {'process_alert', 'behavioral_alert'} and not remote_ip and not domain:
-                if alert_type in {'EXEC_FROM_TEMP', 'CPU_SPIKE'}:
-                    logger.info("ℹ️  Local heuristic noted (not escalated to attack alert): %s", description)
+                if alert_type in {'EXEC_FROM_TEMP', 'CPU_SPIKE', 'SUSPICIOUS_CMDLINE', 'DATA_EXFILTRATION'}:
+                    logger.debug("Local heuristic suppressed: %s", description)
                     return
+
+            stats['threats_detected'] += 1
+            logger.warning("⚠️  Extended monitor alert [%s]: %s", risk, description)
 
             if remote_ip:
                 ips.block_ip(remote_ip, reason=description)
@@ -316,6 +366,7 @@ def run_protection_client():
             defense_coordinator.handle_attack({
                 'type': event_type,
                 'severity': risk,
+                'alert_type': alert_type or event_type,
                 'description': description,
                 'source_ip': remote_ip or 'UNKNOWN',
                 'timestamp': datetime.now(UTC),
@@ -349,7 +400,7 @@ def run_protection_client():
             defense_coordinator=defense_coordinator,
             callback=handle_startup_event,
         )
-        startup_monitor.run_startup_assessment(apply_firewall_hardening=True)
+        startup_report = startup_monitor.run_startup_assessment(apply_firewall_hardening=True)
 
         usb_monitor = USBMonitor(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
         email_monitor = EmailMonitor(callback=handle_extended_monitor_event, threat_analyzer=threat_analyzer)
@@ -368,7 +419,18 @@ def run_protection_client():
         network_scanner.start()
         process_scanner.start()
         
-        logger.info("✅ IDS | IPS | Monitor | Traffic | Defense | USB | Email | Vuln | Behavior | DNS | Network | Process → ACTIVE")
+        startup_summary = (startup_report or {}).get('summary', {})
+        startup_findings = startup_summary.get('total_findings', 0)
+        startup_critical = startup_summary.get('critical_findings', 0)
+        startup_high = startup_summary.get('high_findings', 0)
+        logger.info(
+            "◈ Protection active · detect=IDS · prevent=Shield · respond=Coordinator"
+            " · monitors=Traffic, USB, Email, Vuln, Behavior, DNS, Network, Process"
+            " · startup findings=%s (critical=%s, high=%s)",
+            startup_findings,
+            startup_critical,
+            startup_high,
+        )
         
         # Keep running and print stats periodically
         last_stats = time.time()
@@ -388,35 +450,22 @@ def run_protection_client():
                 traffic_summary = traffic_monitor.get_statistics()
 
                 logger.info(
-                    "📊 PROTECTION | up=%sm | intrusions=%s blocked=%s | activities=%s | threats=%s",
+                    "\u25c8  up %sm  \u00b7  threats %s  \u00b7  intrusions %s/%s"
+                    "  \u00b7  activities %s  \u00b7  net %s (sus %s)  \u00b7  scans %s [q%s]"
+                    "  \u00b7  vulns C%s/H%s  \u00b7  proc %s  \u00b7  behav %s",
                     uptime // 60,
+                    stats['threats_detected'],
                     stats['intrusions_detected'],
                     stats['intrusions_blocked'],
                     stats['activities_logged'],
-                    stats['threats_detected'],
-                )
-                logger.info(
-                    "   monitors | ext=%s startup=%s quarantined=%s firewall=%s | net_conns=%s suspicious=%s | scans=%s queue=%s",
-                    stats['extended_events'],
-                    stats['startup_findings'],
-                    stats['files_quarantined'],
-                    stats['firewall_hardening_actions'],
                     network_summary.get('connections_logged', 0),
                     network_summary.get('suspicious_connections', 0),
                     traffic_summary.get('scanned_artifacts_count', traffic_summary.get('artifacts_scanned', 0)),
                     traffic_summary.get('queue_size', 0),
-                )
-                logger.info(
-                    "   security | vulns(C/H/M/L)=%s/%s/%s/%s | process_high=%s | behavioral_high=%s | usb_threats=%s | email_critical=%s | dns_threats=%s",
                     vuln_summary.get('CRITICAL', 0),
                     vuln_summary.get('HIGH', 0),
-                    vuln_summary.get('MEDIUM', 0),
-                    vuln_summary.get('LOW', 0),
                     process_summary.get('process_alerts', {}).get('HIGH', 0),
                     behavioral_summary.get('behavioral_alerts', {}).get('HIGH', 0),
-                    usb_summary.get('usb_threats', 0),
-                    email_summary.get('critical', 0),
-                    dns_summary.get('dns_threats', 0),
                 )
                 last_stats = time.time()
         
@@ -462,8 +511,55 @@ def run_kali_optimized():
     logger.info(f"🔍 Detection: Port Scans, DDoS, Brute Force, Malicious IPs")
     logger.info(f"🚫 Prevention: Auto-blocking, Quarantine, Firewall Rules")
     logger.info("="*70)
+
+    def _port_in_use(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.75):
+                return True
+        except Exception:
+            return False
+
+    def _server_ready(timeout_seconds: int = 45) -> bool:
+        deadline = time.time() + timeout_seconds
+        health_urls = (
+            f"http://127.0.0.1:{int(settings.API_PORT)}/api/v1/health",
+            f"http://127.0.0.1:{int(settings.API_PORT)}/",
+        )
+
+        def _http_ready() -> bool:
+            for url in health_urls:
+                try:
+                    with urllib.request.urlopen(url, timeout=1.5) as response:
+                        if int(getattr(response, "status", 0)) < 500:
+                            return True
+                except urllib.error.URLError:
+                    continue
+                except Exception:
+                    continue
+            return False
+
+        while time.time() < deadline:
+            if not server_process or not server_process.is_alive():
+                return False
+
+            if _http_ready():
+                return True
+
+            try:
+                with socket.create_connection(("127.0.0.1", int(settings.API_PORT)), timeout=1.0):
+                    return True
+            except Exception:
+                time.sleep(0.35)
+        return False
     
     try:
+        if _port_in_use(int(settings.API_PORT)):
+            logger.error(
+                "❌ Port %s is already in use. Stop the existing server instance before starting integrated mode.",
+                settings.API_PORT,
+            )
+            return
+
         # Start server in separate process
         global server_process
         server_process = multiprocessing.Process(target=run_server, name="SentinelServer")
@@ -473,7 +569,22 @@ def run_kali_optimized():
         
         # Wait for server to be ready
         logger.info("⏳ Waiting for server to initialize...")
-        time.sleep(5)
+        startup_timeout = int(os.getenv("SENTINEL_SERVER_READY_TIMEOUT", "45"))
+        if not _server_ready(timeout_seconds=startup_timeout):
+            if not server_process or not server_process.is_alive():
+                logger.error(
+                    "❌ Server process exited before becoming ready (exit_code=%s).",
+                    getattr(server_process, "exitcode", "unknown"),
+                )
+            else:
+                logger.error(
+                    "❌ Server did not become ready on port %s within %ss.",
+                    settings.API_PORT,
+                    startup_timeout,
+                )
+            if server_process and server_process.is_alive():
+                server_process.terminate()
+            return
         
         # Check if we need sudo for full protection
         if os.geteuid() != 0:
@@ -487,6 +598,10 @@ def run_kali_optimized():
             logger.warning("   For FULL protection, run: sudo python run_server.py")
             logger.warning("")
             time.sleep(3)
+
+        if not server_process or not server_process.is_alive():
+            logger.error("❌ Server process exited before protection startup completed.")
+            return
         
         # Start protection client in separate process
         global client_process

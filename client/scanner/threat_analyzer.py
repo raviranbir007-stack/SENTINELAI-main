@@ -7,6 +7,7 @@ import logging
 import requests
 import socket
 import threading
+import ipaddress
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
@@ -48,6 +49,52 @@ class ThreatAnalyzer:
             'hybrid_analysis': 'https://www.hybrid-analysis.com/api/v2'
         }
 
+        self.trusted_domains = {
+            'facebook.com', 'fb.com', 'fbcdn.net',
+            'wikipedia.org', 'wikimedia.org',
+            'reddit.com', 'redd.it',
+            'google.com', 'youtube.com', 'gstatic.com',
+            'microsoft.com', 'live.com', 'outlook.com',
+            'amazon.com', 'apple.com', 'icloud.com'
+        }
+
+    def _extract_host(self, artifact_type: str, artifact_value: str) -> str:
+        value = str(artifact_value or '').strip()
+        if not value:
+            return ''
+        if artifact_type == 'url':
+            try:
+                return (urlparse(value).hostname or '').strip().lower().rstrip('.')
+            except Exception:
+                return ''
+        if artifact_type == 'domain':
+            return value.split(':', 1)[0].strip().lower().rstrip('.')
+        if artifact_type == 'ip':
+            return value
+        return ''
+
+    def _is_local_or_private_host(self, host: str) -> bool:
+        h = str(host or '').strip().lower().rstrip('.')
+        if not h:
+            return False
+        if h in {'localhost', 'localhost.localdomain', '127.0.0.1', '0.0.0.0', '::1'} or h.startswith('127.'):
+            return True
+        try:
+            ip_obj = ipaddress.ip_address(h)
+            return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+        except Exception:
+            return False
+
+    def _is_local_artifact(self, artifact_type: str, artifact_value: str) -> bool:
+        host = self._extract_host(artifact_type, artifact_value)
+        return self._is_local_or_private_host(host)
+
+    def _is_trusted_domain(self, host: str) -> bool:
+        h = str(host or '').strip().lower().rstrip('.')
+        if not h:
+            return False
+        return any(h == td or h.endswith(f'.{td}') for td in self.trusted_domains)
+
     def _normalize_api_keys(self, api_keys: Dict[str, str]) -> Dict[str, str]:
         """Normalize config aliases so integrations can use consistent key names."""
         normalized = dict(api_keys or {})
@@ -86,25 +133,53 @@ class ThreatAnalyzer:
         """Queue an artifact for threat analysis"""
         if not artifact_value:
             return
+
+        # Skip localhost/private artifacts to prevent false-positive local blocking.
+        if self._is_local_artifact(artifact_type, artifact_value):
+            if self.callback:
+                self.callback({
+                    'type': 'threat_verdict',
+                    'artifact_type': artifact_type,
+                    'artifact': artifact_value,
+                    'verdict': 'SAFE',
+                    'risk': 'LOW',
+                    'cached': False,
+                    'sources': 0,
+                    'sources_list': [],
+                    'reason': 'local_or_private_target'
+                })
+            return
         
         # Check cache
         cache_key = f"{artifact_type}:{artifact_value}"
         if cache_key in self.scanned_artifacts:
             cached = self.scanned_artifacts[cache_key]
             if datetime.now() - cached['timestamp'] < timedelta(seconds=self.cache_ttl):
-                # Return cached result
-                if self.callback:
-                    self.callback({
-                        'type': 'threat_verdict',
-                        'artifact_type': artifact_type,
-                        'artifact': artifact_value,
-                        'verdict': cached['verdict'],
-                        'risk': cached['risk_level'],
-                        'cached': True,
-                        'sources': len(cached.get('sources', [])),
-                        'sources_list': cached.get('sources', [])
-                    })
-                return
+                host = self._extract_host(artifact_type, artifact_value)
+                # Never trust stale single-signal malicious cache for trusted public domains.
+                if (
+                    artifact_type in {'url', 'domain'}
+                    and str(cached.get('verdict', '')).upper() == 'MALICIOUS'
+                    and (
+                        self._is_trusted_domain(host)
+                        or (datetime.now() - cached['timestamp']) > timedelta(seconds=300)
+                    )
+                ):
+                    pass
+                else:
+                    # Return cached result
+                    if self.callback:
+                        self.callback({
+                            'type': 'threat_verdict',
+                            'artifact_type': artifact_type,
+                            'artifact': artifact_value,
+                            'verdict': cached['verdict'],
+                            'risk': cached['risk_level'],
+                            'cached': True,
+                            'sources': len(cached.get('sources', [])),
+                            'sources_list': cached.get('sources', [])
+                        })
+                    return
         
         # Add to queue
         self.scan_queue.append({
@@ -191,6 +266,15 @@ class ThreatAnalyzer:
         if not self.server_url:
             return None
 
+        if self._is_local_artifact(artifact_type, artifact_value):
+            return {
+                "verdict": "SAFE",
+                "risk_level": "LOW",
+                "detections": 0,
+                "sources": [],
+                "summary": "Local/private target skipped from threat blocking path"
+            }
+
         try:
             endpoint = f"{self.server_url}/api/v1/scan/scan"
             payload = {
@@ -222,6 +306,16 @@ class ThreatAnalyzer:
 
             apis_called = analysis.get("api_results", {}).get("apis_called", [])
             sources = apis_called if apis_called else []
+
+            host = self._extract_host(artifact_type, artifact_value)
+            if (
+                artifact_type in {'url', 'domain'}
+                and self._is_trusted_domain(host)
+                and verdict == "MALICIOUS"
+                and int(data.get("threats_detected", 0) or 0) <= 1
+            ):
+                verdict = "SUSPICIOUS"
+                risk = "MEDIUM"
 
             return {
                 "verdict": verdict,

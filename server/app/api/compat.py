@@ -1,12 +1,16 @@
 import random
 import hashlib
+import math
 import os
+import re as _re
 import json
+import struct
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
@@ -19,6 +23,323 @@ from ..core.report_generator import report_generator
 from ..core.threat_analyzer import threat_analyzer
 from ..database import get_db
 from ..models import AttackEvent, ScanHistory, SystemLog
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local file analysis helpers (no external API keys required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BYTE_SIGS: List[tuple] = [
+    # (name, pattern_bytes, description, severity)
+    ("EICAR",             b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+                          "EICAR AV test file",          "critical"),
+    ("SHELLCODE_NOP",     b"\x90\x90\x90\x90\x90\x90\x90\x90",
+                          "NOP sled – shellcode",        "high"),
+    ("REVERSE_SHELL",     b"/bin/sh\x00-i",
+                          "Reverse-shell string",        "critical"),
+    ("MSFVENOM",          b"msfvenom",
+                          "Metasploit payload marker",   "critical"),
+    ("XOR_DECODE_STUB",   b"xor eax",
+                          "XOR decode stub (shellcode)", "high"),
+    ("JAVA_CLASS",        b"\xca\xfe\xba\xbe",
+                          "Java class file",             "medium"),
+]
+
+_REGEX_SIGS: List[tuple] = [
+    # (name, pattern, severity)
+    ("POWERSHELL_ENC",     r"powershell.*-enc",                          "high"),
+    ("WGET_PIPE_SH",       r"wget\s+.*\|\s*(ba)?sh",                    "high"),
+    ("CURL_PIPE_BASH",     r"curl\s+.*\|\s*(ba)?bash",                  "high"),
+    ("BASE64_DECODE",      r"base64\s+--?decode",                       "medium"),
+    ("NET_USER_ADD",       r"net\s+user.*\/add",                        "high"),
+    ("SCHTASK_CREATE",     r"schtasks.*\/create",                       "high"),
+    ("CREATEREMOTETHREAD", r"CreateRemoteThread",                       "critical"),
+    ("VIRTUALALLOC",       r"VirtualAlloc",                             "high"),
+    ("WSCRIPT_SHELL",      r"WScript\.Shell",                           "high"),
+    ("OBFUSCATED_EVAL",    r"eval\s*\(\s*(?:unescape|base64|gzip|rot13)", "high"),
+    ("LINUX_DROPPER",      r"chmod\s+\+x.*&&",                         "high"),
+    ("PYTHON_EXEC",        r"exec\s*\(\s*__import__",                  "high"),
+]
+
+_MAGIC_MAP: Dict[bytes, tuple] = {
+    b"MZ":               ("Windows PE executable",  False),
+    b"\x7fELF":          ("Linux ELF executable",   False),
+    b"\xca\xfe\xba\xbe": ("Java class file",        True),
+    b"#!/":              ("Script file",             False),
+    b"PK\x03\x04":       ("ZIP archive",            False),
+    b"Rar!":             ("RAR archive",             False),
+    b"\x1f\x8b":         ("GZIP compressed",        False),
+    b"\xd0\xcf\x11\xe0": ("OLE2 / Office macro",   True),
+    b"%PDF":             ("PDF document",            False),
+    b"\x89PNG":          ("PNG image",               False),
+    b"GIF8":             ("GIF image",               False),
+    b"\xff\xd8\xff":     ("JPEG image",              False),
+}
+
+_DANGEROUS_EXTS = {
+    ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js",
+    ".jse", ".wsf", ".wsh", ".msi", ".scr", ".pif", ".com", ".hta",
+    ".cpl", ".reg", ".lnk", ".inf", ".jar", ".docm", ".xlsm",
+    ".pptm", ".dotm", ".xltm", ".xlam", ".ppam", ".gadget",
+}
+
+_SUSPICIOUS_STR_PATS = [
+    r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
+    r"/etc/passwd", r"/etc/shadow",
+    r"cmd\.exe", r"powershell",
+    r"\\AppData\\Roaming",
+    r"CreateRemoteThread", r"VirtualAlloc", r"WriteProcessMemory",
+    r"ShellExecute", r"WScript\.Shell",
+    r"eval\s*\(", r"exec\s*\(",
+    r"base64_decode", r"gzinflate", r"str_rot13",
+]
+
+_PHISHING_LURE_PATS = [
+    ("PHISHING_VERIFY_ACCOUNT", r"verify\s+your\s+account|account\s+verification|confirm\s+your\s+account", "high"),
+    ("PHISHING_ACCOUNT_SUSPENDED", r"account\s+(?:has\s+been\s+)?suspended|unusual\s+login\s+attempt", "high"),
+    ("PHISHING_PAYMENT_URGENT", r"payment\s+failed|billing\s+issue|update\s+payment\s+method", "high"),
+    ("PHISHING_CREDENTIAL_HARVEST", r"(enter|confirm|re-enter)\s+(your\s+)?(password|otp|one-time\s+password|2fa\s+code)", "medium"),
+]
+
+_HIGH_ENTROPY  = 7.2
+_MED_ENTROPY   = 6.5
+_MAX_SAMPLE    = 1 * 1024 * 1024   # 1 MB sample for local analysis
+_MAX_FILE_SIZE = 100 * 1024 * 1024 # 100 MB upload limit
+
+
+def _normalize_verdict(verdict: object, default: str = "unknown") -> str:
+    value = verdict if verdict is not None else default
+    if hasattr(value, "value"):
+        value = getattr(value, "value")
+    elif hasattr(value, "name"):
+        value = getattr(value, "name")
+
+    normalized = str(value or default).strip().lower()
+    if normalized.startswith("threatlevel."):
+        normalized = normalized.split(".", 1)[1]
+
+    if normalized == "safe":
+        return "clean"
+    if normalized == "critical":
+        return "malicious"
+    return normalized or default
+
+
+def _calc_entropy(data: bytes) -> float:
+    if not data:
+        return 0.0
+    freq: Dict[int, int] = defaultdict(int)
+    for b in data:
+        freq[b] += 1
+    n = len(data)
+    return -sum((c / n) * math.log2(c / n) for c in freq.values() if c)
+
+
+def _identify_magic(data: bytes) -> str:
+    for magic, (desc, _) in _MAGIC_MAP.items():
+        if data[: len(magic)] == magic:
+            return desc
+    return "Unknown"
+
+
+def _analyse_pe(data: bytes) -> Optional[Dict]:
+    if data[:2] != b"MZ":
+        return None
+    try:
+        if len(data) < 0x40:
+            return None
+        pe_off = struct.unpack_from("<I", data, 0x3C)[0]
+        if pe_off + 24 > len(data):
+            return None
+        if data[pe_off: pe_off + 4] != b"PE\x00\x00":
+            return None
+        chars   = struct.unpack_from("<H", data, pe_off + 22)[0]
+        opt_mag = struct.unpack_from("<H", data, pe_off + 24)[0]
+        arch    = "x86" if opt_mag == 0x10B else "x64" if opt_mag == 0x20B else "unknown"
+        is_dll  = bool(chars & 0x2000)
+        no_reloc = bool(chars & 0x0001)
+        return {"arch": arch, "is_dll": is_dll, "no_reloc": no_reloc,
+                "suspicious": no_reloc and not is_dll}
+    except Exception:
+        return None
+
+
+def _local_file_analysis(content: bytes, filename: str) -> Dict:
+    """
+    Perform fast, in-process file analysis (no external API keys needed).
+    Returns risk_level in {CRITICAL, HIGH, MEDIUM, LOW, CLEAN} and
+    a list of threat_indicators compatible with the rest of the system.
+    """
+    p   = Path(filename) if filename else Path("unknown")
+    ext = p.suffix.lower()
+    sample = content[: _MAX_SAMPLE]
+
+    entropy    = _calc_entropy(sample)
+    magic_type = _identify_magic(sample)
+    pe_info    = _analyse_pe(sample)
+
+    matched_sigs: List[Dict] = []
+    text = sample.decode("latin-1", errors="replace")
+
+    # Byte signatures
+    for name, pattern, desc, sev in _BYTE_SIGS:
+        if isinstance(pattern, bytes) and pattern in sample:
+            matched_sigs.append({"name": name, "desc": desc, "severity": sev})
+
+    # Regex signatures
+    for name, pattern, sev in _REGEX_SIGS:
+        try:
+            if _re.search(pattern, text, _re.IGNORECASE):
+                matched_sigs.append({"name": name, "desc": name.replace("_", " ").title(), "severity": sev})
+        except Exception:
+            pass
+
+    # Phishing-kit specific HTML and lure language detection
+    text_lower = text.lower()
+    has_password_input = bool(_re.search(r"<input[^>]+type\s*=\s*['\"]?password", text, _re.IGNORECASE))
+    has_form = "<form" in text_lower
+    has_remote_action = bool(_re.search(r"<form[^>]+action\s*=\s*['\"]https?://", text, _re.IGNORECASE))
+
+    if has_form and has_password_input and (has_remote_action or "action=" in text_lower):
+        matched_sigs.append({
+            "name": "PHISHING_LOGIN_FORM",
+            "desc": "Credential login form with explicit action target",
+            "severity": "high",
+        })
+
+    for name, pattern, sev in _PHISHING_LURE_PATS:
+        try:
+            if _re.search(pattern, text, _re.IGNORECASE):
+                matched_sigs.append({"name": name, "desc": name.replace("_", " ").title(), "severity": sev})
+        except Exception:
+            pass
+
+    if "window.location" in text_lower and ("atob(" in text_lower or "fromcharcode(" in text_lower):
+        matched_sigs.append({
+            "name": "OBFUSCATED_REDIRECT",
+            "desc": "Obfuscated JavaScript redirect logic",
+            "severity": "high",
+        })
+
+    # Suspicious strings
+    susp_strings: List[str] = []
+    for pat in _SUSPICIOUS_STR_PATS:
+        m = _re.search(pat, text, _re.IGNORECASE)
+        if m:
+            susp_strings.append(m.group(0)[:120])
+    susp_strings = list(set(susp_strings))[:20]
+
+    # Build threat_indicators
+    threat_indicators: List[Dict] = []
+
+    for sig in matched_sigs:
+        sev = sig.get("severity", "medium")
+        conf = {"critical": 1.0, "high": 0.85, "medium": 0.65}.get(sev, 0.5)
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": sev,
+            "indicator": f"Signature match: {sig.get('desc', sig['name'])}",
+            "type": sig["name"],
+            "confidence": conf,
+        })
+
+    if entropy >= _HIGH_ENTROPY:
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": "high",
+            "indicator": f"Very high entropy ({entropy:.2f}) — likely encrypted/packed payload",
+            "type": "HIGH_ENTROPY",
+            "confidence": 0.78,
+        })
+    elif entropy >= _MED_ENTROPY:
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": "medium",
+            "indicator": f"Elevated entropy ({entropy:.2f}) — possible obfuscation",
+            "type": "MED_ENTROPY",
+            "confidence": 0.55,
+        })
+
+    if ext in _DANGEROUS_EXTS:
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": "medium",
+            "indicator": f"Potentially dangerous file extension: {ext}",
+            "type": "DANGEROUS_EXT",
+            "confidence": 0.60,
+        })
+
+    if pe_info and pe_info.get("suspicious"):
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": "high",
+            "indicator": "PE header anomaly — no relocation, not a DLL (suspicious executable)",
+            "type": "PE_ANOMALY",
+            "confidence": 0.80,
+        })
+
+    if len(susp_strings) >= 3:
+        threat_indicators.append({
+            "source": "Local Analysis",
+            "severity": "medium",
+            "indicator": f"Multiple suspicious strings ({len(susp_strings)}): {', '.join(susp_strings[:3])}",
+            "type": "SUSPICIOUS_STRINGS",
+            "confidence": 0.60,
+        })
+
+    # Risk scoring
+    _SEV_SCORE = {"critical": 5, "high": 3, "medium": 2, "low": 1}
+    score = sum(_SEV_SCORE.get(ind.get("severity", "low"), 1) for ind in threat_indicators)
+
+    if score >= 8:
+        risk_level = "CRITICAL"
+    elif score >= 5:
+        risk_level = "HIGH"
+    elif score >= 2:
+        risk_level = "MEDIUM"
+    elif score >= 1:
+        risk_level = "LOW"
+    else:
+        risk_level = "CLEAN"
+
+    return {
+        "local_analysis": True,
+        "entropy": round(entropy, 3),
+        "file_extension": ext,
+        "magic_type": magic_type,
+        "signatures": [s["name"] for s in matched_sigs],
+        "suspicious_strings": susp_strings,
+        "pe_info": pe_info,
+        "risk_score": score,
+        "risk_level": risk_level,
+        "threat_indicators": threat_indicators,
+    }
+
+
+def _build_file_summary(filename: str, local: Dict, final_verdict: str,
+                        all_indicators: List[Dict]) -> str:
+    risk   = local.get("risk_level", "CLEAN")
+    sigs   = local.get("signatures", [])
+    entropy = local.get("entropy", 0.0)
+    magic  = local.get("magic_type", "Unknown")
+
+    if final_verdict == "malicious":
+        parts = [f"⛔ MALICIOUS: {filename} detected as malicious."]
+        if sigs:
+            parts.append(f"Signatures matched: {', '.join(sigs)}.")
+        parts.append(f"Entropy: {entropy:.2f} | Type: {magic}.")
+        parts.append(f"{len(all_indicators)} threat indicator(s) identified.")
+        return " ".join(parts)
+    elif final_verdict == "suspicious":
+        parts = [f"⚠ SUSPICIOUS: {filename} shows suspicious characteristics."]
+        if sigs:
+            parts.append(f"Matched patterns: {', '.join(sigs)}.")
+        parts.append(f"Entropy: {entropy:.2f} | Type: {magic}.")
+        return " ".join(parts)
+    else:
+        return (f"✅ {filename} appears clean. "
+                f"Entropy: {entropy:.2f} | Type: {magic} | "
+                f"Local risk: {risk}.")
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -288,7 +609,8 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
         scan_duration_ms = int((time.time() - scan_start_time) * 1000)
         
         # Map analyzer verdict to threat_level
-        verdict = analysis_result.get("verdict", "unknown")
+        verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
+        analysis_result["verdict"] = verdict
         threat_level_map = {
             "clean": "safe",
             "suspicious": "suspicious",
@@ -417,74 +739,133 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
 
 @router.post("/scan/file")
 async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    """File upload scan endpoint. Computes hash and analyzes with real threat APIs."""
+    """
+    File upload scan endpoint.
+    Performs LOCAL analysis (signatures, entropy, magic bytes, PE headers)
+    first, then enriches with external API hash lookup when keys are configured.
+    Returns a combined verdict — malicious files are detected even without API keys.
+    """
+    import time
     scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
     filename = file.filename or "unknown"
+    scan_start = time.time()
 
     try:
-        # Read file content and compute hash
         content = await file.read()
         file_size = len(content)
-        
-        # Compute SHA256 hash
+
+        # ── Size guard ──────────────────────────────────────────────────────
+        if file_size > _MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
+
+        # ── Hashing ─────────────────────────────────────────────────────────
         file_hash = hashlib.sha256(content).hexdigest()
-        
-        # Perform real threat analysis on file hash
-        analysis_result = await threat_analyzer.analyze(file_hash)
-        
-        # Map analyzer verdict to threat_level
-        verdict = analysis_result.get("verdict", "unknown")
-        threat_level_map = {
-            "clean": "safe",
-            "suspicious": "suspicious",
-            "malicious": "malicious"
+        md5_hash  = hashlib.md5(content).hexdigest()
+
+        # ── LOCAL analysis (always runs, no API keys needed) ─────────────
+        local = _local_file_analysis(content, filename)
+
+        # ── EXTERNAL API analysis (hash lookup; skips gracefully if no keys)
+        try:
+            api_result = await threat_analyzer.analyze(file_hash)
+        except Exception as api_err:
+            logger.warning(f"External API analysis failed for file hash: {api_err}")
+            api_result = {"verdict": "clean", "confidence": 0.0,
+                          "threat_indicators": [], "api_results": {}, "forensic_metadata": {}}
+
+        # ── Merge indicators ─────────────────────────────────────────────
+        api_indicators = api_result.get("threat_indicators", [])
+        all_indicators = local["threat_indicators"] + api_indicators
+
+        # ── Determine final verdict (worst of local + API) ────────────────
+        _PRIORITY = {"malicious": 3, "suspicious": 2, "clean": 1, "safe": 1, "unknown": 0}
+
+        _LOCAL_VERDICT = {
+            "CRITICAL": "malicious", "HIGH": "malicious",
+            "MEDIUM":   "suspicious", "LOW": "suspicious", "CLEAN": "clean",
         }
-        threat_level = threat_level_map.get(verdict, "unknown")
-        
-        # Count detected threats
-        threats_detected = len(analysis_result.get("threat_indicators", []))
-        
+        local_verdict = _LOCAL_VERDICT.get(local["risk_level"], "clean")
+        api_verdict   = _normalize_verdict(api_result.get("verdict", "clean"), default="clean")
+        api_result["verdict"] = api_verdict
+
+        final_verdict = (
+            local_verdict
+            if _PRIORITY.get(local_verdict, 0) >= _PRIORITY.get(api_verdict, 0)
+            else api_verdict
+        )
+
+        _TL_MAP = {"malicious": "malicious", "suspicious": "suspicious",
+                   "clean": "safe", "safe": "safe"}
+        threat_level = _TL_MAP.get(final_verdict, "unknown")
+
+        # ── Confidence ───────────────────────────────────────────────────
+        local_conf = min(local["risk_score"] / 10.0, 1.0) if local["risk_score"] > 0 else 0.0
+        api_conf   = float(api_result.get("confidence", 0.0) or 0.0)
+        confidence = max(local_conf, api_conf)
+
+        scan_duration_ms = int((time.time() - scan_start) * 1000)
+
         result = {
-            "scan_id": scan_id,
-            "target": filename,
-            "type": "file",
-            "file_size": file_size,
-            "file_hash": file_hash,
-            "status": "complete",
-            "threat_level": threat_level,
-            "threats_detected": threats_detected,
-            "verdict": verdict,
-            "confidence": analysis_result.get("confidence", 0.0),
-            "summary": analysis_result.get("summary", "File analysis complete"),
-            "timestamp": datetime.utcnow().isoformat(),
-            # Include API results
-            "api_results": analysis_result.get("api_results", {}),
-            "threat_indicators": analysis_result.get("threat_indicators", []),
-            # Include forensic reliability metadata
-            "forensic_metadata": analysis_result.get("forensic_metadata", {}),
-        }
-    except Exception as e:
-        result = {
-            "scan_id": scan_id,
-            "target": filename,
-            "type": "file",
-            "file_size": 0,
-            "status": "error",
-            "threat_level": "unknown",
-            "threats_detected": 0,
-            "verdict": "error",
-            "summary": f"File analysis failed: {str(e)}",
-            "timestamp": datetime.utcnow().isoformat(),
-            "error": str(e),
+            "scan_id":         scan_id,
+            "target":          filename,
+            "type":            "file",
+            "file_size":       file_size,
+            "file_hash":       file_hash,
+            "md5_hash":        md5_hash,
+            "status":          "complete",
+            "threat_level":    threat_level,
+            "threats_detected": len(all_indicators),
+            "verdict":         final_verdict,
+            "confidence":      round(confidence, 4),
+            "summary":         _build_file_summary(filename, local, final_verdict, all_indicators),
+            "timestamp":       datetime.utcnow().isoformat(),
+            "scan_duration_ms": scan_duration_ms,
+            # Local analysis detail
+            "local_analysis": {
+                "risk_level":        local["risk_level"],
+                "risk_score":        local["risk_score"],
+                "entropy":           local["entropy"],
+                "magic_type":        local["magic_type"],
+                "file_extension":    local["file_extension"],
+                "signatures":        local["signatures"],
+                "pe_info":           local["pe_info"],
+                "suspicious_strings": local["suspicious_strings"],
+            },
+            # External API results
+            "api_results":       api_result.get("api_results", {}),
+            "threat_indicators": all_indicators,
+            "forensic_metadata": api_result.get("forensic_metadata", {}),
         }
 
-    # prepend to store (most recent first)
+        log_level = "info" if threat_level in {"malicious", "suspicious"} else "debug"
+        getattr(logger, log_level)(
+            f"FILE SCAN {scan_id} | file={filename} | verdict={final_verdict} "
+            f"| local_risk={local['risk_level']} | indicators={len(all_indicators)}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File scan error for {filename}: {e}")
+        result = {
+            "scan_id":    scan_id,
+            "target":     filename,
+            "type":       "file",
+            "file_size":  0,
+            "status":     "error",
+            "threat_level": "unknown",
+            "threats_detected": 0,
+            "verdict":    "error",
+            "confidence": 0.0,
+            "summary":    f"File analysis failed: {str(e)}",
+            "timestamp":  datetime.utcnow().isoformat(),
+            "error":      str(e),
+        }
+
+    # ── Persist ──────────────────────────────────────────────────────────
     SCANS_STORE.insert(0, result)
-    # trim store
     if len(SCANS_STORE) > MAX_STORE:
         SCANS_STORE.pop()
-    
-    # Save to database for time-range reports
     await _save_scan_to_db(result, db)
 
     return result

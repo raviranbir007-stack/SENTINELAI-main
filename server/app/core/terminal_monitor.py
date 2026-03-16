@@ -54,6 +54,7 @@ class TerminalActivityMonitor:
         self.recent_attacks: Deque[Dict] = deque(maxlen=5)
         
         self.start_time = datetime.now(timezone.utc)
+        self._last_status_latest = ""
         
     def start(self):
         """Start terminal monitoring"""
@@ -144,16 +145,9 @@ class TerminalActivityMonitor:
         self.recent_attacks.append(attack)
 
         readable_type = attack['type'].replace('_', ' ').strip().title()
-        W = 68
-        VW = W - 15
-        title = "─[ ATTACK DETECTED ]"
-        print(f"\n┌{title}{'─' * (W - len(title))}┐", flush=True)
-        print(f"│  {'Type':<12} {readable_type[:VW]:<{VW}}│")
-        print(f"│  {'Source':<12} {attack['source'][:VW]:<{VW}}│")
-        print(f"│  {'Severity':<12} {attack['severity'].upper()[:VW]:<{VW}}│")
-        if attack['description']:
-            print(f"│  {'Detail':<12} {str(attack['description'])[:VW]:<{VW}}│")
-        print(f"└{'─' * W}┘", flush=True)
+        sev_upper = attack['severity'].upper()
+        desc_short = (': ' + attack['description'][:60]) if attack['description'] else ''
+        print(f"\n◈ ATTACK | {readable_type} | src={attack['source']} | sev={sev_upper}{desc_short}", flush=True)
         sys.stdout.flush()
     
     def _monitor_loop(self):
@@ -182,10 +176,7 @@ class TerminalActivityMonitor:
     
     def _print_banner(self):
         """Print initial banner"""
-        W = 68
-        print(f"\n┌{'─' * W}┐", flush=True)
-        print(f"│  {'SENTINEL-AI  ·  Activity Monitor  ·  Online':<{W - 2}}│")
-        print(f"└{'─' * W}┘", flush=True)
+        print("\n◈ SENTINEL-AI | Activity Monitor | Online", flush=True)
         sys.stdout.flush()
     
     def _has_new_activity(self):
@@ -263,8 +254,9 @@ class TerminalActivityMonitor:
         status_parts.append(f"Δ{last_str}")
 
         status = " · ".join(status_parts)
-        if latest:
+        if latest and latest != self._last_status_latest:
             status = f"{status}{latest}"
+            self._last_status_latest = latest
         print(status, flush=True)
         sys.stdout.flush()
 
@@ -298,18 +290,15 @@ class TerminalActivityMonitor:
             (self.stats['threats_detected'] / self.stats['scans_performed']) * 100
             if self.stats['scans_performed'] > 0 else 0.0
         )
-        W = 68
-        VW = W - 15
-        title = "─[ SESSION SUMMARY ]"
-        print(f"\n┌{title}{'─' * (W - len(title))}┐", flush=True)
-        print(f"│  {'Duration':<12} {duration_str[:VW]:<{VW}}│")
-        print(f"│  {'Websites':<12} {self.stats['websites_monitored']:<{VW}}│")
-        print(f"│  {'Scans':<12} {self.stats['scans_performed']:<{VW}}│")
-        print(f"│  {'Threats':<12} {self.stats['threats_detected']:<{VW}}│")
-        print(f"│  {'Attacks':<12} {self.stats['attack_events']:<{VW}}│")
-        rate_str = f"{threat_rate:.1f}%"
-        print(f"│  {'Threat Rate':<12} {rate_str[:VW]:<{VW}}│")
-        print(f"└{'─' * W}┘", flush=True)
+        print(
+            f"\n◈ SESSION SUMMARY | up={duration_str}"
+            f" | sites={self.stats['websites_monitored']}"
+            f" | scans={self.stats['scans_performed']}"
+            f" | threats={self.stats['threats_detected']}"
+            f" | attacks={self.stats['attack_events']}"
+            f" | rate={threat_rate:.1f}%",
+            flush=True,
+        )
         sys.stdout.flush()
 
 

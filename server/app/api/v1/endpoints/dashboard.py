@@ -27,6 +27,11 @@ from ....database import get_db
 from ....config import settings
 from ....models import ScanHistory, SystemLog
 
+try:
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover
+    psutil = None
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -381,6 +386,7 @@ async def get_monitoring_stats(
         bg      = adb.get_background_stats(hours=hours)
         dist    = adb.get_threat_distribution(hours=hours)
         recent  = adb.get_recent_activity(limit=20)
+        websites = adb.get_visited_websites(limit=30, hours=hours)
         return {
             "available": True,
             "time_range": _label(time_range),
@@ -388,6 +394,7 @@ async def get_monitoring_stats(
             "stats": bg,
             "threat_distribution": dist,
             "recent_activity": recent,
+            "visited_websites": websites,
         }
     except Exception as exc:
         logger.error("monitoring-stats error: %s", exc)
@@ -530,10 +537,31 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
     score  = round(sum(checks) / len(checks) * 100)
     overall = "healthy" if score >= 75 else "degraded" if score >= 40 else "critical"
 
+    runtime = {
+        "available": False,
+        "cpu_percent": None,
+        "memory_percent": None,
+        "process_count": None,
+        "uptime_seconds": None,
+    }
+    if psutil is not None:
+        try:
+            vm = psutil.virtual_memory()
+            runtime = {
+                "available": True,
+                "cpu_percent": float(psutil.cpu_percent(interval=0.15)),
+                "memory_percent": float(vm.percent),
+                "process_count": len(psutil.pids()),
+                "uptime_seconds": max(0.0, float(datetime.utcnow().timestamp() - psutil.boot_time())),
+            }
+        except Exception as exc:
+            logger.debug("runtime health metrics unavailable: %s", exc)
+
     return {
         "status": overall,
         "health_score": score,
         "timestamp": now.isoformat() + "Z",
+        "runtime": runtime,
         "components": {
             "database": {"status": "healthy" if db_ok else "error", "total_scans_stored": db_scan_count},
             "activity_database": {"status": "healthy" if adb_ok else "unavailable"},
@@ -549,7 +577,7 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
                 "ml_models": "loaded" if ml_ok else "unavailable",
             },
             "background_monitor": {
-                "status": "active" if os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "false").lower()
+                "status": "active" if os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "true").lower()
                            in ("1", "true", "yes", "on") else "standby",
                 "activity_db": "healthy" if adb_ok else "unavailable",
             },
