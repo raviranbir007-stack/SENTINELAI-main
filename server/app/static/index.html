@@ -4250,7 +4250,14 @@
 
         function closeScanDetail() {
             const modal = document.getElementById('scanDetailModal');
-            if (modal) modal.style.display = 'none';
+            const content = document.getElementById('scanDetailContent');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+            // Reset content to prevent memory leaks and state carryover
+            if (content) {
+                content.innerHTML = '';
+            }
         }
 
         function viewAllThreats() {
@@ -6417,21 +6424,6 @@
         }
 
         // Toggle Live Activity card
-        document.addEventListener('DOMContentLoaded', () => {
-            const liveToggleBtn = document.getElementById('toggleLiveActivityBtn');
-            const liveCard = document.getElementById('liveActivityCard');
-            if (liveToggleBtn && liveCard) {
-                liveToggleBtn.addEventListener('click', () => {
-                    const collapsed = liveCard.style.display === 'none';
-                    liveCard.style.display = collapsed ? '' : 'none';
-                    liveToggleBtn.textContent = collapsed ? '− Minimize' : '+ Maximize';
-                });
-            }
-            // Set default active tab style
-            switchLiveTab('websites');
-        });
-
-
         async function fetchSystemHealth() {
             const card = document.getElementById('systemHealthCard');
             if (!card) return;
@@ -7009,13 +7001,27 @@
         // refreshSecurityPostureBtn and refreshQuarantineBtn use inline onclick — no extra listener needed
 
         // Scans page handlers
-        document.getElementById('newScanBtn').addEventListener('click', performNewScan);
-        document.getElementById('newScanInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') performNewScan();
-        });
+        const newScanBtn = document.getElementById('newScanBtn');
+        if (newScanBtn) {
+            newScanBtn.addEventListener('click', performNewScan);
+        }
+        
+        const newScanInput = document.getElementById('newScanInput');
+        if (newScanInput) {
+            newScanInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') performNewScan();
+            });
+        }
 
-        document.getElementById('uploadScanBtn').addEventListener('click', performFileUpload);
-        document.getElementById('folderScanBtn').addEventListener('click', performFolderScan);
+        const uploadScanBtn = document.getElementById('uploadScanBtn');
+        if (uploadScanBtn) {
+            uploadScanBtn.addEventListener('click', performFileUpload);
+        }
+        
+        const folderScanBtn = document.getElementById('folderScanBtn');
+        if (folderScanBtn) {
+            folderScanBtn.addEventListener('click', performFolderScan);
+        }
 
         const toggleScansHistoryBtn = document.getElementById('toggleScansHistoryBtn');
         if (toggleScansHistoryBtn) {
@@ -7032,37 +7038,48 @@
             toggleReportsPageBtn.addEventListener('click', toggleReportsPagePanel);
         }
 
-        document.getElementById('fileUploadInput').addEventListener('change', () => {
-            const file = document.getElementById('fileUploadInput').files[0];
-            if (file) {
-                showToast(`File selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`, 'info');
-            }
-        });
+        const fileUploadInput = document.getElementById('fileUploadInput');
+        if (fileUploadInput) {
+            fileUploadInput.addEventListener('change', () => {
+                const file = fileUploadInput.files[0];
+                if (file) {
+                    showToast(`File selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`, 'info');
+                }
+            });
+        }
 
         // Scan type selection
         document.querySelectorAll('[data-scan-type]').forEach(card => {
             card.addEventListener('click', () => {
                 const type = card.dataset.scanType;
                 const input = document.getElementById('newScanInput');
-                const placeholders = {
-                    ip: 'Enter IP address (e.g., 192.168.1.1)...',
-                    domain: 'Enter domain (e.g., example.com)...',
-                    url: 'Enter URL (e.g., https://example.com)...',
-                    file: 'Upload file for analysis...'
-                };
-                input.placeholder = placeholders[type] || 'Enter target...';
-                input.focus();
+                if (input) {
+                    const placeholders = {
+                        ip: 'Enter IP address (e.g., 192.168.1.1)...',
+                        domain: 'Enter domain (e.g., example.com)...',
+                        url: 'Enter URL (e.g., https://example.com)...',
+                        file: 'Upload file for analysis...'
+                    };
+                    input.placeholder = placeholders[type] || 'Enter target...';
+                    input.focus();
+                }
             });
         });
 
         // Close modals on outside click
-        document.getElementById('scanDetailModal').addEventListener('click', (e) => {
-            if (e.target.id === 'scanDetailModal') closeScanDetail();
-        });
+        const scanDetailModal = document.getElementById('scanDetailModal');
+        if (scanDetailModal) {
+            scanDetailModal.addEventListener('click', (e) => {
+                if (e.target.id === 'scanDetailModal') closeScanDetail();
+            });
+        }
 
-        document.getElementById('allReportsModal').addEventListener('click', (e) => {
-            if (e.target.id === 'allReportsModal') closeAllReports();
-        });
+        const allReportsModal = document.getElementById('allReportsModal');
+        if (allReportsModal) {
+            allReportsModal.addEventListener('click', (e) => {
+                if (e.target.id === 'allReportsModal') closeAllReports();
+            });
+        }
 
         const allThreatsModalEl = document.getElementById('allThreatsModal');
         if (allThreatsModalEl) {
@@ -7079,6 +7096,7 @@
             const settingsBtnClicked = e.target.closest('#settingsBtn');
 
             if (
+                notificationDropdown &&
                 notificationDropdown.style.display === 'flex' &&
                 !notificationDropdown.contains(e.target) &&
                 !notifBtnClicked
@@ -7087,6 +7105,7 @@
             }
 
             if (
+                settingsDropdown &&
                 settingsDropdown.style.display === 'flex' &&
                 !settingsDropdown.contains(e.target) &&
                 !settingsBtnClicked
@@ -7120,6 +7139,17 @@
             if (dashboardSearchInput && uiState.searchQuery) {
                 dashboardSearchInput.value = uiState.searchQuery;
                 currentSearchQuery = uiState.searchQuery;
+            }
+            
+            // Setup live activity toggle handler
+            const liveToggleBtn = document.getElementById('toggleLiveActivityBtn');
+            const liveCard = document.getElementById('liveActivityCard');
+            if (liveToggleBtn && liveCard) {
+                liveToggleBtn.addEventListener('click', () => {
+                    const collapsed = liveCard.style.display === 'none';
+                    liveCard.style.display = collapsed ? '' : 'none';
+                    liveToggleBtn.textContent = collapsed ? '− Minimize' : '+ Maximize';
+                });
             }
             
             renderAPIs();
