@@ -2947,6 +2947,7 @@
         const DASHBOARD_PANEL_STATE_KEY = 'sentinel_dashboard_panel_state_v1';
         const DASHBOARD_UI_STATE_KEY = 'sentinel_dashboard_ui_state_v1';
         const DASHBOARD_LOCAL_REPORTS_KEY = 'sentinel_dashboard_local_reports_v1';
+        const DASHBOARD_VIEWED_THREATS_KEY = 'sentinel_viewed_threats_v1';
 
         const DEFAULT_DASHBOARD_SETTINGS = {
             apiBaseUrl: 'http://localhost:8000',
@@ -3137,6 +3138,35 @@
                 .slice(0, 50);
 
             saveLocalReportsCache(merged);
+        }
+
+        function loadViewedThreats() {
+            try {
+                const raw = localStorage.getItem(DASHBOARD_VIEWED_THREATS_KEY);
+                const parsed = raw ? JSON.parse(raw) : {};
+                return parsed;
+            } catch (_e) {
+                return {};
+            }
+        }
+
+        function saveViewedThreats(viewedMap) {
+            try {
+                localStorage.setItem(DASHBOARD_VIEWED_THREATS_KEY, JSON.stringify(viewedMap));
+            } catch (_e) {
+                // ignore storage errors
+            }
+        }
+
+        function markThreatAsViewed(threatId) {
+            const viewedMap = loadViewedThreats();
+            viewedMap[String(threatId)] = Date.now();
+            saveViewedThreats(viewedMap);
+        }
+
+        function isThreatViewed(threatId) {
+            const viewedMap = loadViewedThreats();
+            return !!viewedMap[String(threatId)];
         }
 
         function setSyncStatus(mode = 'ok', text = 'SYNCED') {
@@ -4247,6 +4277,12 @@
             const content = document.getElementById('scanDetailContent');
             if (!modal || !content || !threat) return;
 
+            // Mark threat as viewed when opened
+            const threatId = threat.id || threat.threat_id || threat.scan_id;
+            if (threatId) {
+                markThreatAsViewed(threatId);
+            }
+
             const merged = {
                 ...threat,
                 ...(detail && !detail.error ? detail : {})
@@ -4662,7 +4698,14 @@
                 };
             }
 
-            if (criticalThreats > 0 || recentCriticalLogs > 0 || criticalPosture > 0) {
+            // Count only NEW (unviewed) critical threats for ACTION REQUIRED status
+            const unviewedCriticalThreats = threats.filter(t => {
+                const severity = String(t.severity || '').toLowerCase();
+                const threatId = t.id || t.threat_id || t.scan_id;
+                return severity === 'critical' && threatId && !isThreatViewed(threatId);
+            }).length;
+
+            if (unviewedCriticalThreats > 0 || recentCriticalLogs > 0 || criticalPosture > 0) {
                 const waveform = buildWaveform('danger');
                 return {
                     level: 'danger',
@@ -4674,7 +4717,7 @@
                     trafficValue: `${telemetryTotal} events`,
                     trafficSubtext: 'Continuous telemetry under review',
                     threatValue: 'High',
-                    threatSubtext: `${criticalThreats} critical · ${highThreats} high threat(s)`,
+                    threatSubtext: `${unviewedCriticalThreats} critical · ${highThreats} high threat(s)`,
                     actionValue: 'Respond',
                     actionSubtext: 'Contain, investigate, and verify defenses',
                     actionButtonLabel: 'Open Threat Center',
