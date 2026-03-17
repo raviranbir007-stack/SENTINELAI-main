@@ -6,6 +6,7 @@ Implements the 5-attempt alert system with auto-quarantine
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 import json
+import textwrap
 
 logger = logging.getLogger("DefenseCoordinator")
 
@@ -97,6 +99,39 @@ class DefenseCoordinator:
     def _is_quarantine_notice(self, attack: Dict, alert_num: int) -> bool:
         """Return True when the notification is for quarantine state rather than alert escalation."""
         return attack.get('notification_kind') == 'quarantine' or alert_num > self.MAX_ALERTS
+
+    def _render_console_table(self, title: str, rows: List[tuple], footer: Optional[str] = None):
+        """Render readable adaptive-width table in terminal output."""
+        width = max(80, min(140, shutil.get_terminal_size((110, 20)).columns))
+        key_width = max((len(str(k)) for k, _ in rows), default=10)
+        key_width = max(12, min(26, key_width + 1))
+        val_width = max(24, width - key_width - 7)  # borders + spacing
+
+        top = f"┌{'─' * (width - 2)}┐"
+        bottom = f"└{'─' * (width - 2)}┘"
+        divider = f"├{'─' * (width - 2)}┤"
+
+        print(top, flush=True)
+        print(f"│ {title[:width - 4]:<{width - 4}} │", flush=True)
+        print(divider, flush=True)
+
+        for key, value in rows:
+            label = str(key)
+            value_str = str(value if value is not None else '—')
+            wrapped = textwrap.wrap(value_str, width=val_width) or ['—']
+            for idx, line in enumerate(wrapped):
+                left = label if idx == 0 else ''
+                print(
+                    f"│ {left:<{key_width}} │ {line:<{val_width}} │",
+                    flush=True,
+                )
+
+        if footer:
+            print(divider, flush=True)
+            for line in textwrap.wrap(str(footer), width=width - 4) or ['']:
+                print(f"│ {line:<{width - 4}} │", flush=True)
+
+        print(bottom, flush=True)
 
     def handle_attack(self, attack: Dict):
         """
@@ -252,26 +287,34 @@ class DefenseCoordinator:
         source_label = self._format_source_endpoint(attack)
         short_desc = attack.get('short_description') or attack.get('description') or 'Suspicious activity detected'
         if self._is_quarantine_notice(attack, alert_num):
-            print(
-                f"🔒 QUARANTINE ACTIVE | type={attack.get('type', 'unknown')} "
-                f"| sev={attack.get('severity', 'UNKNOWN')} | source={source_label}",
-                flush=True,
-            )
-            print(
-                f"   reason={short_desc[:120]} | admin_action=required",
-                flush=True,
+            self._render_console_table(
+                "🔒 QUARANTINE ACTIVE",
+                [
+                    ("Attack Type", attack.get('type', 'unknown')),
+                    ("Severity", attack.get('severity', 'UNKNOWN')),
+                    ("Source", source_label),
+                    ("Reason", short_desc),
+                    ("Action", "Administrator intervention required"),
+                ],
             )
             return
 
         remaining = self.MAX_ALERTS - alert_num
-        print(
-            f"🚨 ALERT {alert_num}/{self.MAX_ALERTS} | type={attack.get('type', 'unknown')} "
-            f"| sev={attack.get('severity', 'UNKNOWN')} | source={source_label}",
-            flush=True,
-        )
-        print(
-            f"   desc={short_desc[:120]} | remaining={remaining} | next={self.ALERT_INTERVAL}s | timeout={self.RESPONSE_TIMEOUT}s",
-            flush=True,
+        mitigation_commands = attack.get('mitigation_commands') if isinstance(attack.get('mitigation_commands'), list) else []
+        mitigation = mitigation_commands[0] if mitigation_commands else 'Manual containment required'
+        self._render_console_table(
+            f"🚨 SECURITY ALERT {alert_num}/{self.MAX_ALERTS}",
+            [
+                ("Attack Type", attack.get('type', 'unknown')),
+                ("Severity", attack.get('severity', 'UNKNOWN')),
+                ("Source", source_label),
+                ("Summary", short_desc),
+                ("Mitigate", mitigation),
+                ("Remaining Alerts", remaining),
+                ("Next Alert", f"{self.ALERT_INTERVAL}s"),
+                ("Timeout", f"{self.RESPONSE_TIMEOUT}s"),
+            ],
+            footer="Response options: BLOCK | IGNORE | QUARANTINE",
         )
 
     def _notify_desktop(self, message: str, attack: Dict, alert_num: int):

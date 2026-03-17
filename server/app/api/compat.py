@@ -938,6 +938,8 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     """Get dashboard statistics (compatibility endpoint)."""
     result = await db.execute(select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(1000))
     scans = result.scalars().all()
+    attack_result = await db.execute(select(AttackEvent).order_by(desc(AttackEvent.detected_at)).limit(1000))
+    attacks = attack_result.scalars().all()
 
     stats = {
         "critical_threats": 0,
@@ -948,6 +950,8 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         "urls_scanned": 0,
         "ips_scanned": 0,
         "total_scans": len(scans),
+        "attack_events": len(attacks),
+        "total_events": len(scans) + len(attacks),
         "active_threats": 0,
     }
 
@@ -971,6 +975,21 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
             stats["ips_scanned"] += 1
 
         if level in ["malicious", "critical", "suspicious", "high"]:
+            stats["active_threats"] += 1
+
+    for attack in attacks:
+        sev = (attack.severity.value if attack.severity else "medium").lower()
+        if sev == "critical":
+            stats["critical_threats"] += 1
+        elif sev == "high":
+            stats["high_threats"] += 1
+        elif sev == "medium":
+            stats["medium_threats"] += 1
+        else:
+            stats["low_threats"] += 1
+
+        status = str(attack.status or "detected").lower()
+        if status in {"detected", "analyzing", "blocked", "mitigated", "active"}:
             stats["active_threats"] += 1
 
     return stats

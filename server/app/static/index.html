@@ -5613,12 +5613,18 @@
                     // Periodic popup notifications for new high-priority attacks
                     if (threatFeedPrimed) {
                         normalized
-                            .filter(t => ['high', 'critical'].includes(String(t.severity || '').toLowerCase()) && !isLowSignalThreatItem(t))
-                            .slice(0, 15)
+                            .filter(t => !isLowSignalThreatItem(t))
+                            .slice(0, 20)
                             .forEach(t => {
                                 if (seenThreatIds.has(t.id)) return;
                                 seenThreatIds.add(t.id);
 
+                                const sev = String(t.severity || '').toLowerCase();
+                                const level = sev === 'critical'
+                                    ? 'error'
+                                    : sev === 'high' || sev === 'medium'
+                                        ? 'warning'
+                                        : 'info';
                                 const firstMitigation = Array.isArray(t.mitigation_commands) && t.mitigation_commands.length > 0
                                     ? ` | Mitigate: ${t.mitigation_commands[0]}`
                                     : '';
@@ -5626,9 +5632,9 @@
                                     ? ` | Predict: ${t.prediction_summary}${t.prediction_confidence ? ` (${Math.round(Number(t.prediction_confidence) * 100)}%)` : ''}`
                                     : '';
                                 addNotification(
-                                    `Attack Detected: ${formatThreatTypeLabel(t.type)}`,
+                                    `Security Event: ${formatThreatTypeLabel(t.type)}`,
                                     `${t.target_display || t.target} - ${t.short_description || t.description}${prediction}${firstMitigation}`,
-                                    t.severity === 'critical' ? 'error' : 'warning',
+                                    level,
                                     `live_attack_${t.id}`,
                                     45000
                                 );

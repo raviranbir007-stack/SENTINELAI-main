@@ -6,12 +6,17 @@ Combines IDS, IPS, and Monitoring into a single unified system
 
 import asyncio
 import logging
+import platform
 import signal
+import socket
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+import uuid
+
+import requests
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -54,6 +59,9 @@ class IntegratedProtectionSystem:
     def __init__(self, server_url: str = "http://localhost:8000"):
         self.server_url = server_url
         self.running = False
+        self.client_id: Optional[str] = None
+        self.heartbeat_interval = 60
+        self._heartbeat_thread = None
         
         # Initialize all components
         logger.info("🔧 Initializing protection components...")
@@ -115,6 +123,96 @@ class IntegratedProtectionSystem:
         
         logger.info("✅ All components initialized")
 
+    def _register_with_server(self):
+        """Register this protection agent with server for event correlation."""
+        try:
+            host = socket.gethostname()
+            try:
+                ip = socket.gethostbyname(host)
+            except Exception:
+                ip = "127.0.0.1"
+
+            payload = {
+                "hostname": host,
+                "ip_address": ip,
+                "mac_address": "00:00:00:00:00:00",
+                "os_type": platform.system(),
+                "os_version": platform.version(),
+                "network_segment": f"{'.'.join(ip.split('.')[:3])}.0/24" if ip.count('.') == 3 else None,
+                "gateway": "unknown",
+                "dns_servers": [],
+                "version": "integrated-3.0",
+            }
+
+            res = requests.post(
+                f"{self.server_url}/api/v1/network/client/register",
+                json=payload,
+                timeout=10,
+            )
+            if res.status_code == 200:
+                self.client_id = (res.json() or {}).get("client_id") or self.client_id
+                logger.info("✅ Registered with server: %s", self.client_id)
+            else:
+                logger.warning("Server registration failed (%s)", res.status_code)
+        except Exception as exc:
+            logger.warning("Server registration skipped: %s", exc)
+
+    def _heartbeat_loop(self):
+        """Send periodic heartbeat so dashboard can reflect live client status."""
+        while self.running:
+            if self.client_id:
+                try:
+                    requests.post(
+                        f"{self.server_url}/api/v1/network/client/heartbeat",
+                        params={"client_id": self.client_id},
+                        timeout=6,
+                    )
+                except Exception:
+                    pass
+            time.sleep(self.heartbeat_interval)
+
+    def _to_jsonable(self, value):
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {k: self._to_jsonable(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._to_jsonable(v) for v in value]
+        return value
+
+    def _post_defense_event(self, event_name: str, severity: str = "medium", description: str = "", payload: Optional[Dict] = None):
+        """Forward endpoint events to server so threats/heartbeat/dashboard stay in sync."""
+        try:
+            requests.post(
+                f"{self.server_url}/api/v1/network/event",
+                json={
+                    "client_id": self.client_id,
+                    "event": event_name,
+                    "severity": str(severity).lower(),
+                    "description": description,
+                    "monitor_event": self._to_jsonable(payload or {}),
+                },
+                timeout=8,
+            )
+        except Exception as exc:
+            logger.debug("Failed to post defense event: %s", exc)
+
+    def _action_prompt(self, action: str, target: str = "-", status: str = "ok", severity: str = "info"):
+        """Short, structured terminal prompt for recent actions."""
+        emoji = "✅"
+        sev = str(severity or "info").lower()
+        if sev in {"high", "warning"}:
+            emoji = "⚠️"
+        if sev in {"critical", "error"}:
+            emoji = "🚨"
+        logger.info(
+            "%s ACTION | type=%s | target=%s | status=%s",
+            emoji,
+            str(action or "unknown").upper(),
+            str(target or "-"),
+            str(status or "ok"),
+        )
+
     def _handle_intrusion(self, intrusion: Dict):
         """Handle detected intrusion from IDS"""
         self.stats["intrusions_detected"] += 1
@@ -124,6 +222,13 @@ class IntegratedProtectionSystem:
         attack_type = intrusion.get("type", "UNKNOWN")
         
         logger.warning(f"🚨 INTRUSION DETECTED: {attack_type} from {source_ip} (Severity: {severity})")
+        self._action_prompt(attack_type, source_ip, "detected", severity)
+        self._post_defense_event(
+            event_name=attack_type,
+            severity=severity,
+            description=intrusion.get("description", f"Intrusion detected: {attack_type}"),
+            payload=intrusion,
+        )
         
         # Send to defense coordinator
         self.defense_coordinator.handle_attack(intrusion)
@@ -143,20 +248,33 @@ class IntegratedProtectionSystem:
             self.stats["domains_blocked"] += 1
             domain = event.get("domain", "")
             logger.info(f"🚫 Domain blocked: {domain}")
+            self._action_prompt(event_type, domain, "applied", "high")
             
         elif event_type == "IP_BLOCKED":
             self.stats["ips_blocked"] += 1
             ip = event.get("ip", "")
             logger.info(f"🚫 IP blocked: {ip}")
+            self._action_prompt(event_type, ip, "applied", "high")
             
         elif event_type == "FILE_QUARANTINED":
             self.stats["files_quarantined"] += 1
             file_path = event.get("file", "")
             logger.info(f"🔒 File quarantined: {file_path}")
+            self._action_prompt(event_type, file_path, "applied", "high")
         elif event_type == "FIREWALL_HARDENED":
             details = event.get("details", {})
             self.stats["firewall_hardening_actions"] += len(details.get("actions", []))
             logger.info("🛡️  Firewall hardening applied")
+            self._action_prompt(event_type, "host-firewall", "applied", "medium")
+        else:
+            self._action_prompt(event_type, event.get("target") or event.get("source_ip") or "system", "processed", "medium")
+
+        self._post_defense_event(
+            event_name=event_type,
+            severity="high" if event_type in {"IP_BLOCKED", "DOMAIN_BLOCKED", "FILE_QUARANTINED"} else "medium",
+            description=event.get("reason") or f"Prevention event: {event_type}",
+            payload=event,
+        )
 
     def _handle_activity(self, activity: Dict):
         """Handle logged activity"""
@@ -197,8 +315,19 @@ class IntegratedProtectionSystem:
         
         if event_type == "QUARANTINE_ACTIVATED":
             logger.critical("🔒 SYSTEM QUARANTINED - Threat response timeout")
+            self._action_prompt(event_type, "system", "active", "critical")
         elif event_type == "QUARANTINE_RELEASED":
             logger.info("🔓 System quarantine released")
+            self._action_prompt(event_type, "system", "released", "high")
+        else:
+            self._action_prompt(event_type or "DEFENSE_EVENT", "system", "processed", "high")
+
+        self._post_defense_event(
+            event_name=event_type or "DEFENSE_EVENT",
+            severity="critical" if event_type == "QUARANTINE_ACTIVATED" else "high",
+            description=event.get("reason") or "Defense coordinator event",
+            payload=event,
+        )
 
     def _handle_startup_event(self, event: Dict):
         """Handle startup hardening results."""
@@ -212,6 +341,12 @@ class IntegratedProtectionSystem:
             summary.get("total_findings", 0),
             summary.get("critical_findings", 0),
             summary.get("high_findings", 0),
+        )
+        self._action_prompt(
+            "STARTUP_ASSESSMENT_COMPLETED",
+            "baseline",
+            "completed",
+            "warning" if (summary.get("critical_findings", 0) or summary.get("high_findings", 0)) else "info",
         )
 
     def _handle_threat_verdict(self, verdict: Dict):
@@ -264,6 +399,7 @@ class IntegratedProtectionSystem:
         
         self.running = True
         self.stats["start_time"] = datetime.now()
+        self._register_with_server()
         
         logger.info("=" * 60)
         logger.info("🛡️  SENTINELAI INTEGRATED PROTECTION SYSTEM")
@@ -288,6 +424,11 @@ class IntegratedProtectionSystem:
                 logger.info(f"✅ {name} - ACTIVE")
             except Exception as e:
                 logger.error(f"❌ {name} - FAILED: {e}")
+
+        if self._heartbeat_thread is None or not self._heartbeat_thread.is_alive():
+            import threading
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self._heartbeat_thread.start()
         
         logger.info("")
         logger.info("=" * 60)
@@ -318,6 +459,9 @@ class IntegratedProtectionSystem:
             self.threat_analyzer.stop()
         except Exception as e:
             logger.error(f"Error stopping components: {e}")
+
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=2)
         
         # Print final statistics
         self._print_statistics()

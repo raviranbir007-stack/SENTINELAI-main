@@ -13,7 +13,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ....database import get_db
+from ....models import SystemLog
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -93,6 +98,7 @@ async def get_monitoring_stats(
 @router.get("/activity")
 async def get_recent_activity(
     limit: int = Query(50, ge=1, le=200, description="Max entries to return"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Most recent background activity entries across all monitored artifact types.
@@ -104,11 +110,49 @@ async def get_recent_activity(
 
     try:
         items = adb.get_recent_activity(limit=limit)
+
+        # Merge live defense/network action events so IDS/IPS/detection actions
+        # appear in dashboard live activity.
+        defense_result = await db.execute(
+            select(SystemLog)
+            .where(SystemLog.component.in_(["defense_event", "network_defense", "nids_ingestion"]))
+            .order_by(desc(SystemLog.timestamp))
+            .limit(max(limit, 100))
+        )
+        defense_logs = defense_result.scalars().all()
+
+        defense_items = []
+        for row in defense_logs:
+            details = row.details if isinstance(row.details, dict) else {}
+            event_name = details.get("event") or (str(row.message).split(":", 1)[0] if row.message else "defense_event")
+            severity = str(details.get("severity") or "medium").lower()
+            verdict = "critical" if severity == "critical" else "malicious" if severity == "high" else "suspicious" if severity == "medium" else "safe"
+            source_value = details.get("source_ip") or details.get("source_domain") or details.get("destination_ip") or details.get("client_id") or "endpoint"
+
+            defense_items.append(
+                {
+                    "type": event_name,
+                    "value": source_value,
+                    "verdict": verdict,
+                    "confidence": 0.95 if severity == "critical" else 0.8 if severity == "high" else 0.6,
+                    "indicator_count": 1,
+                    "automated": True,
+                    "time": row.timestamp.isoformat() if row.timestamp else datetime.utcnow().isoformat(),
+                    "source": row.component or "defense_event",
+                    "description": row.message,
+                    "details": details,
+                }
+            )
+
+        merged = list(items) + defense_items
+        merged.sort(key=lambda x: str(x.get("time") or ""), reverse=True)
+        merged = merged[:limit]
+
         return {
             "available": True,
-            "count": len(items),
+            "count": len(merged),
             "generated_at": datetime.utcnow().isoformat() + "Z",
-            "items": items,
+            "items": merged,
         }
     except Exception as exc:
         logger.error("monitoring /activity error: %s", exc)
