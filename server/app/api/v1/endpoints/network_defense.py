@@ -75,15 +75,42 @@ class DefenseEventRequest(BaseModel):
 
     client_id: Optional[str] = None
     event: str
+    attack_id: Optional[str] = None
+    attack: Optional[dict] = None
     severity: Optional[str] = None
     risk: Optional[str] = None
+    alert_number: Optional[int] = None
+    max_alerts: Optional[int] = None
+    user_initiated: Optional[bool] = None
     source_ip: Optional[str] = None
     source_domain: Optional[str] = None
     destination_ip: Optional[str] = None
     destination_port: Optional[int] = None
     description: Optional[str] = None
+    reason: Optional[str] = None
     details: Optional[dict] = None
     monitor_event: Optional[dict] = None
+    timestamp: Optional[str] = None
+
+
+class ClientHeartbeatRequest(BaseModel):
+    """Optional client heartbeat payload with module status snapshot."""
+
+    status: Optional[dict] = None
+    timestamp: Optional[str] = None
+
+
+class DefenseEventResponseRequest(BaseModel):
+    """Analyst/operator response to an active attack prompt."""
+
+    action: str  # BLOCK | IGNORE | QUARANTINE
+    client_id: Optional[str] = None
+    attack_id: Optional[str] = None
+    event_id: Optional[str] = None
+    target: Optional[str] = None
+    target_type: Optional[str] = None
+    reason: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 class NIDSBatchIngestRequest(BaseModel):
@@ -131,6 +158,70 @@ def _is_security_event(event_name: str) -> bool:
             "process",
         ]
     )
+
+
+def _merge_event_payload(request: DefenseEventRequest) -> dict:
+    payload: dict = {}
+    if isinstance(request.monitor_event, dict):
+        payload.update(request.monitor_event)
+    if isinstance(request.attack, dict):
+        payload.update(request.attack)
+    if isinstance(request.details, dict):
+        for key, value in request.details.items():
+            payload.setdefault(key, value)
+    return payload
+
+
+def _sanitize_external_event_id(raw_value: Optional[str]) -> Optional[str]:
+    if not raw_value:
+        return None
+    cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(raw_value))
+    cleaned = cleaned.strip("_")
+    return cleaned[:100] if cleaned else None
+
+
+def _log_level_for_event(
+    event_kind: str,
+    severity: ThreatSeverity,
+    alert_number: Optional[int] = None,
+    max_alerts: Optional[int] = None,
+) -> str:
+    lowered = (event_kind or "").lower()
+    if "quarantine" in lowered or lowered in {"system_quarantined", "quarantine_activated"}:
+        return "CRITICAL"
+    if alert_number and max_alerts and alert_number >= max_alerts:
+        return "CRITICAL"
+    if severity == ThreatSeverity.CRITICAL:
+        return "CRITICAL"
+    if severity == ThreatSeverity.HIGH or "alert" in lowered or "attack" in lowered:
+        return "WARNING"
+    return "INFO"
+
+
+def _status_from_event(event_kind: str, default_status: str = "detected") -> str:
+    lowered = (event_kind or "").lower()
+    if "quarantine" in lowered:
+        return "quarantined"
+    if "block" in lowered:
+        return "blocked"
+    if "ignore" in lowered:
+        return "ignored"
+    if lowered in {"attack_alert", "threat_alert"}:
+        return default_status
+    return default_status
+
+
+def _derive_target_type(target: Optional[str], explicit: Optional[str] = None) -> str:
+    if explicit:
+        return explicit
+    if not target:
+        return "indicator"
+    target_text = str(target)
+    if "." in target_text and all(part.isdigit() for part in target_text.replace(":", ".").split(".") if part):
+        return "ip"
+    if "." in target_text and any(ch.isalpha() for ch in target_text):
+        return "domain"
+    return "indicator"
 
 
 @router.post("/client/register")
@@ -202,7 +293,11 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
 
 
 @router.post("/client/heartbeat")
-async def client_heartbeat(client_id: str, db: AsyncSession = Depends(get_db)):
+async def client_heartbeat(
+    client_id: str,
+    request: Optional[ClientHeartbeatRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Update client last_seen timestamp (heartbeat)
     """
@@ -216,6 +311,52 @@ async def client_heartbeat(client_id: str, db: AsyncSession = Depends(get_db)):
 
         client.last_seen = datetime.utcnow()
         client.is_active = True
+
+        heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
+        defense_state = heartbeat_status.get("defense_coordinator") if isinstance(heartbeat_status, dict) else {}
+        if isinstance(defense_state, dict):
+            is_quarantined = bool(defense_state.get("is_quarantined"))
+            active_attacks = int(defense_state.get("active_attacks") or 0)
+            if is_quarantined or active_attacks > 0:
+                signature = {
+                    "client_id": client_id,
+                    "is_quarantined": is_quarantined,
+                    "active_attacks": active_attacks,
+                }
+                recent_log_query = (
+                    select(SystemLog)
+                    .where(SystemLog.component == "client_heartbeat")
+                    .order_by(SystemLog.timestamp.desc())
+                    .limit(5)
+                )
+                recent_result = await db.execute(recent_log_query)
+                recent_logs = recent_result.scalars().all()
+
+                should_log = True
+                cutoff = datetime.utcnow() - timedelta(minutes=2)
+                for row in recent_logs:
+                    details = row.details or {}
+                    if details.get("state_signature") == signature and (row.timestamp or cutoff) >= cutoff:
+                        should_log = False
+                        break
+
+                if should_log:
+                    db.add(
+                        SystemLog(
+                            log_level="CRITICAL" if is_quarantined else "WARNING",
+                            component="client_heartbeat",
+                            message=(
+                                f"Client heartbeat indicates {'quarantine active' if is_quarantined else 'active attack pressure'} "
+                                f"for {client_id}"
+                            ),
+                            details={
+                                "client_id": client_id,
+                                "state_signature": signature,
+                                "status": heartbeat_status,
+                                "timestamp": request.timestamp if request else None,
+                            },
+                        )
+                    )
         await db.commit()
 
         return {"status": "ok", "last_seen": client.last_seen.isoformat()}
@@ -418,20 +559,25 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
     attack records + actionable network alerts.
     """
     try:
-        payload = request.monitor_event or {}
-        event_name = payload.get("type") or request.event or "unknown_event"
+        payload = _merge_event_payload(request)
+        event_kind = request.event or payload.get("event") or "unknown_event"
+        event_name = payload.get("type") or payload.get("attack_type") or event_kind or "unknown_event"
         risk_text = payload.get("risk") or payload.get("severity") or request.risk or request.severity
         severity = _map_text_severity(risk_text)
 
         source_ip = payload.get("source_ip") or payload.get("remote_ip") or request.source_ip
-        source_domain = payload.get("domain") or request.source_domain
+        source_domain = payload.get("source_domain") or payload.get("domain") or request.source_domain
         destination_ip = payload.get("destination_ip") or request.destination_ip
         destination_port = payload.get("destination_port") or request.destination_port
         description = (
             payload.get("description")
             or request.description
+            or request.reason
             or f"Endpoint event: {event_name}"
         )
+        attack_identifier = request.attack_id or payload.get("attack_id") or payload.get("event_id")
+        external_event_id = _sanitize_external_event_id(attack_identifier)
+        event_log_level = _log_level_for_event(event_kind, severity, request.alert_number, request.max_alerts)
 
         # Resolve client foreign key (optional)
         client_fk = None
@@ -445,17 +591,24 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
         # Always persist raw event in structured system log
         db.add(
             SystemLog(
-                log_level="WARNING" if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} else "INFO",
+                log_level=event_log_level,
                 component="defense_event",
-                message=f"{event_name}: {description}",
+                message=f"{event_kind}: {event_name} - {description}",
                 details={
                     "client_id": request.client_id,
-                    "event": event_name,
+                    "event": event_kind,
+                    "attack_type": event_name,
+                    "attack_id": attack_identifier,
                     "severity": severity.value,
+                    "alert_number": request.alert_number,
+                    "max_alerts": request.max_alerts,
+                    "user_initiated": request.user_initiated,
+                    "reason": request.reason,
                     "source_ip": source_ip,
                     "source_domain": source_domain,
                     "destination_ip": destination_ip,
                     "destination_port": destination_port,
+                    "description": description,
                     "payload": payload,
                 },
             )
@@ -464,25 +617,80 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
         created_attack_id = None
 
         # Promote to attack event when high confidence or security-significant event type
-        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} or _is_security_event(event_name):
-            event_id = f"EVT_{uuid.uuid4().hex[:12].upper()}"
-            attack = AttackEvent(
-                event_id=event_id,
-                attack_type=event_name,
-                source_ip=source_ip,
-                source_domain=source_domain,
-                destination_ip=destination_ip,
-                destination_port=destination_port,
-                severity=severity,
-                confidence=0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55,
-                description=description,
-                indicators=payload if payload else (request.details or {}),
-                status="detected",
-                target_client_id=client_fk,
-            )
-            db.add(attack)
-            await db.flush()
-            created_attack_id = event_id
+        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} or _is_security_event(event_name) or _is_security_event(event_kind):
+            attack = None
+            if external_event_id:
+                existing_res = await db.execute(select(AttackEvent).where(AttackEvent.event_id == external_event_id))
+                attack = existing_res.scalar_one_or_none()
+
+            if attack is None:
+                event_id = external_event_id or f"EVT_{uuid.uuid4().hex[:12].upper()}"
+                attack = AttackEvent(
+                    event_id=event_id,
+                    attack_type=event_name,
+                    source_ip=source_ip,
+                    source_domain=source_domain,
+                    destination_ip=destination_ip,
+                    destination_port=destination_port,
+                    severity=severity,
+                    confidence=0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55,
+                    description=description,
+                    indicators={
+                        **(payload if payload else {}),
+                        "event_kind": event_kind,
+                        "attack_id": attack_identifier,
+                        "alert_number": request.alert_number,
+                        "max_alerts": request.max_alerts,
+                        "reason": request.reason,
+                    },
+                    status=_status_from_event(event_kind),
+                    target_client_id=client_fk,
+                )
+                db.add(attack)
+                await db.flush()
+            else:
+                attack.attack_type = event_name or attack.attack_type
+                attack.source_ip = source_ip or attack.source_ip
+                attack.source_domain = source_domain or attack.source_domain
+                attack.destination_ip = destination_ip or attack.destination_ip
+                attack.destination_port = destination_port or attack.destination_port
+                attack.severity = severity
+                attack.confidence = max(float(attack.confidence or 0.0), 0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55)
+                attack.description = description or attack.description
+                attack.indicators = {
+                    **(attack.indicators if isinstance(attack.indicators, dict) else {}),
+                    **(payload if payload else {}),
+                    "event_kind": event_kind,
+                    "attack_id": attack_identifier,
+                    "alert_number": request.alert_number,
+                    "max_alerts": request.max_alerts,
+                    "reason": request.reason,
+                }
+                attack.status = _status_from_event(event_kind, attack.status or "detected")
+                if client_fk:
+                    attack.target_client_id = client_fk
+
+            created_attack_id = attack.event_id
+
+            if event_kind.lower() in {"quarantine_activated", "system_quarantined"}:
+                db.add(
+                    DefenseAction(
+                        action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
+                        action_type="quarantine",
+                        target=request.client_id or source_ip or source_domain or event_name,
+                        details={
+                            "event": event_kind,
+                            "attack_id": created_attack_id,
+                            "reason": request.reason or description,
+                            "user_initiated": bool(request.user_initiated),
+                        },
+                        status="executed",
+                        executed_at=datetime.utcnow(),
+                        attack_event_id=attack.id,
+                        client_id=client_fk,
+                        successful=True,
+                    )
+                )
 
         # Correlate burst activity for the same source/client in the last 10 minutes
         since_time = datetime.utcnow() - timedelta(minutes=10)
@@ -517,7 +725,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
 
         await db.commit()
 
-        if created_attack_id or _is_security_event(event_name):
+        if created_attack_id or _is_security_event(event_name) or _is_security_event(event_kind):
             terminal_monitor.log_attack_activity(
                 attack_type=event_name,
                 source=source_ip or source_domain or request.client_id or "unknown",
@@ -527,7 +735,8 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
 
         return {
             "status": "ingested",
-            "event": event_name,
+            "event": event_kind,
+            "attack_type": event_name,
             "severity": severity.value,
             "created_attack_event": created_attack_id,
             "correlated_alert": alert_created,
@@ -537,6 +746,181 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
     except Exception as e:
         await db.rollback()
         logger.error(f"Defense event ingestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/event/respond")
+async def respond_to_defense_event(
+    request: DefenseEventResponseRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist analyst responses for popup actions such as block/ignore/quarantine."""
+    try:
+        action = (request.action or "").strip().upper()
+        if action not in {"BLOCK", "IGNORE", "QUARANTINE"}:
+            raise HTTPException(status_code=400, detail="action must be BLOCK, IGNORE, or QUARANTINE")
+
+        client_fk = None
+        if request.client_id:
+            client_res = await db.execute(select(ClientInstallation).where(ClientInstallation.client_id == request.client_id))
+            client = client_res.scalar_one_or_none()
+            if client:
+                client_fk = client.id
+
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+
+        req_target_type = str(request.target_type or "").strip().lower()
+        req_target_text = str(request.target or "").strip().lower()
+        is_global_quarantine = action == "QUARANTINE" and (
+            req_target_type in {"system", "global", "all", "infrastructure"}
+            or req_target_text in {"system", "all", "*", "system_all", "global", "system:all"}
+            or bool(metadata.get("auto_global_quarantine"))
+            or bool(metadata.get("system_wide"))
+            or bool(metadata.get("quarantine_all"))
+        )
+
+        attack = None
+        attack_lookup_id = _sanitize_external_event_id(request.attack_id or request.event_id)
+        if attack_lookup_id:
+            attack_res = await db.execute(select(AttackEvent).where(AttackEvent.event_id == attack_lookup_id))
+            attack = attack_res.scalar_one_or_none()
+
+        target = request.target or (attack.source_ip if attack else None) or (attack.source_domain if attack else None)
+        target_type = _derive_target_type(target, request.target_type)
+        if is_global_quarantine:
+            target = "SYSTEM_ALL"
+            target_type = "system"
+
+        action_type = {
+            "BLOCK": "block_ip" if target_type == "ip" else "block_indicator",
+            "IGNORE": "ignore",
+            "QUARANTINE": "quarantine",
+        }[action]
+        if action == "QUARANTINE" and is_global_quarantine:
+            action_type = "quarantine_system"
+        if action == "BLOCK" and target_type == "domain":
+            action_type = "block_domain"
+
+        response_action = DefenseAction(
+            action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
+            action_type=action_type,
+            target=target or request.client_id or request.event_id or "unknown",
+            details={
+                "requested_action": action,
+                "reason": request.reason or f"Dashboard action: {action}",
+                "metadata": metadata,
+                "target_type": target_type,
+                "scope": "system-wide" if is_global_quarantine else "targeted",
+            },
+            status="pending",
+            attack_event_id=attack.id if attack else None,
+            client_id=client_fk,
+        )
+        db.add(response_action)
+        await db.flush()
+
+        successful = True
+        affected_attack_events = 0
+        affected_clients = []
+
+        if is_global_quarantine:
+            now = datetime.utcnow()
+
+            active_attacks_res = await db.execute(select(AttackEvent))
+            for attack_event in active_attacks_res.scalars().all():
+                status = str(attack_event.status or "detected").lower()
+                if status in {"ignored", "resolved", "false_positive"}:
+                    continue
+                attack_event.status = "quarantined"
+                attack_event.blocked = True
+                if not attack_event.blocked_at:
+                    attack_event.blocked_at = now
+                affected_attack_events += 1
+
+            clients_res = await db.execute(select(ClientInstallation).where(ClientInstallation.is_active == True))
+            active_clients = clients_res.scalars().all()
+            affected_clients = [c.client_id for c in active_clients if c and c.client_id]
+
+            db.add(
+                NetworkAlert(
+                    alert_id=f"ALERT_{uuid.uuid4().hex[:12].upper()}",
+                    alert_type="system_wide_quarantine",
+                    severity=ThreatSeverity.CRITICAL,
+                    title="System-wide quarantine initiated",
+                    description=(
+                        f"System-wide quarantine was triggered from dashboard response. "
+                        f"Affected attack events: {affected_attack_events}."
+                    ),
+                    affected_clients=affected_clients,
+                    affected_count=len(affected_clients),
+                    status="active",
+                )
+            )
+
+        if action == "BLOCK" and action_type in {"block_ip", "block_domain"}:
+            response_action.action_type = action_type
+            successful = await _apply_defense_action(response_action, db)
+        else:
+            successful = True
+
+        response_action.status = "executed" if successful else "failed"
+        response_action.successful = successful
+        response_action.executed_at = datetime.utcnow()
+        response_action.details = {
+            **(response_action.details if isinstance(response_action.details, dict) else {}),
+            "affected_attack_events": affected_attack_events,
+            "affected_clients": affected_clients,
+        }
+
+        if attack is not None:
+            attack.status = {
+                "BLOCK": "blocked",
+                "IGNORE": "ignored",
+                "QUARANTINE": "quarantined",
+            }[action]
+            if action == "BLOCK":
+                attack.blocked = successful
+                attack.blocked_at = datetime.utcnow() if successful else attack.blocked_at
+
+        db.add(
+            SystemLog(
+                log_level="CRITICAL" if action == "QUARANTINE" else "WARNING" if action == "BLOCK" else "INFO",
+                component="defense_response",
+                message=f"Dashboard response {action} applied to {request.event_id or request.attack_id or target or 'security event'}",
+                details={
+                    "action": action,
+                    "attack_id": request.attack_id,
+                    "event_id": request.event_id,
+                    "client_id": request.client_id,
+                    "target": target,
+                    "target_type": target_type,
+                    "successful": successful,
+                    "reason": request.reason,
+                    "metadata": metadata,
+                    "scope": "system-wide" if is_global_quarantine else "targeted",
+                    "affected_attack_events": affected_attack_events,
+                    "affected_clients": affected_clients,
+                },
+            )
+        )
+
+        await db.commit()
+
+        return {
+            "status": "ok",
+            "action": action,
+            "successful": successful,
+            "attack_event_id": attack.event_id if attack else None,
+            "defense_action_id": response_action.action_id,
+            "scope": "system-wide" if is_global_quarantine else "targeted",
+            "affected_attack_events": affected_attack_events,
+            "affected_clients": len(affected_clients),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Defense response failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

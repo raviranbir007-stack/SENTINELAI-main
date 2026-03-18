@@ -9,11 +9,14 @@ import logging.handlers
 import multiprocessing
 import os
 import ipaddress
+import json
+import platform
 import signal
 import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, UTC
 from pathlib import Path
@@ -219,6 +222,75 @@ def run_protection_client():
             'microsoft.com', 'outlook.com', 'live.com',
             'amazon.com', 'apple.com', 'icloud.com',
         }
+        api_base = f"http://127.0.0.1:{int(settings.API_PORT)}"
+        protection_client_id = None
+
+        def _post_json(path: str, payload: dict, timeout: float = 6.0):
+            url = f"{api_base}{path}"
+            data = json.dumps(payload, default=str).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                body = res.read().decode("utf-8") if res else "{}"
+                if not body:
+                    return {}
+                try:
+                    return json.loads(body)
+                except Exception:
+                    return {}
+
+        def _register_protection_client():
+            nonlocal protection_client_id
+            try:
+                hostname = socket.gethostname()
+                try:
+                    ip_addr = socket.gethostbyname(hostname)
+                except Exception:
+                    ip_addr = "127.0.0.1"
+                payload = {
+                    "hostname": hostname,
+                    "ip_address": ip_addr,
+                    "os_type": "Linux",
+                    "os_version": platform.release() if hasattr(platform, "release") else "unknown",
+                    "version": "integrated-runner",
+                }
+                response = _post_json("/api/v1/network/client/register", payload, timeout=8.0)
+                protection_client_id = response.get("client_id") or protection_client_id
+                if protection_client_id:
+                    logger.info("✅ Protection client registered for dashboard sync: %s", protection_client_id)
+            except Exception as exc:
+                logger.debug("Protection client registration skipped: %s", exc)
+
+        def _post_defense_event(event_name: str, severity: str = "medium", description: str = "", payload: dict | None = None):
+            try:
+                _post_json(
+                    "/api/v1/network/event",
+                    {
+                        "client_id": protection_client_id,
+                        "event": str(event_name),
+                        "severity": str(severity or "medium").lower(),
+                        "description": description,
+                        "monitor_event": payload or {},
+                    },
+                    timeout=6.0,
+                )
+            except Exception as exc:
+                logger.debug("Defense event post failed (%s): %s", event_name, exc)
+
+        def _post_heartbeat(status_payload: dict):
+            if not protection_client_id:
+                return
+            try:
+                query = urllib.parse.urlencode({"client_id": protection_client_id})
+                _post_json(
+                    f"/api/v1/network/client/heartbeat?{query}",
+                    {
+                        "status": status_payload,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    },
+                    timeout=5.0,
+                )
+            except Exception as exc:
+                logger.debug("Heartbeat post failed: %s", exc)
 
         def _is_local_or_private_host(host: str) -> bool:
             h = str(host or '').strip().lower().rstrip('.')
@@ -241,6 +313,12 @@ def run_protection_client():
         def handle_intrusion(intrusion):
             stats["intrusions_detected"] += 1
             logger.warning(f"🚨 INTRUSION: {intrusion['type']} from {intrusion.get('source_ip', 'UNKNOWN')}")
+            _post_defense_event(
+                event_name=intrusion.get('type', 'intrusion_alert'),
+                severity=intrusion.get('severity', 'high'),
+                description=intrusion.get('description') or f"Intrusion detected: {intrusion.get('type', 'unknown')}",
+                payload=intrusion,
+            )
             if intrusion.get('severity') in ['HIGH', 'CRITICAL']:
                 ips.block_ip(intrusion.get('source_ip', ''), reason=intrusion['type'])
                 stats["intrusions_blocked"] += 1
@@ -306,6 +384,12 @@ def run_protection_client():
         def handle_defense_event(event):
             if event.get('event') == 'QUARANTINE_ACTIVATED':
                 logger.critical("🔒 SYSTEM QUARANTINED - Threat response timeout")
+            _post_defense_event(
+                event_name=event.get('event', 'defense_event'),
+                severity='critical' if event.get('event') == 'QUARANTINE_ACTIVATED' else 'high',
+                description=event.get('reason') or event.get('event', 'Defense event'),
+                payload=event,
+            )
 
         def handle_prevention_event(event):
             event_type = event.get('event')
@@ -356,6 +440,13 @@ def run_protection_client():
             stats['threats_detected'] += 1
             logger.warning("⚠️  Extended monitor alert [%s]: %s", risk, description)
 
+            _post_defense_event(
+                event_name=event_type,
+                severity=risk,
+                description=description,
+                payload=event,
+            )
+
             if remote_ip:
                 ips.block_ip(remote_ip, reason=description)
             if domain and event_type in {'dns_threat', 'email_threat'}:
@@ -373,6 +464,8 @@ def run_protection_client():
             })
         
         # Start all components
+        _register_protection_client()
+
         threat_analyzer = ThreatAnalyzer(
             callback=handle_threat_verdict,
             server_url="http://localhost:8000",
@@ -434,8 +527,26 @@ def run_protection_client():
         
         # Keep running and print stats periodically
         last_stats = time.time()
+        last_heartbeat = 0.0
         while True:
             time.sleep(10)
+
+            now_ts = time.time()
+            if now_ts - last_heartbeat >= 60:
+                try:
+                    heartbeat_payload = {
+                        "defense_coordinator": defense_coordinator.get_status(),
+                        "vulnerability_scanner": vulnerability_scanner.get_summary(),
+                        "behavioral_monitor": behavioral_monitor.get_summary(),
+                        "dns_monitor": dns_monitor.get_summary(),
+                        "network_scanner": network_scanner.get_summary(),
+                        "process_scanner": process_scanner.get_summary(),
+                        "stats": dict(stats),
+                    }
+                    _post_heartbeat(heartbeat_payload)
+                except Exception:
+                    pass
+                last_heartbeat = now_ts
             
             # Print stats every 5 minutes
             if time.time() - last_stats > 300:

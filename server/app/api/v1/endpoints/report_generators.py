@@ -305,6 +305,37 @@ Key Findings:<br/>
         styles["Normal"],
     ))
     elements.append(Spacer(1, 0.2 * inch))
+
+    # FORENSIC TREND ANALYSIS ACROSS 24h / 7d / 30d
+    elements.append(Paragraph("FORENSIC TREND ANALYSIS", heading_style))
+    elements.append(Spacer(1, 0.1 * inch))
+    forensic_trend_rows = _build_forensic_trend_rows(report_data)
+    forensic_trend_table = Table(_wrap_rows_exec(forensic_trend_rows), colWidths=[1.1 * inch, 0.8 * inch, 0.7 * inch, 0.8 * inch, 0.8 * inch, 0.9 * inch, 0.9 * inch])
+    forensic_trend_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2e7d32")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#66bb6a")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8f5e9")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
+    ]))
+    elements.append(forensic_trend_table)
+    elements.append(Spacer(1, 0.12 * inch))
+
+    forensic_summary = _summarize_forensic_strength(report_data)
+    elements.append(Paragraph(
+        f"Forensic confidence across selected intervals is assessed as <b>{forensic_summary['overall_grade']}</b>. "
+        f"Average integrity score is <b>{forensic_summary['avg_integrity']:.1f}/100</b>, "
+        f"with corroboration rate <b>{forensic_summary['avg_corroboration']:.1f}%</b> and "
+        f"mean API verification success <b>{forensic_summary['avg_api_success']:.1f}%</b>. "
+        f"Primary evidence gap observed: <b>{forensic_summary['dominant_gap']}</b>.",
+        styles["Normal"],
+    ))
+    elements.append(Spacer(1, 0.2 * inch))
     
     # THREAT DISTRIBUTION
     if total_threats > 0:
@@ -394,6 +425,22 @@ Key Findings:<br/>
     
     if total_scans > 0 and (total_safe / total_scans) > 0.95:
         recommendations.append("✅ <b>GOOD:</b> Over 95% of scans returned clean. Security posture is strong.")
+
+    forensic_summary = _summarize_forensic_strength(report_data)
+    if forensic_summary["avg_integrity"] < 60:
+        recommendations.append(
+            f"🔬 <b>FORENSIC IMPROVEMENT:</b> Forensic integrity average is {forensic_summary['avg_integrity']:.1f}/100. "
+            "Increase multi-source corroboration and API verification depth for high-risk scans."
+        )
+    if forensic_summary["avg_corroboration"] < 55:
+        recommendations.append(
+            "🧭 <b>CORROBORATION GAP:</b> Cross-source corroboration is below target. Prioritize re-scan workflows for suspicious/malicious findings."
+        )
+    if forensic_summary["avg_api_success"] < 75:
+        recommendations.append(
+            f"⚙ <b>API RELIABILITY:</b> Verification success is {forensic_summary['avg_api_success']:.1f}%. "
+            f"Focus on fixing dominant failure mode: {forensic_summary['dominant_gap']}."
+        )
     
     if not recommendations:
         recommendations.append("✅ <b>STATUS:</b> All systems clean. Continue regular monitoring and maintain current security practices.")
@@ -851,12 +898,29 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
             ["Scans with Forensic Data", f"{stats['scans_with_forensic_data']} ({stats['forensic_coverage_pct']:.1f}%)"],
             ["Avg APIs per Scan", f"{stats['avg_apis_per_scan']:.1f}/5"],
             ["Multi-Source Corroborated", str(stats['corroborated_threats'])],
+            ["Corroboration Rate", f"{float(stats.get('corroboration_rate_pct', 0.0)):.1f}%"],
             ["Average Confidence", f"{stats['avg_confidence']*100:.1f}%"],
+            ["Avg Forensic Integrity", f"{float(stats.get('avg_forensic_integrity_score', 0.0)):.1f}/100"],
+            [
+                "Integrity Distribution",
+                (
+                    f"H:{int(stats.get('forensic_integrity_hardened', 0))} "
+                    f"S:{int(stats.get('forensic_integrity_strong', 0))} "
+                    f"M:{int(stats.get('forensic_integrity_moderate', 0))} "
+                    f"L:{int(stats.get('forensic_integrity_limited', 0))}"
+                ),
+            ],
+            ["Threats Without Forensic Validation", str(int(stats.get('threats_without_forensic', 0)))],
+            ["API Verification Success", f"{float(stats.get('api_verification_success_pct', 0.0)):.1f}%"],
+            ["Primary API Failure Mode", str(stats.get('primary_api_failure_mode', 'none')).replace('_', ' ').title()],
             ["Forensic Posture", (
-                "HARDENED" if stats['forensic_coverage_pct'] >= 80 and stats['avg_apis_per_scan'] >= 3
-                else "STRONG" if stats['forensic_coverage_pct'] >= 60 and stats['avg_apis_per_scan'] >= 2
-                else "MODERATE" if stats['forensic_coverage_pct'] >= 40
-                else "LIMITED"
+                str(stats.get('forensic_posture', ''))
+                or (
+                    "HARDENED" if stats['forensic_coverage_pct'] >= 80 and stats['avg_apis_per_scan'] >= 3
+                    else "STRONG" if stats['forensic_coverage_pct'] >= 60 and stats['avg_apis_per_scan'] >= 2
+                    else "MODERATE" if stats['forensic_coverage_pct'] >= 40
+                    else "LIMITED"
+                )
             )],
             ["Manual Review Load", (
                 "HIGH" if stats['threats_detected'] > 0 and stats['corroborated_threats'] == 0
@@ -896,12 +960,42 @@ async def generate_technical_analysis_pdf(report_data: Dict[str, Any], request: 
         if stats["avg_confidence"] < 0.5:
             heuristics.append("Average confidence is low; increase data sources and re-scan critical targets.")
 
+        if float(stats.get("avg_forensic_integrity_score", 0.0)) < 60:
+            heuristics.append(
+                "Forensic integrity score is below target; raise corroboration depth and ensure at least 2+ API validations for high-risk findings."
+            )
+
+        if int(stats.get("threats_without_forensic", 0)) > 0:
+            heuristics.append(
+                f"{int(stats.get('threats_without_forensic', 0))} threat-bearing scan(s) lacked API verification; mark these as priority manual review cases."
+            )
+
+        if float(stats.get("api_verification_success_pct", 0.0)) < 75:
+            heuristics.append(
+                f"API verification success is degraded ({float(stats.get('api_verification_success_pct', 0.0)):.1f}%). "
+                f"Most frequent failure: {str(stats.get('primary_api_failure_mode', 'unknown')).replace('_', ' ')}."
+            )
+
         if heuristics:
             elements.append(Paragraph("FORENSIC HEURISTICS", heading_style))
             elements.append(Spacer(1, 0.05 * inch))
             for note in heuristics:
                 elements.append(Paragraph(f"• {note}", styles["Normal"]))
             elements.append(Spacer(1, 0.15 * inch))
+
+        elements.append(Paragraph("FORENSIC INTERPRETATION", heading_style))
+        elements.append(Spacer(1, 0.05 * inch))
+        elements.append(Paragraph(
+            (
+                f"Interval forensic posture is <b>{str(stats.get('forensic_posture', 'LIMITED'))}</b>. "
+                f"Coverage={stats['forensic_coverage_pct']:.1f}%, "
+                f"AvgIntegrity={float(stats.get('avg_forensic_integrity_score', 0.0)):.1f}/100, "
+                f"CorroborationRate={float(stats.get('corroboration_rate_pct', 0.0)):.1f}%. "
+                "Use this score set to prioritize containment and evidence-preservation decisions."
+            ),
+            styles["Normal"],
+        ))
+        elements.append(Spacer(1, 0.12 * inch))
 
         # Detection method overview
         methods = _get_detection_method_stats(report_data)
@@ -1286,6 +1380,86 @@ def _get_temporal_stats(report_data: Dict[str, Any]) -> Dict[str, Any]:
         "last_seen": timestamps[-1] if timestamps else "N/A",
         "total_scans": len(scans),
         "intervals": len(report_data),
+    }
+
+
+def _forensic_grade_from_score(score: float) -> str:
+    if score >= 80:
+        return "HARDENED"
+    if score >= 65:
+        return "STRONG"
+    if score >= 45:
+        return "MODERATE"
+    return "LIMITED"
+
+
+def _build_forensic_trend_rows(report_data: Dict[str, Any]) -> List[List[str]]:
+    """Build cross-interval forensic trend matrix for executive reporting."""
+    rows: List[List[str]] = [["Interval", "Coverage", "APIs", "Corrobor.", "Integrity", "Unverified", "Grade"]]
+
+    if not report_data:
+        rows.append(["-", "0%", "0.0", "0%", "0/100", "0", "LIMITED"])
+        return rows
+
+    order_hint = {"24h": 1, "7d": 2, "30d": 3}
+    ordered_items = sorted(report_data.items(), key=lambda kv: order_hint.get(kv[0], 99))
+
+    for interval_key, data in ordered_items:
+        stats = data.get("statistics", {}) if isinstance(data, dict) else {}
+        label = str(data.get("interval") or interval_key)
+        coverage = float(stats.get("forensic_coverage_pct", 0.0) or 0.0)
+        apis = float(stats.get("avg_apis_per_scan", 0.0) or 0.0)
+        corroboration = float(stats.get("corroboration_rate_pct", 0.0) or 0.0)
+        integrity = float(stats.get("avg_forensic_integrity_score", 0.0) or 0.0)
+        unverified = int(stats.get("threats_without_forensic", 0) or 0)
+        grade = str(stats.get("forensic_posture") or _forensic_grade_from_score(integrity))
+
+        rows.append([
+            label,
+            f"{coverage:.1f}%",
+            f"{apis:.1f}",
+            f"{corroboration:.1f}%",
+            f"{integrity:.1f}/100",
+            str(unverified),
+            grade,
+        ])
+
+    return rows
+
+
+def _summarize_forensic_strength(report_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate forensic strength summary for recommendations and narrative."""
+    stats_list = [
+        (item.get("statistics") or {})
+        for item in report_data.values()
+        if isinstance(item, dict)
+    ]
+    if not stats_list:
+        return {
+            "avg_integrity": 0.0,
+            "avg_corroboration": 0.0,
+            "avg_api_success": 0.0,
+            "dominant_gap": "none",
+            "overall_grade": "LIMITED",
+        }
+
+    n = len(stats_list)
+    avg_integrity = sum(float(s.get("avg_forensic_integrity_score", 0.0) or 0.0) for s in stats_list) / n
+    avg_corroboration = sum(float(s.get("corroboration_rate_pct", 0.0) or 0.0) for s in stats_list) / n
+    avg_api_success = sum(float(s.get("api_verification_success_pct", 0.0) or 0.0) for s in stats_list) / n
+
+    gap_counts: Dict[str, int] = {}
+    for s in stats_list:
+        gap = str(s.get("primary_api_failure_mode", "none") or "none").strip().lower()
+        gap_counts[gap] = gap_counts.get(gap, 0) + 1
+    dominant_gap_raw = max(gap_counts.items(), key=lambda kv: kv[1])[0] if gap_counts else "none"
+
+    return {
+        "avg_integrity": avg_integrity,
+        "avg_corroboration": avg_corroboration,
+        "avg_api_success": avg_api_success,
+        "dominant_gap": dominant_gap_raw.replace("_", " ").title(),
+        "overall_grade": _forensic_grade_from_score(avg_integrity),
     }
 
 

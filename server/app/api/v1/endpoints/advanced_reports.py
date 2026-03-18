@@ -53,6 +53,184 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _compute_forensic_integrity_for_scan(scan: ScanHistory, forensic: dict, analysis_data: dict) -> int:
+    """Compute a normalized 0-100 forensic integrity score for one scan."""
+    apis_checked = _safe_int(
+        forensic.get("apis_checked", 0)
+        or len(((analysis_data.get("api_results") or {}).get("apis_called") or []))
+    )
+    corroboration_count = _safe_int(forensic.get("corroboration_count", 0))
+    confidence = max(0.0, min(1.0, _safe_float(getattr(scan, "confidence", 0.0), 0.0)))
+
+    heuristic_meta = forensic.get("heuristic_indicators") if isinstance(forensic.get("heuristic_indicators"), dict) else {}
+    method_channels = 0
+    if apis_checked > 0:
+        method_channels += 1
+    if corroboration_count > 0:
+        method_channels += 1
+    if heuristic_meta:
+        method_channels += 1
+
+    score = 0
+    score += min(35, apis_checked * 7)
+    score += min(30, corroboration_count * 15)
+    score += min(20, int(confidence * 20))
+    score += min(15, method_channels * 5)
+
+    return max(0, min(100, int(score)))
+
+
+def _compute_forensic_metrics(all_scans: List[ScanHistory]) -> dict:
+    """Aggregate forensic reliability metrics used by executive/technical reports."""
+    if not all_scans:
+        return {
+            "scans_with_forensic_data": 0,
+            "forensic_coverage_pct": 0.0,
+            "avg_apis_per_scan": 0.0,
+            "corroborated_threats": 0,
+            "high_confidence_threats": 0,
+            "avg_confidence": 0.0,
+            "avg_forensic_integrity_score": 0.0,
+            "forensic_integrity_hardened": 0,
+            "forensic_integrity_strong": 0,
+            "forensic_integrity_moderate": 0,
+            "forensic_integrity_limited": 0,
+            "threats_without_forensic": 0,
+            "corroboration_rate_pct": 0.0,
+            "api_verification_success_pct": 0.0,
+            "primary_api_failure_mode": "none",
+            "forensic_posture": "LIMITED",
+        }
+
+    scans_with_forensic = 0
+    total_apis_checked = 0
+    corroborated_threats = 0
+    high_confidence_threats = 0
+    avg_confidence = 0.0
+    threats_without_forensic = 0
+    forensic_integrity_scores: List[int] = []
+
+    api_checked = 0
+    api_failures = {
+        "pending": 0,
+        "rate_limited": 0,
+        "not_authorized": 0,
+        "error": 0,
+        "not_configured": 0,
+        "unknown": 0,
+    }
+
+    for scan in all_scans:
+        analysis_data = scan.analysis_data if isinstance(scan.analysis_data, dict) else {}
+        forensic = analysis_data.get("forensic_metadata") if isinstance(analysis_data.get("forensic_metadata"), dict) else {}
+
+        if not forensic and getattr(scan, "evidence_sources", None):
+            forensic = {
+                "evidence_sources": scan.evidence_sources if isinstance(scan.evidence_sources, list) else [],
+                "corroboration_count": _safe_int(getattr(scan, "corroboration_count", 0)),
+                "corroboration_threshold_met": _safe_int(getattr(scan, "corroboration_count", 0)) >= 2,
+            }
+
+        apis_checked = _safe_int(
+            forensic.get("apis_checked", 0)
+            or len(((analysis_data.get("api_results") or {}).get("apis_called") or []))
+        )
+        total_apis_checked += apis_checked
+        if apis_checked > 0:
+            scans_with_forensic += 1
+
+        confidence = _safe_float(getattr(scan, "confidence", 0.0), 0.0)
+        avg_confidence += confidence
+
+        level = str(getattr(scan, "threat_level", "") or "").lower()
+        if level in {"suspicious", "malicious"} and confidence >= 0.7:
+            high_confidence_threats += 1
+        if level in {"suspicious", "malicious"} and apis_checked <= 0:
+            threats_without_forensic += 1
+
+        corroboration_count = _safe_int(forensic.get("corroboration_count", 0))
+        if bool(forensic.get("corroboration_threshold_met")) or corroboration_count >= 2:
+            corroborated_threats += 1
+
+        integrity_score = _compute_forensic_integrity_for_scan(scan, forensic, analysis_data)
+        forensic_integrity_scores.append(integrity_score)
+
+        api_status = forensic.get("api_status") if isinstance(forensic.get("api_status"), dict) else {}
+        if not api_status:
+            api_status = (analysis_data.get("api_results") or {}).get("api_status") if isinstance((analysis_data.get("api_results") or {}).get("api_status"), dict) else {}
+
+        for _api_name, entry in api_status.items():
+            status = str((entry or {}).get("status") or "unknown").lower() if isinstance(entry, dict) else "unknown"
+            if status == "not_applicable":
+                continue
+            if status == "checked":
+                api_checked += 1
+            elif status in api_failures:
+                api_failures[status] += 1
+            else:
+                api_failures["unknown"] += 1
+
+    total_scans = len(all_scans)
+    avg_confidence = avg_confidence / total_scans if total_scans else 0.0
+    avg_apis_checked = total_apis_checked / total_scans if total_scans else 0.0
+    forensic_coverage = (scans_with_forensic / total_scans * 100) if total_scans else 0.0
+    avg_integrity_score = sum(forensic_integrity_scores) / len(forensic_integrity_scores) if forensic_integrity_scores else 0.0
+
+    hardened = sum(1 for s in forensic_integrity_scores if s >= 80)
+    strong = sum(1 for s in forensic_integrity_scores if 60 <= s < 80)
+    moderate = sum(1 for s in forensic_integrity_scores if 40 <= s < 60)
+    limited = sum(1 for s in forensic_integrity_scores if s < 40)
+
+    threat_total = sum(1 for s in all_scans if str(getattr(s, "threat_level", "") or "").lower() in {"suspicious", "malicious"})
+    corroboration_rate = (corroborated_threats / threat_total * 100) if threat_total else 0.0
+
+    total_api_events = api_checked + sum(api_failures.values())
+    api_success_pct = (api_checked / total_api_events * 100) if total_api_events else 0.0
+    primary_api_failure_mode = max(api_failures.items(), key=lambda kv: kv[1])[0] if total_api_events else "none"
+
+    if avg_integrity_score >= 80 and forensic_coverage >= 80:
+        posture = "HARDENED"
+    elif avg_integrity_score >= 65 and forensic_coverage >= 65:
+        posture = "STRONG"
+    elif avg_integrity_score >= 45 and forensic_coverage >= 45:
+        posture = "MODERATE"
+    else:
+        posture = "LIMITED"
+
+    return {
+        "scans_with_forensic_data": scans_with_forensic,
+        "forensic_coverage_pct": round(forensic_coverage, 2),
+        "avg_apis_per_scan": round(avg_apis_checked, 2),
+        "corroborated_threats": corroborated_threats,
+        "high_confidence_threats": high_confidence_threats,
+        "avg_confidence": round(avg_confidence, 4),
+        "avg_forensic_integrity_score": round(avg_integrity_score, 2),
+        "forensic_integrity_hardened": hardened,
+        "forensic_integrity_strong": strong,
+        "forensic_integrity_moderate": moderate,
+        "forensic_integrity_limited": limited,
+        "threats_without_forensic": threats_without_forensic,
+        "corroboration_rate_pct": round(corroboration_rate, 2),
+        "api_verification_success_pct": round(api_success_pct, 2),
+        "primary_api_failure_mode": primary_api_failure_mode,
+        "forensic_posture": posture,
+    }
+
+
 def _wrap_table_rows(
     rows: List[List[Any]],
     styles,
@@ -213,25 +391,8 @@ async def generate_comprehensive_report(
                 defense_actions = result.scalars().all()
 
             # Calculate statistics
-            # Forensic reliability metrics
-            scans_with_forensic = sum(1 for s in all_scans if s.analysis_data and s.analysis_data.get("forensic_metadata", {}).get("apis_checked", 0) > 0)
-            avg_apis_checked = (
-                sum(
-                    s.analysis_data.get("forensic_metadata", {}).get("apis_checked", 0)
-                    for s in all_scans
-                    if s.analysis_data
-                )
-                / len(all_scans)
-                if all_scans
-                else 0
-            )
-            corroborated_threats = sum(1 for s in all_scans if s.analysis_data and s.analysis_data.get("forensic_metadata", {}).get("corroboration_threshold_met", False))
-            high_confidence_threats = sum(
-                1
-                for s in all_scans
-                if s.threat_level in ["suspicious", "malicious"] and s.confidence >= 0.7
-            )
-            
+            forensic_metrics = _compute_forensic_metrics(all_scans)
+
             stats = {
                 "total_scans": len(all_scans),
                 "files_scanned": len(scans_by_type["files"]),
@@ -245,13 +406,7 @@ async def generate_comprehensive_report(
                 "safe_scans": sum(1 for s in all_scans if s.threat_level == "safe"),
                 "suspicious_scans": sum(1 for s in all_scans if s.threat_level == "suspicious"),
                 "malicious_scans": sum(1 for s in all_scans if s.threat_level == "malicious"),
-                # Forensic reliability metrics
-                "scans_with_forensic_data": scans_with_forensic,
-                "forensic_coverage_pct": (scans_with_forensic / len(all_scans) * 100) if all_scans else 0,
-                "avg_apis_per_scan": round(avg_apis_checked, 2),
-                "corroborated_threats": corroborated_threats,
-                "high_confidence_threats": high_confidence_threats,
-                "avg_confidence": (sum(s.confidence for s in all_scans) / len(all_scans)) if all_scans else 0,
+                **forensic_metrics,
             }
 
             report_data[interval_key] = {

@@ -4,8 +4,10 @@ Shows real-time activity monitoring summaries on server terminal
 """
 
 import logging
+import shutil
 import sys
 import threading
+import textwrap
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -146,8 +148,16 @@ class TerminalActivityMonitor:
 
         readable_type = attack['type'].replace('_', ' ').strip().title()
         sev_upper = attack['severity'].upper()
-        desc_short = (': ' + attack['description'][:60]) if attack['description'] else ''
-        print(f"\n◈ ATTACK | {readable_type} | src={attack['source']} | sev={sev_upper}{desc_short}", flush=True)
+        desc_short = attack['description'] or 'Suspicious activity detected'
+        self._render_console_table(
+            "🚨 ATTACK DETECTED",
+            [
+                ("Type", readable_type),
+                ("Severity", sev_upper),
+                ("Source", attack['source']),
+                ("Summary", desc_short),
+            ],
+        )
         sys.stdout.flush()
     
     def _monitor_loop(self):
@@ -176,7 +186,14 @@ class TerminalActivityMonitor:
     
     def _print_banner(self):
         """Print initial banner"""
-        print("\n◈ SENTINEL-AI | Activity Monitor | Online", flush=True)
+        self._render_console_table(
+            "🛡️ SENTINEL-AI ACTIVITY MONITOR",
+            [
+                ("State", "Online"),
+                ("Update Interval", f"{self.update_interval}s"),
+                ("Mode", "Live monitoring"),
+            ],
+        )
         sys.stdout.flush()
     
     def _has_new_activity(self):
@@ -243,22 +260,53 @@ class TerminalActivityMonitor:
             site = self.recent_websites[-1].split(' [')[0]
             latest = f" · {self._compact_target(site)}"
 
-        status_parts = [
-            f"◈ up {uptime_str}",
-            f"s{self.stats['scans_performed']}+{delta_scans}",
-        ]
-        if self.stats['threats_detected'] > 0:
-            status_parts.append(f"t{self.stats['threats_detected']}")
-        if self.stats['attack_events'] > 0:
-            status_parts.append(f"a{self.stats['attack_events']}")
-        status_parts.append(f"Δ{last_str}")
-
-        status = " · ".join(status_parts)
+        latest_label = latest.strip(" ·") if latest else "No new target"
         if latest and latest != self._last_status_latest:
-            status = f"{status}{latest}"
             self._last_status_latest = latest
-        print(status, flush=True)
+
+        self._render_console_table(
+            "◈ LIVE MONITOR STATUS",
+            [
+                ("Uptime", uptime_str),
+                ("Scans", f"{self.stats['scans_performed']} (+{delta_scans})"),
+                ("Threats", self.stats['threats_detected']),
+                ("Attacks", self.stats['attack_events']),
+                ("Last Activity", last_str),
+                ("Latest", latest_label),
+            ],
+        )
         sys.stdout.flush()
+
+    @staticmethod
+    def _render_console_table(title: str, rows: list[tuple], footer: str | None = None):
+        """Render compact readable table with automatic word wrapping."""
+        width = max(80, min(136, shutil.get_terminal_size((110, 20)).columns))
+        key_width = max((len(str(k)) for k, _ in rows), default=12)
+        key_width = max(11, min(24, key_width + 1))
+        val_width = max(24, width - key_width - 7)
+
+        top = f"┌{'─' * (width - 2)}┐"
+        mid = f"├{'─' * (width - 2)}┤"
+        bottom = f"└{'─' * (width - 2)}┘"
+
+        print(top, flush=True)
+        print(f"│ {title[:width - 4]:<{width - 4}} │", flush=True)
+        print(mid, flush=True)
+
+        for key, value in rows:
+            label = str(key)
+            value_text = str(value if value is not None else '—')
+            wrapped = textwrap.wrap(value_text, width=val_width) or ['—']
+            for i, line in enumerate(wrapped):
+                left = label if i == 0 else ''
+                print(f"│ {left:<{key_width}} │ {line:<{val_width}} │", flush=True)
+
+        if footer:
+            print(mid, flush=True)
+            for line in textwrap.wrap(str(footer), width=width - 4) or ['']:
+                print(f"│ {line:<{width - 4}} │", flush=True)
+
+        print(bottom, flush=True)
 
     @staticmethod
     def _compact_duration(delta: timedelta) -> str:
@@ -290,14 +338,16 @@ class TerminalActivityMonitor:
             (self.stats['threats_detected'] / self.stats['scans_performed']) * 100
             if self.stats['scans_performed'] > 0 else 0.0
         )
-        print(
-            f"\n◈ SESSION SUMMARY | up={duration_str}"
-            f" | sites={self.stats['websites_monitored']}"
-            f" | scans={self.stats['scans_performed']}"
-            f" | threats={self.stats['threats_detected']}"
-            f" | attacks={self.stats['attack_events']}"
-            f" | rate={threat_rate:.1f}%",
-            flush=True,
+        self._render_console_table(
+            "◈ SESSION SUMMARY",
+            [
+                ("Uptime", duration_str),
+                ("Websites", self.stats['websites_monitored']),
+                ("Scans", self.stats['scans_performed']),
+                ("Threats", self.stats['threats_detected']),
+                ("Attacks", self.stats['attack_events']),
+                ("Threat Rate", f"{threat_rate:.1f}%"),
+            ],
         )
         sys.stdout.flush()
 

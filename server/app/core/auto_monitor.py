@@ -14,6 +14,7 @@ import sqlite3
 import shutil
 import socket
 import tempfile
+import textwrap
 import time
 import urllib.request
 from collections import deque
@@ -870,7 +871,7 @@ class AutomaticActivityMonitor:
             return {"verdict": "error", "error": str(e), "warnings": [str(e)]}
 
     def _print_activity_prompt(self, artifact_type: str, value: str, result: Dict, context: str = ""):
-        """Print compact operator prompt with verdict and action."""
+        """Print clean operator prompt in compact table format."""
         _v = result.get('verdict', 'unknown')
         # Handle Enum instances: ThreatLevel.SUSPICIOUS → 'suspicious'
         verdict_raw = (getattr(_v, 'value', None) or str(_v)).lower().split('.')[-1]
@@ -897,10 +898,44 @@ class AutomaticActivityMonitor:
         else:
             endpoint = endpoint_host or endpoint_ip or value
 
-        # Keep terminal concise: one short line per event.
         if artifact_type == 'url' and context and '[' in context:
             endpoint = f"{endpoint}{context}"
-        print(f"◈ {type_label} {endpoint} | {verdict_label} {conf_pct} | {action_text}", flush=True)
+
+        title_emoji = "✅" if verdict_label == 'SAFE' else "⚠️" if verdict_label in {'SUSPICIOUS', 'UNKNOWN'} else "🚨"
+        self._render_prompt_table(
+            f"{title_emoji} LIVE ACTIVITY",
+            [
+                ("Type", type_label),
+                ("Target", endpoint),
+                ("Verdict", f"{verdict_label} ({conf_pct})"),
+                ("Action", action_text),
+            ],
+        )
+
+    @staticmethod
+    def _render_prompt_table(title: str, rows: list[tuple]):
+        """Render short activity box with auto word-wrap for readability."""
+        width = max(84, min(132, shutil.get_terminal_size((110, 20)).columns))
+        key_width = max((len(str(k)) for k, _ in rows), default=10)
+        key_width = max(10, min(22, key_width + 1))
+        val_width = max(24, width - key_width - 7)
+
+        top = f"┌{'─' * (width - 2)}┐"
+        mid = f"├{'─' * (width - 2)}┤"
+        bottom = f"└{'─' * (width - 2)}┘"
+
+        print(top, flush=True)
+        print(f"│ {title[:width - 4]:<{width - 4}} │", flush=True)
+        print(mid, flush=True)
+
+        for key, value in rows:
+            value_text = str(value if value is not None else '—')
+            wrapped = textwrap.wrap(value_text, width=val_width) or ['—']
+            for idx, line in enumerate(wrapped):
+                left = str(key) if idx == 0 else ''
+                print(f"│ {left:<{key_width}} │ {line:<{val_width}} │", flush=True)
+
+        print(bottom, flush=True)
 
     def _is_low_signal_suspicious(self, result: Dict, artifact_type: str) -> bool:
         """Return True when suspicious verdict is low-confidence single-source noise."""
@@ -980,7 +1015,15 @@ class AutomaticActivityMonitor:
             self._browser_last_seen_count = len(targets)
             now = time.time()
             if len(targets) == 0 and (now - self._browser_last_diag_at) > 60:
-                print("◈ MONITOR browser | no history targets discovered", flush=True)
+                self._render_prompt_table(
+                    "ℹ️ LIVE ACTIVITY",
+                    [
+                        ("Type", "MONITOR"),
+                        ("Target", "browser"),
+                        ("Verdict", "IDLE"),
+                        ("Action", "No history targets discovered"),
+                    ],
+                )
                 self._browser_last_diag_at = now
 
             for engine, browser_name, history_path in targets:
@@ -1334,12 +1377,18 @@ class AutomaticActivityMonitor:
         monitor_home = self._monitor_home_dir()
         browser_targets = self._discover_browser_history_targets()
         print(
-            f"\n◈ SENTINEL-AI | Monitor Active | mode={mode} | auto-scan=on | ip-cooldown={self.network_scan_cooldown}s",
+            "",
             flush=True,
         )
-        print(
-            f"◈ Browser monitor source: {monitor_home} | targets={len(browser_targets)}",
-            flush=True,
+        self._render_prompt_table(
+            "🛡️ SENTINEL-AI MONITOR STARTED",
+            [
+                ("Mode", mode),
+                ("Auto Scan", "ON"),
+                ("IP Cooldown", f"{self.network_scan_cooldown}s"),
+                ("Browser Source", str(monitor_home)),
+                ("Targets", len(browser_targets)),
+            ],
         )
         
         # Start monitoring loop
@@ -1354,13 +1403,15 @@ class AutomaticActivityMonitor:
             duration = datetime.utcnow() - self.stats['start_time']
             
             duration_str = str(duration).split('.')[0]
-            print(
-                f"\n◈ SESSION END | up={duration_str}"
-                f" | urls={self.stats['urls_detected']}"
-                f" | ips={self.stats['ips_detected']}"
-                f" | scans={self.stats['scans_performed']}"
-                f" | threats={self.stats['threats_found']}",
-                flush=True,
+            self._render_prompt_table(
+                "◈ MONITOR SESSION END",
+                [
+                    ("Uptime", duration_str),
+                    ("URLs", self.stats['urls_detected']),
+                    ("IPs", self.stats['ips_detected']),
+                    ("Scans", self.stats['scans_performed']),
+                    ("Threats", self.stats['threats_found']),
+                ],
             )
     
     def get_stats(self) -> Dict:

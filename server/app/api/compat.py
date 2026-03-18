@@ -989,7 +989,7 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
             stats["low_threats"] += 1
 
         status = str(attack.status or "detected").lower()
-        if status in {"detected", "analyzing", "blocked", "mitigated", "active"}:
+        if status in {"detected", "analyzing", "blocked", "mitigated", "active", "quarantined"}:
             stats["active_threats"] += 1
 
     return stats
@@ -1026,6 +1026,14 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
 
     attack_result = await db.execute(select(AttackEvent).order_by(desc(AttackEvent.detected_at)).limit(100))
     attacks = attack_result.scalars().all()
+
+    defense_logs_result = await db.execute(
+        select(SystemLog)
+        .where(SystemLog.component.in_(["defense_event", "defense_response", "client_heartbeat"]))
+        .order_by(desc(SystemLog.timestamp))
+        .limit(120)
+    )
+    defense_logs = defense_logs_result.scalars().all()
 
     def _icon_for(threat_type: str) -> str:
         lowered = str(threat_type or "").lower()
@@ -1115,6 +1123,55 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "prediction_confidence": indicators.get("prediction_confidence"),
         })
 
+    # Fallback mapping from structured defense logs to threat cards so dashboard
+    # still receives actionable incidents even before full attack correlation.
+    existing_ids = {str(item.get("id")) for item in threats if item.get("id")}
+    for log in defense_logs:
+        details = log.details if isinstance(log.details, dict) else {}
+        event_name = str(details.get("event") or details.get("attack_type") or "defense_event")
+        attack_type = str(details.get("attack_type") or event_name).lower()
+        severity = str(details.get("severity") or log.log_level or "medium").lower()
+        if severity not in {"critical", "high", "warning", "error", "medium"}:
+            severity = "medium"
+
+        is_actionable = (
+            severity in {"critical", "high", "warning", "error"}
+            or any(token in attack_type for token in ["attack", "alert", "quarantine", "process", "ddos", "intrusion"])
+        )
+        if not is_actionable:
+            continue
+
+        log_id = f"LOG_{log.id}"
+        if log_id in existing_ids:
+            continue
+
+        source_ip = details.get("source_ip")
+        source_domain = details.get("source_domain")
+        target = source_ip or source_domain or details.get("client_id") or "unknown"
+        short_desc = str(details.get("description") or log.message or "Security event")
+
+        threats.append({
+            "id": log_id,
+            "event_id": str(details.get("attack_id") or details.get("event_id") or ""),
+            "name": f"Defense Event: {event_name}",
+            "type": attack_type,
+            "icon": _icon_for(attack_type),
+            "target": target,
+            "target_display": target,
+            "details": short_desc,
+            "description": short_desc,
+            "short_description": short_desc[:140],
+            "severity": "critical" if severity in {"critical", "error"} else ("high" if severity in {"high", "warning"} else "medium"),
+            "source": str(log.component or "defense_event"),
+            "location": "Live Defense Event Stream",
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+            "status": "active",
+            "mitigation_commands": details.get("payload", {}).get("mitigation_commands") if isinstance(details.get("payload"), dict) else [],
+            "recommended_action": details.get("reason") or "Review and respond from dashboard",
+            "client_id": details.get("client_id"),
+        })
+        existing_ids.add(log_id)
+
     threats.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
     return threats[:200]
 
@@ -1126,9 +1183,11 @@ async def get_logs(db: AsyncSession = Depends(get_db)):
     logs = result.scalars().all()
     return [
         {
+            "id": log.id,
             "level": log.log_level,
             "component": log.component,
             "message": log.message,
+            "details": log.details,
             "timestamp": log.timestamp.isoformat() if log.timestamp else None,
         }
         for log in logs
@@ -1136,45 +1195,161 @@ async def get_logs(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/dashboard/api-status")
-async def get_api_status():
-    """Return API configuration status for dashboard (compat)."""
-    return [
+async def get_api_status(db: AsyncSession = Depends(get_db)):
+    """Return API live/config/usage status for dashboard (compat)."""
+
+    service_specs = [
         {
             "name": "VirusTotal",
             "key_configured": bool(settings.VIRUSTOTAL_API_KEY),
-            "enabled": bool(settings.VIRUSTOTAL_API_KEY),
-            "status": "ready" if settings.VIRUSTOTAL_API_KEY else "missing_key",
             "supported_inputs": ["url", "domain", "file_hash"],
+            "daily_limit": 1000,
+            "rate_limit_per_minute": 4,
         },
         {
             "name": "AbuseIPDB",
             "key_configured": bool(settings.ABUSEIPDB_API_KEY),
-            "enabled": bool(settings.ABUSEIPDB_API_KEY),
-            "status": "ready" if settings.ABUSEIPDB_API_KEY else "missing_key",
             "supported_inputs": ["ip"],
+            "daily_limit": 1000,
+            "rate_limit_per_minute": 20,
         },
         {
             "name": "Shodan",
             "key_configured": bool(settings.SHODAN_API_KEY),
-            "enabled": bool(settings.SHODAN_API_KEY),
-            "status": "ready" if settings.SHODAN_API_KEY else "missing_key",
             "supported_inputs": ["ip"],
+            "daily_limit": 500,
+            "rate_limit_per_minute": 10,
         },
         {
             "name": "URLScan.io",
             "key_configured": bool(settings.URLSCAN_API_KEY),
-            "enabled": bool(settings.URLSCAN_API_KEY),
-            "status": "ready" if settings.URLSCAN_API_KEY else "missing_key",
             "supported_inputs": ["url", "domain"],
+            "daily_limit": 1000,
+            "rate_limit_per_minute": 15,
         },
         {
             "name": "Hybrid Analysis",
             "key_configured": bool(settings.HYBRIDANALYSIS_API_KEY),
-            "enabled": bool(settings.HYBRIDANALYSIS_API_KEY),
-            "status": "ready" if settings.HYBRIDANALYSIS_API_KEY else "missing_key",
             "supported_inputs": ["file_hash"],
+            "daily_limit": 200,
+            "rate_limit_per_minute": 3,
         },
     ]
+
+    alias_map = {
+        "virustotal": "VirusTotal",
+        "virus_total": "VirusTotal",
+        "vt": "VirusTotal",
+        "abuseipdb": "AbuseIPDB",
+        "shodan": "Shodan",
+        "urlscan": "URLScan.io",
+        "urlscan.io": "URLScan.io",
+        "hybridanalysis": "Hybrid Analysis",
+        "hybrid_analysis": "Hybrid Analysis",
+        "hybrid analysis": "Hybrid Analysis",
+    }
+
+    now = datetime.utcnow()
+    since_24h = now - timedelta(days=1)
+    since_1m = now - timedelta(minutes=1)
+
+    usage_daily = defaultdict(int)
+    usage_minute = defaultdict(int)
+
+    result = await db.execute(
+        select(ScanHistory)
+        .where(ScanHistory.scan_timestamp >= since_24h)
+        .order_by(desc(ScanHistory.scan_timestamp))
+        .limit(5000)
+    )
+    scans = result.scalars().all()
+
+    for scan in scans:
+        ts = scan.scan_timestamp or now
+        analysis = scan.analysis_data if isinstance(scan.analysis_data, dict) else {}
+        api_results = analysis.get("api_results") if isinstance(analysis, dict) else {}
+        if not isinstance(api_results, dict):
+            continue
+
+        called = set()
+
+        apis_called = api_results.get("apis_called")
+        if isinstance(apis_called, list):
+            for name in apis_called:
+                n = alias_map.get(str(name or "").strip().lower())
+                if n:
+                    called.add(n)
+
+        api_status = api_results.get("api_status")
+        if isinstance(api_status, dict):
+            for key, entry in api_status.items():
+                mapped = alias_map.get(str(key or "").strip().lower())
+                if mapped:
+                    called.add(mapped)
+                    continue
+                if isinstance(entry, dict):
+                    mapped_by_name = alias_map.get(str(entry.get("name") or "").strip().lower())
+                    if mapped_by_name:
+                        called.add(mapped_by_name)
+
+        for key in ("virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"):
+            if key in api_results and api_results.get(key) is not None:
+                mapped = alias_map.get(key)
+                if mapped:
+                    called.add(mapped)
+
+        for service_name in called:
+            usage_daily[service_name] += 1
+            if ts >= since_1m:
+                usage_minute[service_name] += 1
+
+    payload = []
+    for spec in service_specs:
+        name = spec["name"]
+        key_configured = bool(spec["key_configured"])
+        daily_limit = int(spec["daily_limit"])
+        rpm_limit = int(spec["rate_limit_per_minute"])
+        daily_used = int(usage_daily.get(name, 0))
+        minute_used = int(usage_minute.get(name, 0))
+
+        if not key_configured:
+            status = "missing_key"
+            live = False
+        elif daily_used >= daily_limit:
+            status = "quota_exceeded"
+            live = False
+        elif minute_used >= rpm_limit:
+            status = "rate_limited"
+            live = False
+        else:
+            status = "ready"
+            live = True
+
+        payload.append(
+            {
+                "name": name,
+                "key_configured": key_configured,
+                "enabled": key_configured,
+                "status": status,
+                "live": live,
+                "supported_inputs": spec["supported_inputs"],
+                "daily_used": daily_used,
+                "daily_limit": daily_limit,
+                "daily_remaining": max(0, daily_limit - daily_used),
+                "rate_limit_per_minute": rpm_limit,
+                "minute_used": minute_used,
+                "usage": {
+                    "used": daily_used,
+                    "limit": daily_limit,
+                    "remaining": max(0, daily_limit - daily_used),
+                    "minute_used": minute_used,
+                    "rate_limit_per_minute": rpm_limit,
+                },
+                "last_checked": now.isoformat(),
+            }
+        )
+
+    return payload
 
 
 @router.get("/reports")

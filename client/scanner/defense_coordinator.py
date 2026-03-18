@@ -151,7 +151,8 @@ class DefenseCoordinator:
             logger.debug(f"Suppressing low-severity attack: {severity} from {source_ip}")
             return
         
-        attack_id = self._generate_attack_id(attack)
+        matching_attack_id = self._find_matching_attack(attack)
+        attack_id = matching_attack_id or self._generate_attack_id(attack)
         
         # Add to active attacks
         if attack_id not in self.active_attacks:
@@ -173,10 +174,30 @@ class DefenseCoordinator:
                 daemon=True
             )
             alert_thread.start()
+        else:
+            existing = self.active_attacks[attack_id]
+            existing.update({k: v for k, v in attack.items() if v not in (None, '', [])})
+            existing['last_seen'] = datetime.now()
+            logger.debug(f"Merged duplicate attack into active incident: {attack_id}")
 
     def _generate_attack_id(self, attack: Dict) -> str:
         """Generate unique ID for an attack"""
         return f"{attack['type']}_{attack.get('source_ip', 'UNKNOWN')}_{attack['timestamp'].strftime('%Y%m%d%H%M%S')}"
+
+    def _find_matching_attack(self, attack: Dict) -> Optional[str]:
+        """Reuse an existing active incident for repeated detections from the same source."""
+        attack_type = attack.get('type')
+        source_ip = attack.get('source_ip', 'UNKNOWN')
+        now = datetime.now()
+        for attack_id, existing in self.active_attacks.items():
+            if existing.get('type') != attack_type:
+                continue
+            if existing.get('source_ip', 'UNKNOWN') != source_ip:
+                continue
+            first_seen = existing.get('first_seen')
+            if isinstance(first_seen, datetime) and (now - first_seen).total_seconds() <= self.RESPONSE_TIMEOUT:
+                return attack_id
+        return None
 
     def _alert_loop(self, attack_id: str):
         """Alert loop for a specific attack"""
