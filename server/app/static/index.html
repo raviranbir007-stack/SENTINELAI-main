@@ -2781,7 +2781,10 @@
         <div class="card card-cyber" style="max-width: 1200px; width: 90%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2 style="margin: 0;">All Threats Detected</h2>
-                <button onclick="closeAllThreats()" class="icon-btn">✖️</button>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <button onclick="markAllThreatsRead()" class="btn btn-outline btn-sm" style="padding: 0.35rem 0.65rem;">Mark All Threats Read</button>
+                    <button onclick="closeAllThreats()" class="icon-btn">✖️</button>
+                </div>
             </div>
             <div id="allThreatsContent">
                 <div class="table-shell">
@@ -2983,6 +2986,7 @@
             threatsPageCollapsed: false,
             reportsPageCollapsed: false,
             lastThreatReviewAt: 0,
+            threatReviewSuppressedUntil: 0,
         };
         let isPageVisible = true;
         let panelState = {
@@ -3068,6 +3072,11 @@
         let threatFeedPrimed = false;
         let heartbeatActionRunning = false;
         let liveIncidentRefreshTimer = null;
+        let lastIncidentRefreshRunAt = 0;
+        let incidentRefreshInFlight = false;
+        let incidentRefreshQueued = false;
+        let liveActivityRefreshInFlight = false;
+        let lastLiveActivityRefreshAt = 0;
         let activeSecurityPrompt = null;
         let securityPromptQueue = [];
         let logStreamHandle = null;
@@ -3075,6 +3084,7 @@
         let systemStatusRendering = false;
         let globalQuarantineInProgress = false;
         let promptSuppressedByQuarantine = false;
+        const THREAT_REVIEW_SUPPRESSION_MS = 10 * 60 * 1000;
         const PROMPT_ESCALATION_UNANSWERED_THRESHOLD = 5;
         const PROMPT_ESCALATION_BLOCK_THRESHOLD = 5;
         const securityEscalationState = {
@@ -4345,7 +4355,9 @@
         }
 
         function acknowledgeThreatCenterReview() {
-            uiState.lastThreatReviewAt = Date.now();
+            const now = Date.now();
+            uiState.lastThreatReviewAt = now;
+            uiState.threatReviewSuppressedUntil = now + THREAT_REVIEW_SUPPRESSION_MS;
             persistUIState();
 
             threats.forEach(threat => {
@@ -4364,6 +4376,14 @@
             persistNotifications();
             updateNotificationBadge();
             updateSystemStatusPanel();
+        }
+
+        function markAllThreatsRead() {
+            acknowledgeThreatCenterReview();
+            renderThreats();
+            renderThreats('allThreatsPageTableBody');
+            renderThreats('allThreatsModalTableBody');
+            showToast('All threats marked as reviewed', 'success');
         }
 
         function openThreatDetailModal(threat, detail = null) {
@@ -4657,6 +4677,8 @@
             const totalApis = apis.length || 1;
             const reviewCutoffMs = toFiniteNumber(uiState.lastThreatReviewAt, 0);
             const nowMs = Date.now();
+            const reviewSuppressedUntilMs = toFiniteNumber(uiState.threatReviewSuppressedUntil, 0);
+            const threatReviewSuppressed = reviewSuppressedUntilMs > nowMs;
             const logWindowMs = 15 * 60 * 1000;
             const threatWindowMs = 20 * 60 * 1000;
             const parseMs = (value) => {
@@ -4665,6 +4687,7 @@
             };
 
             const unreadHighPriority = notifications.filter(n => {
+                if (threatReviewSuppressed) return false;
                 if (n?.read || !['warning', 'error'].includes(String(n?.level || '').toLowerCase())) return false;
                 if (!reviewCutoffMs) return true;
                 const createdMs = parseMs(n?.createdAt || n?.timestamp || n?.time);
@@ -4678,8 +4701,16 @@
                 if (reviewCutoffMs && ts <= reviewCutoffMs) return false;
                 return true;
             });
-            const recentCriticalLogs = recentLogsOnly.filter(log => ['critical', 'error'].includes(String(log.level || '').toLowerCase())).length;
-            const recentWarningLogs = recentLogsOnly.filter(log => String(log.level || '').toLowerCase() === 'warning').length;
+            const isSecurityPressureLog = (log) => {
+                const component = String(log?.component || '').toLowerCase();
+                const message = String(log?.message || '').toLowerCase();
+                if (component.includes('defense') || component.includes('attack') || component.includes('intrusion') || component.includes('threat')) return true;
+                return /attack|threat|intrusion|quarantine|malicious|ddos|exploit|block(ed)?/.test(message);
+            };
+            const recentCriticalLogs = recentLogsOnly.filter(log => isSecurityPressureLog(log) && ['critical', 'error'].includes(String(log.level || '').toLowerCase())).length;
+            const recentWarningLogs = recentLogsOnly.filter(log => isSecurityPressureLog(log) && String(log.level || '').toLowerCase() === 'warning').length;
+            const effectiveRecentCriticalLogs = threatReviewSuppressed ? 0 : recentCriticalLogs;
+            const effectiveRecentWarningLogs = threatReviewSuppressed ? 0 : recentWarningLogs;
 
             const recentThreatsOnly = threats.filter((threat) => {
                 const ts = parseMs(threat?.timestamp);
@@ -4703,8 +4734,8 @@
             const pulsePenalty = (criticalThreats * 24)
                 + (highThreats * 12)
                 + (mediumThreats * 6)
-                + (recentCriticalLogs * 14)
-                + (recentWarningLogs * 4)
+                + (effectiveRecentCriticalLogs * 14)
+                + (effectiveRecentWarningLogs * 4)
                 + (unreadHighPriority * 3)
                 + Math.max(0, (totalApis - onlineCount) * 5);
             const pulseScore = Math.max(8, Math.min(99, 99 - pulsePenalty));
@@ -4831,7 +4862,7 @@
                 return severity === 'critical' && threatId && !isThreatViewed(threatId);
             }).length;
 
-            if (unviewedCriticalThreats > 0 || recentCriticalLogs > 0) {
+            if (unviewedCriticalThreats > 0 || effectiveRecentCriticalLogs > 0) {
                 const waveform = buildWaveform('danger');
                 return {
                     level: 'danger',
@@ -4864,7 +4895,7 @@
                 };
             }
 
-            if (highThreats > 0 || mediumThreats > 0 || unreadHighPriority > 0 || recentWarningLogs > 0 || onlineCount < totalApis) {
+            if (highThreats > 0 || mediumThreats > 0 || unreadHighPriority > 0 || effectiveRecentWarningLogs > 0) {
                 const waveform = buildWaveform('warning');
                 return {
                     level: 'warning',
@@ -5416,19 +5447,50 @@
             if (liveIncidentRefreshTimer) {
                 clearTimeout(liveIncidentRefreshTimer);
             }
+
+            const MIN_INCIDENT_REFRESH_GAP_MS = 5000;
+            const now = Date.now();
+            const waitForGap = Math.max(0, MIN_INCIDENT_REFRESH_GAP_MS - (now - lastIncidentRefreshRunAt));
+
             liveIncidentRefreshTimer = setTimeout(() => {
                 liveIncidentRefreshTimer = null;
+                if (incidentRefreshInFlight) {
+                    incidentRefreshQueued = true;
+                    return;
+                }
+
+                incidentRefreshInFlight = true;
+                lastIncidentRefreshRunAt = Date.now();
                 Promise.allSettled([
                     fetchDashboardStats(),
                     fetchThreats(),
                     fetchLogs(),
                     fetchQuarantineInventory(),
-                ]).finally(() => updateSystemStatusPanel());
-            }, Math.max(150, Number(delayMs || 0)));
+                ]).finally(() => {
+                    incidentRefreshInFlight = false;
+                    updateSystemStatusPanel();
+                    if (incidentRefreshQueued) {
+                        incidentRefreshQueued = false;
+                        scheduleIncidentRefresh(MIN_INCIDENT_REFRESH_GAP_MS);
+                    }
+                });
+            }, Math.max(350, Number(delayMs || 0), waitForGap));
         }
 
         function buildSecurityPromptPayloadFromThreat(threat) {
             if (!threat) return null;
+            const promptActionable = threat.prompt_actionable;
+            if (promptActionable === false) return null;
+
+            const scanSource = String(threat.scan_source || '').toLowerCase();
+            if (scanSource === 'manual') return null;
+
+            const source = String(threat.source || '').toLowerCase();
+            const type = String(threat.type || threat.attack_type || '').toLowerCase();
+            const eventKind = String(threat.event_kind || '').toLowerCase();
+            const isIncidentLike = /attack|intrusion|ddos|brute|hydra|nmap|metasploit|exploit|quarantine|alert/.test(`${type} ${eventKind} ${source}`);
+            if (!isIncidentLike) return null;
+
             const severity = String(threat.severity || '').toLowerCase();
             if (!['critical', 'high'].includes(severity)) return null;
 
@@ -5457,6 +5519,7 @@
                     timestamp: threat.timestamp || null,
                     severity,
                     threat_type: threat.type || threat.attack_type || null,
+                    scan_source: threat.scan_source || null,
                 },
             };
         }
@@ -5464,6 +5527,11 @@
         function buildSecurityPromptPayloadFromLog(log) {
             const details = asObject(log?.details) || {};
             const payload = asObject(details.payload) || {};
+            const component = String(log?.component || '').toLowerCase();
+            if (!['defense_event', 'defense_response', 'nids_ingestion'].includes(component)) {
+                return null;
+            }
+
             const severity = String(details.severity || log?.level || '').toLowerCase();
             if (!['critical', 'high', 'warning', 'error'].includes(severity) && !['warning', 'error', 'critical'].includes(String(log?.level || '').toLowerCase())) {
                 return null;
@@ -6915,7 +6983,13 @@
         }
 
         async function refreshLiveActivity() {
+            const now = Date.now();
+            const LIVE_ACTIVITY_MIN_GAP_MS = 4000;
+            if (liveActivityRefreshInFlight) return;
+            if ((now - lastLiveActivityRefreshAt) < LIVE_ACTIVITY_MIN_GAP_MS) return;
+
             const executeRefresh = async () => {
+                liveActivityRefreshInFlight = true;
                 const cacheBuster = Date.now();
                 const [wsData, actData] = await Promise.allSettled([
                     apiRequest(`${API_ENDPOINTS.monitoringWebsites}?limit=50&_=${cacheBuster}`),
@@ -6940,6 +7014,7 @@
                     throw new Error(`${wsErr}; ${actErr}`);
                 }
 
+                lastLiveActivityRefreshAt = Date.now();
                 updateSourceSignal('monitor', { ok: true, dataTimestamp: Date.now() });
             };
 
@@ -6953,6 +7028,8 @@
             } catch (e) {
                 console.warn('Live activity refresh failed:', e);
                 updateSourceSignal('monitor', { ok: false, error: e?.message || 'live_activity_refresh_failed' });
+            } finally {
+                liveActivityRefreshInFlight = false;
             }
         }
 

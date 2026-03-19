@@ -4,6 +4,7 @@ Shows real-time activity monitoring summaries on server terminal
 """
 
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -22,13 +23,13 @@ class TerminalActivityMonitor:
     Shows short summaries while the server is running
     """
     
-    def __init__(self, update_interval: int = 60):
+    def __init__(self, update_interval: int = 3600):
         self.update_interval = update_interval  # Seconds between updates
         self.running = False
         self.monitor_thread = None
         
         # Activity counters
-        self.activity_buffer: Deque[Dict] = deque(maxlen=1000)
+        self.activity_buffer: Deque[Dict] = deque(maxlen=5000)
         self.stats = {
             'websites_monitored': 0,
             'apps_monitored': 0,
@@ -57,6 +58,54 @@ class TerminalActivityMonitor:
         
         self.start_time = datetime.now(timezone.utc)
         self._last_status_latest = ""
+
+    def _record_activity(self, activity_type: str, **payload):
+        """Store recent activity for rolling coverage summaries."""
+        self.activity_buffer.append({
+            'type': str(activity_type or 'activity'),
+            'time': datetime.now(timezone.utc),
+            **payload,
+        })
+
+    def _coverage_events(self, now: datetime) -> list[Dict]:
+        """Return events seen within the current coverage window."""
+        cutoff = now - timedelta(seconds=self.update_interval)
+        return [event for event in self.activity_buffer if event.get('time') and event['time'] >= cutoff]
+
+    def _format_relative_time(self, now: datetime, event_time: datetime | None) -> str:
+        """Format a short relative time label."""
+        if not event_time:
+            return "No activity in window"
+
+        delta = max(0, int((now - event_time).total_seconds()))
+        if delta < 60:
+            return f"{delta}s ago"
+        if delta < 3600:
+            return f"{int(delta / 60)}m ago"
+        return f"{int(delta / 3600)}h ago"
+
+    def _latest_coverage_label(self, events: list[Dict]) -> str:
+        """Build the latest activity label from the current coverage window."""
+        if not events:
+            return "No new target in coverage window"
+
+        latest_event = events[-1]
+        event_type = str(latest_event.get('type') or '').lower()
+
+        if event_type == 'attack':
+            return str(latest_event.get('attack_type') or 'Unknown attack').replace('_', ' ').title()
+        if event_type == 'threat':
+            return str(latest_event.get('artifact_type') or 'Threat').upper()
+        if event_type == 'website':
+            return self._compact_target(str(latest_event.get('domain') or 'activity'))
+        if event_type == 'app':
+            return str(latest_event.get('app_name') or 'Application activity')
+        if event_type == 'scan':
+            return f"Scan · {str(latest_event.get('artifact_type') or 'artifact').upper()}"
+        if event_type == 'connection':
+            return 'Network connection activity'
+
+        return 'Recent monitored activity'
         
     def start(self):
         """Start terminal monitoring"""
@@ -81,6 +130,7 @@ class TerminalActivityMonitor:
         """Log website activity"""
         self.stats['websites_monitored'] += 1
         self.stats['last_activity_time'] = datetime.now(timezone.utc)
+        self._record_activity('website', domain=domain, risk_level=risk_level)
         
         activity = f"{domain} [{risk_level}]"
         if activity not in self.recent_websites:
@@ -90,6 +140,7 @@ class TerminalActivityMonitor:
         """Log application activity"""
         self.stats['apps_monitored'] += 1
         self.stats['last_activity_time'] = datetime.now(timezone.utc)
+        self._record_activity('app', app_name=app_name, risk_level=risk_level)
         
         activity = f"{app_name} [{risk_level}]"
         if activity not in self.recent_apps:
@@ -99,6 +150,7 @@ class TerminalActivityMonitor:
         """Log network connection"""
         self.stats['connections_monitored'] += 1
         self.stats['last_activity_time'] = datetime.now(timezone.utc)
+        self._record_activity('connection')
     
     def log_scan_activity(self, artifact_type: str, artifact_value: str, verdict: str):
         """Log threat scan activity"""
@@ -107,6 +159,12 @@ class TerminalActivityMonitor:
 
         normalized_type = str(artifact_type or '').lower()
         normalized_verdict = str(verdict or '').lower()
+        self._record_activity(
+            'scan',
+            artifact_type=artifact_type,
+            artifact_value=artifact_value,
+            verdict=normalized_verdict,
+        )
 
         # Suppress noisy single-signal IP suspicious events from terminal threat ticker.
         # These are already handled by deeper corroboration paths.
@@ -115,6 +173,12 @@ class TerminalActivityMonitor:
         
         if normalized_verdict in ['malicious', 'suspicious', 'critical']:
             self.stats['threats_detected'] += 1
+            self._record_activity(
+                'threat',
+                artifact_type=artifact_type,
+                artifact_value=artifact_value,
+                verdict=normalized_verdict,
+            )
             self.recent_threats.append({
                 'type': artifact_type,
                 'value': artifact_value,
@@ -144,6 +208,13 @@ class TerminalActivityMonitor:
             'description': str(description or ''),
             'time': datetime.now(timezone.utc),
         }
+        self._record_activity(
+            'attack',
+            attack_type=attack['type'],
+            source=attack['source'],
+            severity=attack['severity'],
+            description=attack['description'],
+        )
         self.recent_attacks.append(attack)
 
         readable_type = attack['type'].replace('_', ' ').strip().title()
@@ -190,8 +261,8 @@ class TerminalActivityMonitor:
             "🛡️ SENTINEL-AI ACTIVITY MONITOR",
             [
                 ("State", "Online"),
-                ("Update Interval", f"{self.update_interval}s"),
-                ("Mode", "Live monitoring"),
+                ("Report Window", self._humanize_interval(self.update_interval)),
+                ("Mode", "Hourly coverage summary"),
             ],
         )
         sys.stdout.flush()
@@ -235,42 +306,33 @@ class TerminalActivityMonitor:
 
         now = datetime.now(timezone.utc)
         uptime_delta = now - self.start_time
+        if uptime_delta.total_seconds() < self.update_interval:
+            return
+
         uptime_str = self._compact_duration(uptime_delta)
 
-        last_str = "–"
-        if self.stats['last_activity_time']:
-            delta = (now - self.stats['last_activity_time']).total_seconds()
-            if delta < 60:
-                last_str = f"{int(delta)}s ago"
-            elif delta < 3600:
-                last_str = f"{int(delta / 60)}m ago"
-            else:
-                last_str = f"{int(delta / 3600)}h ago"
+        coverage_events = self._coverage_events(now)
+        scans_in_window = sum(1 for event in coverage_events if event.get('type') == 'scan')
+        threats_in_window = sum(1 for event in coverage_events if event.get('type') in {'threat', 'attack'} and (
+            event.get('type') == 'attack' or str(event.get('verdict') or '').lower() in {'malicious', 'suspicious', 'critical'}
+        ))
+        attacks_in_window = sum(1 for event in coverage_events if event.get('type') == 'attack')
+        latest_event_time = coverage_events[-1]['time'] if coverage_events else None
+        last_str = self._format_relative_time(now, latest_event_time)
 
-        delta_scans = max(0, self.stats['scans_performed'] - self.last_printed_stats['scans_performed'])
-
-        latest = ""
-        if self.recent_attacks:
-            a = self.recent_attacks[-1]
-            latest = f" · {a['type'].replace('_', ' ').title()}"
-        elif self.recent_threats:
-            t = self.recent_threats[-1]
-            latest = f" · {t['type'].upper()}"
-        elif self.recent_websites:
-            site = self.recent_websites[-1].split(' [')[0]
-            latest = f" · {self._compact_target(site)}"
-
-        latest_label = latest.strip(" ·") if latest else "No new target"
+        latest = self._latest_coverage_label(coverage_events)
+        latest_label = latest if latest else "No new target in coverage window"
         if latest and latest != self._last_status_latest:
             self._last_status_latest = latest
 
         self._render_console_table(
-            "◈ LIVE MONITOR STATUS",
+            f"◈ MONITOR STATUS · LAST {self._humanize_interval(self.update_interval).upper()}",
             [
+                ("Coverage", self._humanize_interval(self.update_interval)),
                 ("Uptime", uptime_str),
-                ("Scans", f"{self.stats['scans_performed']} (+{delta_scans})"),
-                ("Threats", self.stats['threats_detected']),
-                ("Attacks", self.stats['attack_events']),
+                ("Scans", scans_in_window),
+                ("Threats", threats_in_window),
+                ("Attacks", attacks_in_window),
                 ("Last Activity", last_str),
                 ("Latest", latest_label),
             ],
@@ -320,6 +382,19 @@ class TerminalActivityMonitor:
         return f"{seconds}s"
 
     @staticmethod
+    def _humanize_interval(seconds: int) -> str:
+        total_seconds = max(0, int(seconds or 0))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours and minutes:
+            return f"{hours}h {minutes}m"
+        if hours:
+            return f"{hours}h"
+        if minutes:
+            return f"{minutes}m"
+        return f"{secs}s"
+
+    @staticmethod
     def _compact_target(value: str) -> str:
         text = str(value or '').strip()
         if not text:
@@ -352,5 +427,7 @@ class TerminalActivityMonitor:
         sys.stdout.flush()
 
 
-# Global instance (quiet-by-default cadence)
-terminal_monitor = TerminalActivityMonitor(update_interval=60)
+# Global instance (hourly coverage summaries by default)
+terminal_monitor = TerminalActivityMonitor(
+    update_interval=max(60, int(os.getenv('SENTINEL_MONITOR_STATUS_INTERVAL', '3600') or 3600))
+)

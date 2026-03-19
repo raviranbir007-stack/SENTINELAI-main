@@ -1081,6 +1081,9 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "location": "Endpoint Scan Pipeline",
             "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
             "status": "active",
+            "scan_source": scan.scan_source or "manual",
+            "event_kind": "MANUAL_SCAN_RESULT",
+            "prompt_actionable": False,
         })
 
     # IDS/defense attack events
@@ -1121,6 +1124,8 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "prediction_summary": indicators.get("prediction_summary"),
             "predicted_next_step": indicators.get("predicted_next_step"),
             "prediction_confidence": indicators.get("prediction_confidence"),
+            "event_kind": indicators.get("event_kind") or "ATTACK_ALERT",
+            "prompt_actionable": True,
         })
 
     # Fallback mapping from structured defense logs to threat cards so dashboard
@@ -1169,6 +1174,8 @@ async def get_threats(db: AsyncSession = Depends(get_db)):
             "mitigation_commands": details.get("payload", {}).get("mitigation_commands") if isinstance(details.get("payload"), dict) else [],
             "recommended_action": details.get("reason") or "Review and respond from dashboard",
             "client_id": details.get("client_id"),
+            "event_kind": event_name,
+            "prompt_actionable": True,
         })
         existing_ids.add(log_id)
 

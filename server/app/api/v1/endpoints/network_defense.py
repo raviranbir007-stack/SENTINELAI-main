@@ -5,6 +5,7 @@ Tracks attacks across all client installations and implements defense mechanisms
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -222,6 +223,39 @@ def _derive_target_type(target: Optional[str], explicit: Optional[str] = None) -
     if "." in target_text and any(ch.isalpha() for ch in target_text):
         return "domain"
     return "indicator"
+
+
+def _sanitize_response_text(value: Optional[str], max_len: int = 512) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    return text[:max_len]
+
+
+def _sanitize_response_metadata(metadata: Optional[dict], max_items: int = 24) -> dict:
+    if not isinstance(metadata, dict):
+        return {}
+    sanitized: dict = {}
+    for idx, (raw_key, raw_val) in enumerate(metadata.items()):
+        if idx >= max_items:
+            break
+        key = _sanitize_response_text(raw_key, max_len=64)
+        if not key:
+            continue
+        if isinstance(raw_val, (str, int, float, bool)) or raw_val is None:
+            sanitized[key] = raw_val if not isinstance(raw_val, str) else _sanitize_response_text(raw_val, max_len=512)
+        elif isinstance(raw_val, dict):
+            sanitized[key] = _sanitize_response_metadata(raw_val, max_items=12)
+        elif isinstance(raw_val, list):
+            compact_list = []
+            for item in raw_val[:12]:
+                if isinstance(item, (str, int, float, bool)) or item is None:
+                    compact_list.append(item if not isinstance(item, str) else _sanitize_response_text(item, max_len=256))
+            sanitized[key] = compact_list
+    return sanitized
 
 
 @router.post("/client/register")
@@ -767,7 +801,7 @@ async def respond_to_defense_event(
             if client:
                 client_fk = client.id
 
-        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        metadata = _sanitize_response_metadata(request.metadata)
 
         req_target_type = str(request.target_type or "").strip().lower()
         req_target_text = str(request.target or "").strip().lower()
@@ -785,7 +819,7 @@ async def respond_to_defense_event(
             attack_res = await db.execute(select(AttackEvent).where(AttackEvent.event_id == attack_lookup_id))
             attack = attack_res.scalar_one_or_none()
 
-        target = request.target or (attack.source_ip if attack else None) or (attack.source_domain if attack else None)
+        target = _sanitize_response_text(request.target, max_len=320) or (attack.source_ip if attack else None) or (attack.source_domain if attack else None)
         target_type = _derive_target_type(target, request.target_type)
         if is_global_quarantine:
             target = "SYSTEM_ALL"
@@ -807,7 +841,7 @@ async def respond_to_defense_event(
             target=target or request.client_id or request.event_id or "unknown",
             details={
                 "requested_action": action,
-                "reason": request.reason or f"Dashboard action: {action}",
+                "reason": _sanitize_response_text(request.reason, max_len=512) or f"Dashboard action: {action}",
                 "metadata": metadata,
                 "target_type": target_type,
                 "scope": "system-wide" if is_global_quarantine else "targeted",
@@ -895,7 +929,7 @@ async def respond_to_defense_event(
                     "target": target,
                     "target_type": target_type,
                     "successful": successful,
-                    "reason": request.reason,
+                    "reason": _sanitize_response_text(request.reason, max_len=512),
                     "metadata": metadata,
                     "scope": "system-wide" if is_global_quarantine else "targeted",
                     "affected_attack_events": affected_attack_events,
