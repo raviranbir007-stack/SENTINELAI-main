@@ -1982,7 +1982,7 @@
                         </div>
                         <div class="scan-helper">Supports IPs, domains, URLs, and hashes. Results appear below and in scan history.</div>
                         
-                        <div class="quick-stats">
+                        <div class="quick-stats" id="quickStatsRow" style="display:none !important;" aria-hidden="true">
                             <div class="stat">
                                 <div class="stat-value primary font-mono" id="scansToday">0</div>
                                 <div class="stat-label">Total Scans</div>
@@ -2018,7 +2018,7 @@
 
                         <div class="live-signal-strip" id="liveSignalStrip">
                             <div class="live-signal-head">
-                                <div class="live-signal-title">Continuous Heartbeat Security Monitoring</div>
+                                <div class="live-signal-title">Continuous Security Telemetry Monitoring</div>
                                 <span class="freshness-pill normal" id="globalFreshnessPill">NORMAL</span>
                             </div>
                             <div class="live-signal-grid">
@@ -2092,7 +2092,7 @@
                         <div class="heartbeat-panel">
                             <div class="heartbeat-overview">
                                 <div class="heartbeat-side">
-                                    <div class="heartbeat-side-title">Overall Security Pulse</div>
+                                    <div class="heartbeat-side-title">Overall Security Health</div>
                                     <div class="pulse-meter" id="pulseMeter">
                                         <div class="pulse-meter-text">
                                             <div>
@@ -2111,7 +2111,7 @@
 
                                 <div class="heartbeat-main">
                                     <div class="heartbeat-head">
-                                        <div class="heartbeat-title">System Heartbeat</div>
+                                        <div class="heartbeat-title">System Live Status</div>
                                         <div class="heartbeat-status" id="heartbeatStatus">
                                             <span class="heartbeat-dot"></span>
                                             <span id="heartbeatStatusText">Normal</span>
@@ -2236,12 +2236,12 @@
             </div>
         </section>
 
-        <!-- System Health Pulse Section -->
+        <!-- System Health Overview Section -->
         <section class="section">
             <div class="container">
                 <div class="section-header">
                     <div>
-                        <h2>⚙️ System Health Pulse</h2>
+                        <h2>⚙️ System Health Overview</h2>
                         <p>API, database, ingestion and AI/ML readiness from live backend checks</p>
                     </div>
                     <button id="refreshSystemHealthBtn" class="btn btn-outline btn-sm" onclick="fetchSystemHealth()" title="Refresh system health">↺ Refresh</button>
@@ -6093,7 +6093,8 @@
                         + Number(statsObj.domains_scanned || 0)
                     )
                 );
-                document.getElementById('scansToday').textContent = totalScans;
+                const manualTotalScans = Number(statsObj.manual_total_scans ?? totalScans);
+                document.getElementById('scansToday').textContent = manualTotalScans;
 
                 const criticalThreats = Number(statsObj.critical_threats || 0);
                 const highThreats = Number(statsObj.high_threats || 0);
@@ -6101,7 +6102,8 @@
                 const lowThreats = Number(statsObj.low_threats || 0);
                 const cleanScans = Number(statsObj.clean_scans || 0);
                 const activeThreats = Number(statsObj.active_threats ?? (criticalThreats + highThreats + mediumThreats + lowThreats));
-                document.getElementById('threatsFound').textContent = activeThreats;
+                const manualThreatsDetected = Number(statsObj.manual_threats_detected ?? activeThreats);
+                document.getElementById('threatsFound').textContent = manualThreatsDetected;
 
                 const coveredAssets = Number(statsObj.files_scanned || 0)
                     + Number(statsObj.urls_scanned || 0)
@@ -6109,7 +6111,9 @@
                     + Number(statsObj.hashes_scanned || 0)
                     + Number(statsObj.domains_scanned || 0);
 
-                const detectionRate = totalScans > 0 ? Math.min(100, (activeThreats / totalScans) * 100) : 0;
+                const detectionRate = Number.isFinite(Number(statsObj.detection_rate_pct))
+                    ? Number(statsObj.detection_rate_pct)
+                    : (manualTotalScans > 0 ? Math.min(100, (manualThreatsDetected / manualTotalScans) * 100) : 0);
                 const detectionRateEl = document.getElementById('detectionRate');
                 if (detectionRateEl) detectionRateEl.textContent = `${detectionRate.toFixed(1)}%`;
                 const criticalEl = document.getElementById('overviewCritical');

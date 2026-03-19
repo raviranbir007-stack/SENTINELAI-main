@@ -16,7 +16,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 
 from ..config import settings
 from ..core.report_generator import report_generator
@@ -936,10 +936,15 @@ async def get_scan_detail(scan_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/dashboard/stats")
 async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     """Get dashboard statistics (compatibility endpoint)."""
-    result = await db.execute(select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(1000))
+    result = await db.execute(select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)))
     scans = result.scalars().all()
     attack_result = await db.execute(select(AttackEvent).order_by(desc(AttackEvent.detected_at)).limit(1000))
     attacks = attack_result.scalars().all()
+
+    manual_total_result = await db.execute(
+        select(func.count(ScanHistory.id)).where(ScanHistory.scan_source == "manual")
+    )
+    manual_total_scans = int(manual_total_result.scalar() or 0)
 
     stats = {
         "critical_threats": 0,
@@ -950,6 +955,10 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         "urls_scanned": 0,
         "ips_scanned": 0,
         "total_scans": len(scans),
+        "manual_total_scans": manual_total_scans,
+        "manual_threats_detected": 0,
+        "manual_clean_scans": 0,
+        "detection_rate_pct": 0.0,
         "attack_events": len(attacks),
         "total_events": len(scans) + len(attacks),
         "active_threats": 0,
@@ -957,6 +966,8 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
 
     for scan in scans:
         level = (scan.threat_level or "unknown").lower()
+        is_manual = (scan.scan_source or "manual") == "manual"
+
         if level in ["malicious", "critical"]:
             stats["critical_threats"] += 1
         elif level in ["suspicious", "high"]:
@@ -977,6 +988,12 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         if level in ["malicious", "critical", "suspicious", "high"]:
             stats["active_threats"] += 1
 
+        if is_manual:
+            if level in ["malicious", "critical", "suspicious", "high"]:
+                stats["manual_threats_detected"] += 1
+            elif level in ["safe", "clean", "low"]:
+                stats["manual_clean_scans"] += 1
+
     for attack in attacks:
         sev = (attack.severity.value if attack.severity else "medium").lower()
         if sev == "critical":
@@ -991,6 +1008,12 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         status = str(attack.status or "detected").lower()
         if status in {"detected", "analyzing", "blocked", "mitigated", "active", "quarantined"}:
             stats["active_threats"] += 1
+
+    if stats["manual_total_scans"] > 0:
+        stats["detection_rate_pct"] = round(
+            (stats["manual_threats_detected"] / stats["manual_total_scans"]) * 100,
+            1,
+        )
 
     return stats
 
