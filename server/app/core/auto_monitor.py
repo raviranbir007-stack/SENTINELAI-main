@@ -864,6 +864,31 @@ class AutomaticActivityMonitor:
                     break
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def _seed_download_baseline(self) -> None:
+        """Record current download files so only new/changed files trigger scans."""
+        seeded = 0
+        now = time.time()
+        for root in self._download_directories():
+            try:
+                for entry in root.iterdir():
+                    try:
+                        if not entry.is_file() or self._is_temporary_download(entry):
+                            continue
+                        stat = entry.stat()
+                        if stat.st_size <= 0 or stat.st_size > self.download_max_file_size:
+                            continue
+                        if (now - stat.st_mtime) < self.download_settle_seconds:
+                            continue
+                        file_key = str(entry.resolve())
+                        self.download_last_seen[file_key] = (int(stat.st_mtime), int(stat.st_size))
+                        seeded += 1
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        if seeded:
+            logger.info("📦 Download baseline seeded (%s files)", seeded)
     
     async def _scan_artifact(
         self,
@@ -1105,7 +1130,7 @@ class AutomaticActivityMonitor:
                         await self._scan_artifact(
                             'file_hash',
                             file_hash,
-                            show_prompt=True,
+                            show_prompt=False,
                             prompt_context=f" [download: {entry.name}]",
                             use_external_apis=True,
                             metadata={
@@ -1488,6 +1513,7 @@ class AutomaticActivityMonitor:
         
         self.running = True
         self.stats['start_time'] = datetime.utcnow()
+        self._seed_download_baseline()
         
         mode = "active+passive" if self.enable_network_monitoring else "passive"
         monitor_home = self._monitor_home_dir()
