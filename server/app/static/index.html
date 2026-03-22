@@ -3012,7 +3012,7 @@
             delayed: 4 * 60 * 1000,
             stale: 7 * 60 * 1000,
         };
-        const CORE_SIGNAL_KEYS = ['stats', 'threats', 'logs', 'apis'];
+        const CORE_SIGNAL_KEYS = ['stats', 'threats', 'logs'];
 
         const API_ENDPOINTS = {
             // Dashboard
@@ -3859,10 +3859,17 @@
                             : (typeof s.is_live === 'boolean')
                                 ? s.is_live
                                 : ['ready', 'online', 'live'].includes(rawStatus);
-                        item.status = !s.key_configured
-                            ? 'offline'
-                            : (live ? 'online' : 'limited');
-                        item.isLive = !!live;
+                        
+                        // Handle unconfigured APIs gracefully
+                        if (rawStatus === 'missing_key') {
+                            item.status = 'offline';
+                            item.isLive = false;
+                        } else {
+                            item.status = !s.key_configured
+                                ? 'offline'
+                                : (live ? 'online' : 'limited');
+                            item.isLive = !!live;
+                        }
 
                         item.lastCheck = s.last_checked
                             ? new Date(s.last_checked).toLocaleTimeString()
@@ -3939,11 +3946,13 @@
                     }
                 }
                 previousConfiguredApis = configuredCount;
+                // Mark API signal as OK if we got a valid response, even if all APIs are unconfigured
                 updateSourceSignal('apis', { ok: true, dataTimestamp: Date.now() });
                 renderAPIs();
                 updateSystemStatusPanel();
             } catch (error) {
-                console.log('Using static API status');
+                console.error('Failed to fetch API status:', error.message);
+                // Only fail the signal if we got a network/server error, not if data is valid
                 updateSourceSignal('apis', { ok: false, error: error?.message || 'api_status_failed' });
                 updateSystemStatusPanel();
             }
