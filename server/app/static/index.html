@@ -3918,7 +3918,8 @@
                 const summary = document.getElementById('apiConnectionSummary');
                 if (summary) {
                     if (statusItems.length > 0) {
-                        summary.textContent = `${configuredCount}/${statusItems.length} APIs Configured`;
+                        const lastRefresh = new Date().toLocaleTimeString();
+                        summary.textContent = `${configuredCount}/${statusItems.length} APIs Configured · Last checked: ${lastRefresh}`;
                     } else {
                         summary.textContent = `${configuredCount}/${apis.length} APIs Configured`;
                     }
@@ -7805,6 +7806,13 @@
                     updateSystemStatusPanel();
                 }
             }, 30000);
+            
+            // Dedicated API status refresh - runs every 20 seconds to ensure 24-hour daily usage resets properly
+            setInterval(() => {
+                if (isPageVisible) {
+                    fetchApiStatus();
+                }
+            }, 20000);
             
             // Fetch and render reports
             try {

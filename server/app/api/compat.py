@@ -1280,11 +1280,17 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
     }
 
     now = datetime.utcnow()
+    # Ensure timezone-aware comparison
     since_24h = now - timedelta(days=1)
     since_1m = now - timedelta(minutes=1)
 
     usage_daily = defaultdict(int)
     usage_minute = defaultdict(int)
+
+    # Debug: Log the time range being queried
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"API Status Query - Now: {now}, Since 24h: {since_24h}")
 
     result = await db.execute(
         select(ScanHistory)
@@ -1293,6 +1299,7 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
         .limit(5000)
     )
     scans = result.scalars().all()
+    logger.debug(f"API Status Query - Found {len(scans)} scans in last 24 hours")
 
     for scan in scans:
         ts = scan.scan_timestamp or now
