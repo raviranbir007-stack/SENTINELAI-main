@@ -759,6 +759,77 @@ class ActivityDatabase:
             logger.error(f"Error getting background stats: {e}")
             return {}
 
+    def get_api_usage_summary(self, hours: int = 24, minute_window: int = 1) -> Dict:
+        """Return API usage counts from automated scans that actually used external APIs."""
+        try:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute(
+                "SELECT scan_time, artifact_type, api_results, metadata FROM threat_scans "
+                "WHERE scan_time > ? AND is_automated=1",
+                (cutoff_str,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+
+            daily_counts: Dict[str, int] = {}
+            minute_counts: Dict[str, int] = {}
+            minute_cutoff = datetime.now(timezone.utc) - timedelta(minutes=minute_window)
+
+            for scan_time, artifact_type, api_results_raw, metadata_raw in rows:
+                try:
+                    metadata = json.loads(metadata_raw or "{}") if metadata_raw else {}
+                except Exception:
+                    metadata = {}
+
+                if not metadata.get("external_api_mode"):
+                    continue
+                if metadata.get("detection_source") != "download_monitor" and artifact_type != "file_hash":
+                    continue
+
+                try:
+                    api_results = json.loads(api_results_raw or "{}") if api_results_raw else {}
+                except Exception:
+                    api_results = {}
+
+                called = api_results.get("apis_called") or []
+                if not isinstance(called, list) or not called:
+                    continue
+
+                parsed_time = None
+                for fmt in (None, "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        if fmt is None:
+                            parsed_time = datetime.fromisoformat(str(scan_time))
+                        else:
+                            parsed_time = datetime.strptime(str(scan_time), fmt)
+                        break
+                    except Exception:
+                        continue
+                if parsed_time is None:
+                    parsed_time = cutoff
+                if parsed_time.tzinfo is None:
+                    parsed_time = parsed_time.replace(tzinfo=timezone.utc)
+
+                for api_name in called:
+                    key = str(api_name or "").strip()
+                    if not key:
+                        continue
+                    daily_counts[key] = daily_counts.get(key, 0) + 1
+                    if parsed_time >= minute_cutoff:
+                        minute_counts[key] = minute_counts.get(key, 0) + 1
+
+            return {
+                "daily": daily_counts,
+                "minute": minute_counts,
+            }
+        except Exception as e:
+            logger.error(f"Error getting automated API usage summary: {e}")
+            return {"daily": {}, "minute": {}}
+
     def get_recent_activity(self, limit: int = 50) -> List[Dict]:
         """Return the most recent background activity entries across all monitored artifact types."""
         try:

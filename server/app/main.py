@@ -238,16 +238,24 @@ async def lifespan(app: FastAPI):
             from app.core.auto_monitor import AutomaticActivityMonitor
             from app.core.threat_analyzer import threat_analyzer
             
-            async def scan_artifact(artifact_type: str, value: str):
+            async def scan_artifact(
+                artifact_type: str,
+                value: str,
+                use_external_apis: bool = False,
+                metadata: dict | None = None,
+            ):
                 """Callback to scan detected artifacts"""
                 try:
                     started = time.perf_counter()
                     scan_timeout = float(os.getenv("SENTINEL_SCAN_TIMEOUT_SECONDS", "20"))
                     result = await asyncio.wait_for(
-                        threat_analyzer.analyze(value, use_external_apis=False),
+                        threat_analyzer.analyze(value, use_external_apis=use_external_apis),
                         timeout=scan_timeout,
                     )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    callback_metadata = {'auto_detected': True, 'external_api_mode': bool(use_external_apis)}
+                    if isinstance(metadata, dict):
+                        callback_metadata.update(metadata)
                     
                     # Log to database
                     corroboration = result.get('corroboration_analysis', {})
@@ -287,7 +295,7 @@ async def lifespan(app: FastAPI):
                         'recommendations': result.get('recommendations', []),
                         'flags': result.get('flags', {}),
                         'is_automated': True,
-                        'metadata': {'auto_detected': True}
+                        'metadata': callback_metadata
                     })
                     
                     # Update terminal monitor

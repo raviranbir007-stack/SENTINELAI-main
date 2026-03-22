@@ -1307,6 +1307,12 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
     scans = result.scalars().all()
     logger.debug(f"API Status Query - Found {len(scans)} scans in last 24 hours")
 
+    try:
+        from ..core.activity_database import activity_db
+        automated_usage = activity_db.get_api_usage_summary(hours=24, minute_window=1)
+    except Exception:
+        automated_usage = {"daily": {}, "minute": {}}
+
     for scan in scans:
         ts = scan.scan_timestamp or now
         analysis = scan.analysis_data if isinstance(scan.analysis_data, dict) else {}
@@ -1345,6 +1351,12 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
             usage_daily[service_name] += 1
             if ts >= since_1m:
                 usage_minute[service_name] += 1
+
+    for service_name, count in (automated_usage.get("daily") or {}).items():
+        usage_daily[service_name] += int(count or 0)
+
+    for service_name, count in (automated_usage.get("minute") or {}).items():
+        usage_minute[service_name] += int(count or 0)
 
     payload = []
     for spec in service_specs:

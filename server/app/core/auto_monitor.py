@@ -4,6 +4,7 @@ Continuously monitors system activity and automatically scans all detected artif
 """
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -90,6 +91,18 @@ class AutomaticActivityMonitor:
             200,
             int(os.getenv("SENTINEL_BROWSER_HISTORY_BATCH", "1000") or 1000),
         )
+        self.download_poll_interval = max(
+            10,
+            int(os.getenv("SENTINEL_DOWNLOAD_POLL_INTERVAL", "15") or 15),
+        )
+        self.download_settle_seconds = max(
+            5,
+            int(os.getenv("SENTINEL_DOWNLOAD_SETTLE_SECONDS", "20") or 20),
+        )
+        self.download_max_file_size = max(
+            1024 * 1024,
+            int(os.getenv("SENTINEL_DOWNLOAD_MAX_FILE_SIZE", str(150 * 1024 * 1024)))
+        )
         self._last_prompt_at: Dict[str, float] = {}
         self._trusted_recent_ips: Dict[str, float] = {}
         self._public_dns_cache: Dict[str, tuple[float, Optional[str]]] = {}
@@ -119,6 +132,7 @@ class AutomaticActivityMonitor:
         self.recent_domains = deque(maxlen=1000)
         self.url_last_seen: Dict[str, float] = {}
         self.history_last_seen: Dict[str, int] = {}
+        self.download_last_seen: Dict[str, tuple[int, int]] = {}
         self._browser_last_seen_count = 0
         self._browser_last_diag_at = 0.0
         
@@ -127,6 +141,7 @@ class AutomaticActivityMonitor:
             'urls_detected': 0,
             'ips_detected': 0,
             'domains_detected': 0,
+            'downloads_detected': 0,
             'scans_performed': 0,
             'threats_found': 0,
             'start_time': None
@@ -801,6 +816,54 @@ class AutomaticActivityMonitor:
                     pass
 
         return Path.home()
+
+    def _download_directories(self) -> list[Path]:
+        """Return existing download directories to watch for new files."""
+        roots: list[Path] = []
+        seen: set[str] = set()
+
+        explicit = os.getenv("SENTINEL_DOWNLOAD_DIRS", "").strip()
+        if explicit:
+            for raw in explicit.split(os.pathsep):
+                if not raw.strip():
+                    continue
+                try:
+                    candidate = Path(raw).expanduser().resolve()
+                    key = str(candidate)
+                    if candidate.exists() and candidate.is_dir() and key not in seen:
+                        roots.append(candidate)
+                        seen.add(key)
+                except Exception:
+                    continue
+
+        home = self._monitor_home_dir()
+        for candidate in [home / "Downloads", home / "downloads"]:
+            try:
+                resolved = candidate.expanduser().resolve()
+                key = str(resolved)
+                if resolved.exists() and resolved.is_dir() and key not in seen:
+                    roots.append(resolved)
+                    seen.add(key)
+            except Exception:
+                continue
+
+        return roots
+
+    @staticmethod
+    def _is_temporary_download(path: Path) -> bool:
+        suffixes = {s.lower() for s in path.suffixes}
+        return any(s in suffixes for s in {".crdownload", ".part", ".partial", ".tmp", ".download"})
+
+    @staticmethod
+    def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
     
     async def _scan_artifact(
         self,
@@ -808,6 +871,8 @@ class AutomaticActivityMonitor:
         value: str,
         show_prompt: bool = True,
         prompt_context: str = "",
+        use_external_apis: bool = False,
+        metadata: Optional[Dict] = None,
     ):
         """Scan an artifact and log results - minimal terminal output, full database logging"""
         try:
@@ -836,7 +901,15 @@ class AutomaticActivityMonitor:
                         )
 
             # Perform scan (results go to database)
-            result = await self.scan_callback(artifact_type, value)
+            try:
+                result = await self.scan_callback(
+                    artifact_type,
+                    value,
+                    use_external_apis=use_external_apis,
+                    metadata=metadata or {},
+                )
+            except TypeError:
+                result = await self.scan_callback(artifact_type, value)
             self.stats['scans_performed'] += 1
             
             # Check verdict — normalise enum string (e.g. ThreatLevel.SUSPICIOUS → 'suspicious')
@@ -1003,10 +1076,52 @@ class AutomaticActivityMonitor:
         return True
     
     async def _monitor_file_access(self):
-        """Monitor file access - for future implementation"""
-        # TODO: Monitor file opens/downloads using inotify or similar
-        # This will track files opened by user and scan them
-        pass
+        """Monitor likely download folders and scan completed files by hash."""
+        now = time.time()
+        for root in self._download_directories():
+            try:
+                for entry in root.iterdir():
+                    try:
+                        if not entry.is_file():
+                            continue
+                        if self._is_temporary_download(entry):
+                            continue
+
+                        stat = entry.stat()
+                        if stat.st_size <= 0 or stat.st_size > self.download_max_file_size:
+                            continue
+                        if (now - stat.st_mtime) < self.download_settle_seconds:
+                            continue
+
+                        file_key = str(entry.resolve())
+                        fingerprint = (int(stat.st_mtime), int(stat.st_size))
+                        if self.download_last_seen.get(file_key) == fingerprint:
+                            continue
+
+                        file_hash = await asyncio.to_thread(self._sha256_file, entry)
+                        self.download_last_seen[file_key] = fingerprint
+                        self.stats['downloads_detected'] += 1
+
+                        await self._scan_artifact(
+                            'file_hash',
+                            file_hash,
+                            show_prompt=True,
+                            prompt_context=f" [download: {entry.name}]",
+                            use_external_apis=True,
+                            metadata={
+                                'auto_detected': True,
+                                'detection_source': 'download_monitor',
+                                'download_path': file_key,
+                                'file_name': entry.name,
+                                'file_size': int(stat.st_size),
+                                'download_directory': str(root),
+                            },
+                        )
+                    except Exception as item_error:
+                        logger.debug(f"Download monitoring item error for {entry}: {item_error}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Download monitoring error for {root}: {e}")
     
     async def _monitor_browser_activity(self):
         """Monitor browser history for NEW URLs user actually visits"""
@@ -1356,6 +1471,7 @@ class AutomaticActivityMonitor:
             try:
                 # Monitor browser activity (user visits)
                 await self._monitor_browser_activity()
+                await self._monitor_file_access()
                 await self._monitor_network_connections()
                 
                 # Check every 10 seconds for new browser visits / connection changes
