@@ -548,8 +548,8 @@ def run_protection_client():
                     pass
                 last_heartbeat = now_ts
             
-            # Print stats every 5 minutes
-            if time.time() - last_stats > 300:
+            # Print stats every 1 hour
+            if time.time() - last_stats > 3600:
                 uptime = int(time.time() - stats["start_time"])
                 usb_summary = usb_monitor.get_events_summary()
                 email_summary = email_monitor.get_summary()
