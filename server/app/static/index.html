@@ -2175,6 +2175,7 @@
                     <div class="section-header-right">
                         <span class="dot"></span>
                         <span id="apiConnectionSummary">Checking API status...</span>
+                        <button class="btn btn-ghost btn-sm" onclick="fetchApiStatus()" title="Refresh API status" style="margin-left: 0.75rem;">↻</button>
                     </div>
                 </div>
                 <div class="api-grid" id="apiGrid">
@@ -3840,6 +3841,13 @@
 
         async function fetchApiStatus() {
             try {
+                // Show loading state
+                const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
+                if (refreshBtn) {
+                    refreshBtn.style.opacity = '0.5';
+                    refreshBtn.disabled = true;
+                }
+                
                 const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus);
                 const statusItems = Array.isArray(status)
                     ? status
@@ -3956,6 +3964,13 @@
                 // Only fail the signal if we got a network/server error, not if data is valid
                 updateSourceSignal('apis', { ok: false, error: error?.message || 'api_status_failed' });
                 updateSystemStatusPanel();
+            } finally {
+                // Restore button state
+                const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
+                if (refreshBtn) {
+                    refreshBtn.style.opacity = '1';
+                    refreshBtn.disabled = false;
+                }
             }
         }
 
