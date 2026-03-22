@@ -103,6 +103,10 @@ class AutomaticActivityMonitor:
             1024 * 1024,
             int(os.getenv("SENTINEL_DOWNLOAD_MAX_FILE_SIZE", str(150 * 1024 * 1024)))
         )
+        self.escalate_external_api_on_threat = str(
+            os.getenv("SENTINEL_ESCALATE_EXTERNAL_API_ON_THREAT", "true")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        self.external_escalation_types = {"ip", "url", "domain", "file_hash"}
         self._last_prompt_at: Dict[str, float] = {}
         self._trusted_recent_ips: Dict[str, float] = {}
         self._public_dns_cache: Dict[str, tuple[float, Optional[str]]] = {}
@@ -889,6 +893,34 @@ class AutomaticActivityMonitor:
                 continue
         if seeded:
             logger.info("📦 Download baseline seeded (%s files)", seeded)
+
+    @staticmethod
+    def _needs_external_escalation(artifact_type: str, result: Dict) -> bool:
+        """Return True when a quick local pass should be enriched with external APIs."""
+        verdict_raw = result.get("verdict", "unknown")
+        verdict = (getattr(verdict_raw, "value", None) or str(verdict_raw)).lower().split('.')[-1]
+        if verdict in {"malicious", "critical", "suspicious", "error", "unknown"}:
+            return True
+
+        indicators = result.get("threat_indicators") or []
+        for item in indicators:
+            if not isinstance(item, dict):
+                continue
+            severity = str(item.get("severity", "")).lower()
+            try:
+                confidence = float(item.get("confidence", 0.0) or 0.0)
+            except Exception:
+                confidence = 0.0
+            if severity in {"critical", "high"} or confidence >= 0.75:
+                return True
+
+        # For file hash monitoring, treat any non-empty warning set as escalation signal.
+        if artifact_type == "file_hash":
+            warnings = result.get("warnings") or []
+            if isinstance(warnings, list) and warnings:
+                return True
+
+        return False
     
     async def _scan_artifact(
         self,
@@ -936,6 +968,41 @@ class AutomaticActivityMonitor:
             except TypeError:
                 result = await self.scan_callback(artifact_type, value)
             self.stats['scans_performed'] += 1
+
+            # If suspicious attack-like activity is detected during local monitoring,
+            # immediately enrich with external API intelligence for stronger defense.
+            if (
+                self.escalate_external_api_on_threat
+                and not use_external_apis
+                and artifact_type in self.external_escalation_types
+                and self._needs_external_escalation(artifact_type, result)
+            ):
+                escalation_meta = {
+                    "auto_detected": True,
+                    "escalated_external_api": True,
+                    "escalation_reason": "threat_signal_detected",
+                }
+                if isinstance(metadata, dict):
+                    escalation_meta.update(metadata)
+                try:
+                    result = await self.scan_callback(
+                        artifact_type,
+                        value,
+                        use_external_apis=True,
+                        metadata=escalation_meta,
+                    )
+                    self.stats['scans_performed'] += 1
+                except TypeError:
+                    # Backward-compat fallback in case callback signature changes.
+                    result = await self.scan_callback(artifact_type, value)
+                    self.stats['scans_performed'] += 1
+                except Exception as escalation_err:
+                    logger.debug(
+                        "External API escalation failed for %s %s: %s",
+                        artifact_type,
+                        value,
+                        escalation_err,
+                    )
             
             # Check verdict — normalise enum string (e.g. ThreatLevel.SUSPICIOUS → 'suspicious')
             _raw = result.get('verdict', 'unknown')
