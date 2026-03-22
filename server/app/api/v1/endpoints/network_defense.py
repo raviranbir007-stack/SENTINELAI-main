@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from ....database import get_db
+from ....config import settings
 from ....core.nids_ingestor import NIDSIngestor
 from ....core.terminal_monitor import terminal_monitor
 from ....models import (
@@ -31,6 +32,20 @@ from ....models import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+_SEVERITY_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _should_auto_block(severity: ThreatSeverity, confidence: float) -> bool:
+    """Policy gate for automatic blocking actions."""
+    min_sev = str(getattr(settings, "SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high") or "high").strip().lower()
+    min_required = _SEVERITY_ORDER.get(min_sev, 3)
+    cur = _SEVERITY_ORDER.get(str(severity.value).lower(), 1)
+    if cur < min_required:
+        return False
+    min_conf = float(getattr(settings, "SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", 0.65) or 0.65)
+    return float(confidence or 0.0) >= min_conf
 
 
 class ClientRegistrationRequest(BaseModel):
@@ -59,6 +74,7 @@ class AttackReportRequest(BaseModel):
     severity: str = "medium"
     description: Optional[str] = None
     indicators: Optional[dict] = None
+    confidence: Optional[float] = None
 
 
 class DefenseActionRequest(BaseModel):
@@ -486,6 +502,16 @@ async def report_attack(
             destination_ip=request.destination_ip,
             destination_port=request.destination_port,
             severity=severity_map.get(request.severity.lower(), ThreatSeverity.MEDIUM),
+            confidence=float(
+                request.confidence
+                if request.confidence is not None
+                else {
+                    "critical": 0.92,
+                    "high": 0.82,
+                    "medium": 0.62,
+                    "low": 0.40,
+                }.get(request.severity.lower(), 0.62)
+            ),
             description=request.description,
             indicators=request.indicators or {},
             status="detected",
@@ -1236,8 +1262,50 @@ async def _execute_defense_response(
             if not client:
                 return
 
-            # Block source IP if present
-            if source_ip and attack.severity in [ThreatSeverity.HIGH, ThreatSeverity.CRITICAL]:
+            # For medium-confidence/severity detections, require analyst approval when enabled.
+            manual_approval_enabled = bool(getattr(settings, "SENTINEL_ENABLE_MANUAL_APPROVAL", True))
+            min_review_conf = float(getattr(settings, "SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", 0.65) or 0.65)
+            if (
+                source_ip
+                and manual_approval_enabled
+                and attack.severity in [ThreatSeverity.MEDIUM, ThreatSeverity.HIGH]
+                and float(attack.confidence or 0.0) < min_review_conf
+            ):
+                db.add(
+                    NetworkAlert(
+                        alert_id=f"ALERT_{uuid.uuid4().hex[:12].upper()}",
+                        alert_type="manual_approval_required",
+                        severity=ThreatSeverity.MEDIUM,
+                        title="Manual approval required before block",
+                        description=(
+                            f"Attack {attack.event_id} from {source_ip} is below confidence threshold "
+                            f"({float(attack.confidence or 0.0):.2f} < {min_review_conf:.2f})."
+                        ),
+                        affected_clients=[client_id] if client_id else [],
+                        affected_count=1,
+                        status="active",
+                    )
+                )
+                db.add(
+                    SystemLog(
+                        log_level="INFO",
+                        component="defense_response",
+                        message=f"Manual approval required for attack {attack.event_id}",
+                        details={
+                            "attack_id": attack.event_id,
+                            "client_id": client_id,
+                            "source_ip": source_ip,
+                            "severity": attack.severity.value if attack.severity else "unknown",
+                            "confidence": float(attack.confidence or 0.0),
+                            "threshold": min_review_conf,
+                        },
+                    )
+                )
+                await db.commit()
+                return
+
+            # Block source IP if policy permits (default: high/critical with adequate confidence)
+            if source_ip and _should_auto_block(attack.severity, float(attack.confidence or 0.0)):
                 action = DefenseAction(
                     action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
                     action_type="block_ip",
@@ -1352,6 +1420,19 @@ async def _apply_defense_action(action: DefenseAction, db: AsyncSession) -> bool
 
             return True
 
+        elif action.action_type == "unblock_ip":
+            if action.client_id:
+                query = select(ClientInstallation).where(ClientInstallation.id == action.client_id)
+                result = await db.execute(query)
+                client = result.scalar_one_or_none()
+                if client:
+                    blocked_ips = list(client.blocked_ips or [])
+                    if action.target in blocked_ips:
+                        blocked_ips = [ip for ip in blocked_ips if ip != action.target]
+                        client.blocked_ips = blocked_ips
+                        await db.flush()
+            return True
+
         elif action.action_type == "block_domain":
             # Update client's blocked domains list
             if action.client_id:
@@ -1368,6 +1449,19 @@ async def _apply_defense_action(action: DefenseAction, db: AsyncSession) -> bool
 
             return True
 
+        elif action.action_type == "unblock_domain":
+            if action.client_id:
+                query = select(ClientInstallation).where(ClientInstallation.id == action.client_id)
+                result = await db.execute(query)
+                client = result.scalar_one_or_none()
+                if client:
+                    blocked_domains = list(client.blocked_domains or [])
+                    if action.target in blocked_domains:
+                        blocked_domains = [d for d in blocked_domains if d != action.target]
+                        client.blocked_domains = blocked_domains
+                        await db.flush()
+            return True
+
         elif action.action_type == "alert_admin":
             # Log alert (in production, send email/notification)
             logger.warning(f"ADMIN ALERT: {action.details}")
@@ -1380,3 +1474,72 @@ async def _apply_defense_action(action: DefenseAction, db: AsyncSession) -> bool
     except Exception as e:
         logger.error(f"Failed to apply defense action: {str(e)}")
         return False
+
+
+@router.post("/defense/action/revert/{action_id}")
+async def revert_defense_action(action_id: str, db: AsyncSession = Depends(get_db)):
+    """Safely revert previously executed block actions (IP/domain) for rollback/unblock workflows."""
+    try:
+        res = await db.execute(select(DefenseAction).where(DefenseAction.action_id == action_id))
+        action = res.scalar_one_or_none()
+        if not action:
+            raise HTTPException(status_code=404, detail="Defense action not found")
+
+        if action.status == "reverted":
+            return {"status": "ok", "message": "Action already reverted", "action_id": action_id}
+
+        if action.action_type not in {"block_ip", "block_domain"}:
+            raise HTTPException(status_code=400, detail="Only block_ip/block_domain actions can be reverted")
+
+        rollback_action = DefenseAction(
+            action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
+            action_type="unblock_ip" if action.action_type == "block_ip" else "unblock_domain",
+            target=action.target,
+            details={
+                "rollback_of": action.action_id,
+                "reason": "operator rollback",
+            },
+            status="pending",
+            attack_event_id=action.attack_event_id,
+            client_id=action.client_id,
+        )
+        db.add(rollback_action)
+        await db.flush()
+
+        success = await _apply_defense_action(rollback_action, db)
+        rollback_action.status = "executed" if success else "failed"
+        rollback_action.successful = success
+        rollback_action.executed_at = datetime.utcnow()
+
+        if success:
+            action.status = "reverted"
+            action.reverted_at = datetime.utcnow()
+
+        db.add(
+            SystemLog(
+                log_level="INFO" if success else "WARNING",
+                component="defense_response",
+                message=f"Defense action rollback {'succeeded' if success else 'failed'} for {action_id}",
+                details={
+                    "action_id": action_id,
+                    "target": action.target,
+                    "original_action_type": action.action_type,
+                    "rollback_action_id": rollback_action.action_id,
+                    "successful": success,
+                },
+            )
+        )
+
+        await db.commit()
+        return {
+            "status": "ok" if success else "failed",
+            "action_id": action_id,
+            "rollback_action_id": rollback_action.action_id,
+            "successful": success,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Defense action rollback failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -110,5 +110,10 @@ class Settings(BaseSettings):
     # AI / Gemini
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
+    # Defense decisioning controls (network-defense)
+    SENTINEL_AUTO_BLOCK_MIN_SEVERITY: str = os.getenv("SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high")
+    SENTINEL_ENABLE_MANUAL_APPROVAL: bool = os.getenv("SENTINEL_ENABLE_MANUAL_APPROVAL", "True").lower() == "true"
+    SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE: float = float(os.getenv("SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", "0.65"))
+
 
 settings = Settings()

@@ -6,6 +6,8 @@ Enhanced with Multi-API Corroboration Engine
 
 import asyncio
 import logging
+import os
+import time
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List
@@ -18,6 +20,7 @@ from ..services.virus_total import VirusTotalService
 from ..config import settings
 from .input_detector import InputDetector, InputType
 from .corroboration_engine import corroboration_engine
+from .security_telemetry import security_telemetry
 
 # Import ML models
 try:
@@ -120,6 +123,26 @@ class ThreatAnalyzer:
         else:
             self.ai_analyzer = None
 
+        # API governance settings (performance + resilience)
+        self._api_max_concurrent_calls = max(2, int(os.getenv("SENTINEL_API_MAX_CONCURRENT_CALLS", "12") or 12))
+        self._api_queue_wait_timeout = float(os.getenv("SENTINEL_API_QUEUE_WAIT_TIMEOUT", "2.0") or 2.0)
+        self._api_failure_threshold = max(2, int(os.getenv("SENTINEL_API_FAILURE_THRESHOLD", "4") or 4))
+        self._api_circuit_cooldown = float(os.getenv("SENTINEL_API_CIRCUIT_COOLDOWN_SECONDS", "90") or 90)
+        self._api_call_budget_daily = max(100, int(os.getenv("SENTINEL_API_BUDGET_DAILY", "5000") or 5000))
+        self._api_semaphore = asyncio.Semaphore(self._api_max_concurrent_calls)
+
+        # Source confidence weighting for verdict fusion
+        self._source_confidence_weights = {
+            "virustotal": 1.15,
+            "abuseipdb": 1.0,
+            "shodan": 0.95,
+            "urlscan": 1.05,
+            "hybrid analysis": 1.20,
+            "hybrid_analysis": 1.20,
+            "heuristic analysis": 0.85,
+            "local analysis": 0.90,
+        }
+
     async def _call_api_with_retry(self, name: str, call_factory, retries: int = 1, delay: float = 0.35):
         """Execute API coroutine with lightweight retry on transient failures."""
         transient_markers = (
@@ -128,22 +151,95 @@ class ThreatAnalyzer:
         non_retry_markers = ("rate limit", "quota", "not configured", "forbidden", "401", "403")
 
         last_error = None
+        api_name_normalized = str(name or "unknown").strip().lower()
+
+        # Circuit breaker: fail fast if provider is in cooldown window.
+        circuit = security_telemetry.get_circuit_state(api_name_normalized)
+        now_epoch = time.time()
+        if float(circuit.get("opened_until_epoch", 0.0) or 0.0) > now_epoch:
+            return {"error": f"{name} circuit open (cooldown in effect)"}
+
+        if security_telemetry.api_usage_count(api_name_normalized, window_hours=24) >= self._api_call_budget_daily:
+            return {"error": f"{name} budget cap reached ({self._api_call_budget_daily}/24h)"}
+
         for attempt in range(retries + 1):
             try:
-                result = await call_factory()
+                # Queue backpressure guard + concurrency limit
+                queued_at = time.perf_counter()
+                try:
+                    await asyncio.wait_for(self._api_semaphore.acquire(), timeout=self._api_queue_wait_timeout)
+                except asyncio.TimeoutError:
+                    security_telemetry.record_api_metric(
+                        api_name=api_name_normalized,
+                        input_type="unknown",
+                        status="queue_backpressure",
+                        latency_ms=(time.perf_counter() - queued_at) * 1000.0,
+                        is_timeout=True,
+                    )
+                    return {"error": f"{name} queue backpressure"}
+
+                started = time.perf_counter()
+                try:
+                    result = await call_factory()
+                finally:
+                    self._api_semaphore.release()
+
+                latency_ms = (time.perf_counter() - started) * 1000.0
                 if not isinstance(result, dict) or not result.get("error"):
+                    security_telemetry.record_api_metric(
+                        api_name=api_name_normalized,
+                        input_type="unknown",
+                        status="checked",
+                        latency_ms=latency_ms,
+                    )
+                    # successful call closes breaker quickly
+                    security_telemetry.update_circuit_state(api_name_normalized, reset=True, opened_until_epoch=0.0)
                     return result
 
                 err_text = str(result.get("error", "")).lower()
+                is_timeout = any(tok in err_text for tok in ("timeout", "timed out"))
+                security_telemetry.record_api_metric(
+                    api_name=api_name_normalized,
+                    input_type="unknown",
+                    status="error",
+                    latency_ms=latency_ms,
+                    is_timeout=is_timeout,
+                )
                 if any(marker in err_text for marker in non_retry_markers):
+                    security_telemetry.update_circuit_state(api_name_normalized, fail_delta=1, timeout_delta=(1 if is_timeout else 0))
                     return result
                 if any(marker in err_text for marker in transient_markers) and attempt < retries:
                     await asyncio.sleep(delay * (attempt + 1))
                     continue
+
+                # Open breaker after repeated failures
+                updated = security_telemetry.get_circuit_state(api_name_normalized)
+                fail_count = int(updated.get("fail_count", 0)) + 1
+                timeout_count = int(updated.get("timeout_count", 0)) + (1 if is_timeout else 0)
+                open_until = (time.time() + self._api_circuit_cooldown) if fail_count >= self._api_failure_threshold else float(updated.get("opened_until_epoch", 0.0) or 0.0)
+                security_telemetry.update_circuit_state(
+                    api_name_normalized,
+                    fail_delta=1,
+                    timeout_delta=(1 if is_timeout else 0),
+                    opened_until_epoch=open_until,
+                )
                 return result
             except Exception as exc:
                 last_error = exc
                 err_text = str(exc).lower()
+                is_timeout = any(tok in err_text for tok in ("timeout", "timed out"))
+                security_telemetry.record_api_metric(
+                    api_name=api_name_normalized,
+                    input_type="unknown",
+                    status="exception",
+                    latency_ms=0.0,
+                    is_timeout=is_timeout,
+                )
+                security_telemetry.update_circuit_state(
+                    api_name_normalized,
+                    fail_delta=1,
+                    timeout_delta=(1 if is_timeout else 0),
+                )
                 if any(marker in err_text for marker in transient_markers) and attempt < retries:
                     await asyncio.sleep(delay * (attempt + 1))
                     continue
@@ -250,6 +346,134 @@ class ThreatAnalyzer:
             })
 
         return hypotheses[:3]
+
+    def _build_threat_intel_fusion(self, result: Dict[str, Any], threats: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Normalize multi-provider intelligence into one common explainable schema."""
+        api_results = result.get("api_results", {}) or {}
+        api_status = api_results.get("api_status", {}) or {}
+
+        provider_alias = {
+            "virustotal": "virustotal",
+            "abuseipdb": "abuseipdb",
+            "shodan": "shodan",
+            "urlscan": "urlscan",
+            "urlscan.io": "urlscan",
+            "hybrid analysis": "hybrid_analysis",
+            "hybrid_analysis": "hybrid_analysis",
+        }
+
+        provider_hits = {k: 0 for k in ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis", "heuristic"]}
+        malicious_count = 0
+        suspicious_count = 0
+        evidence = []
+        for t in threats:
+            if not isinstance(t, dict):
+                continue
+            source = str(t.get("source", "heuristic")).strip().lower()
+            normalized = provider_alias.get(source, "heuristic")
+            provider_hits[normalized] = provider_hits.get(normalized, 0) + 1
+            sev = str(t.get("severity", "low")).lower()
+            if sev in {"critical", "high"}:
+                malicious_count += 1
+            elif sev == "medium":
+                suspicious_count += 1
+            evidence.append(
+                {
+                    "source": t.get("source"),
+                    "severity": sev,
+                    "indicator": t.get("indicator"),
+                }
+            )
+
+        vt_malicious = 0
+        vt_suspicious = 0
+        try:
+            vt = api_results.get("virustotal") or {}
+            attrs = (vt.get("data") or {}).get("attributes") or {}
+            stats = attrs.get("last_analysis_stats") or attrs.get("stats") or {}
+            vt_malicious = int(stats.get("malicious", 0) or 0)
+            vt_suspicious = int(stats.get("suspicious", 0) or 0)
+        except Exception:
+            pass
+
+        abuse_confidence = 0
+        try:
+            abuse_confidence = int(((api_results.get("abuseipdb") or {}).get("data") or {}).get("abuseConfidenceScore", 0) or 0)
+        except Exception:
+            abuse_confidence = 0
+
+        exposure_level = "low"
+        try:
+            ports = (api_results.get("shodan") or {}).get("ports") or []
+            if len(ports) >= 15:
+                exposure_level = "high"
+            elif len(ports) >= 6:
+                exposure_level = "medium"
+        except Exception:
+            exposure_level = "low"
+
+        sandbox_risk = 0
+        try:
+            ha_results = (api_results.get("hybrid_analysis") or {}).get("results") or []
+            if isinstance(ha_results, list) and ha_results:
+                sandbox_risk = max(int((item or {}).get("threat_score", 0) or 0) for item in ha_results if isinstance(item, dict))
+        except Exception:
+            sandbox_risk = 0
+
+        redirect_suspicion = 0
+        try:
+            urlscan_data = ((api_results.get("urlscan") or {}).get("data") or {})
+            if isinstance(urlscan_data, dict):
+                if ((urlscan_data.get("classifications") or {}).get("phishing") or False):
+                    redirect_suspicion = 90
+                elif urlscan_data.get("page") or urlscan_data.get("task"):
+                    redirect_suspicion = 35
+        except Exception:
+            redirect_suspicion = 0
+
+        detection_source_count = sum(1 for v in provider_hits.values() if int(v) > 0)
+        providers_checked = [
+            str(meta.get("name", key))
+            for key, meta in api_status.items()
+            if isinstance(meta, dict) and meta.get("status") in {"checked", "clean", "no_threat"}
+        ]
+
+        confidence = float(result.get("confidence", 0.0) or 0.0)
+        verdict = str(result.get("verdict", "unknown")).lower()
+        if verdict in {"malicious", "critical"} and detection_source_count >= 2:
+            action = "block_or_quarantine"
+        elif verdict == "suspicious" and confidence >= 0.65 and detection_source_count >= 2:
+            action = "contain_and_manual_review"
+        elif verdict == "suspicious":
+            action = "monitor_and_manual_review"
+        else:
+            action = "monitor"
+
+        severity = "low"
+        if verdict in {"critical", "malicious"}:
+            severity = "critical" if confidence >= 0.9 else "high"
+        elif verdict == "suspicious":
+            severity = "medium"
+
+        return {
+            "reputation_score": round(max(0.0, min(100.0, confidence * 100.0)), 2),
+            "malicious_count": malicious_count,
+            "suspicious_count": suspicious_count,
+            "abuse_confidence": abuse_confidence,
+            "exposure_level": exposure_level,
+            "sandbox_risk": sandbox_risk,
+            "redirect_suspicion": redirect_suspicion,
+            "detection_source_count": detection_source_count,
+            "providers_checked": providers_checked,
+            "provider_hits": provider_hits,
+            "vt_summary": {"malicious": vt_malicious, "suspicious": vt_suspicious},
+            "overall_severity": severity,
+            "overall_confidence": round(confidence, 3),
+            "recommended_action": action,
+            "explanation_summary": result.get("summary", ""),
+            "evidence_summary": evidence[:12],
+            "last_seen_context": result.get("timestamp"),
+        }
 
     def _build_advanced_forensic_analysis(
         self,
@@ -366,7 +590,14 @@ class ThreatAnalyzer:
                 {"key": "hybrid_analysis", "name": "Hybrid Analysis"},
             ],
         }
-        return mapping.get(normalized, [])
+        apis = mapping.get(normalized, [])
+        # API health scoring + fallback order: healthiest provider first.
+        ranked = sorted(
+            apis,
+            key=lambda x: security_telemetry.get_api_health_score(str(x.get("name", "")).lower()),
+            reverse=True,
+        )
+        return ranked
 
     def _prepare_api_tracking(self, result: Dict, input_type: str) -> None:
         """Initialize API tracking metadata for a scan."""
@@ -2372,6 +2603,25 @@ class ThreatAnalyzer:
             + (heuristic_medium * 2)
             + heuristic_low
         )
+
+        # Per-source confidence weighting (local + APIs + corroboration inputs)
+        source_weighted_score = 0.0
+        source_weight_total = 0.0
+        sev_weight = {"critical": 1.0, "high": 0.75, "medium": 0.5, "low": 0.25}
+        for t in threats:
+            if not isinstance(t, dict):
+                continue
+            src = str(t.get("source", "heuristic analysis")).strip().lower()
+            src_weight = float(self._source_confidence_weights.get(src, 0.9))
+            sev = str(t.get("severity", "low")).lower()
+            ind_conf = float(t.get("confidence", 0.6) or 0.6)
+            weighted = src_weight * sev_weight.get(sev, 0.25) * ind_conf
+            source_weighted_score += weighted
+            source_weight_total += src_weight
+
+        weighted_fusion_confidence = 0.0
+        if source_weight_total > 0:
+            weighted_fusion_confidence = max(0.0, min(1.0, source_weighted_score / source_weight_total))
         
         # Calculate average confidence from heuristic threats
         heuristic_confidences = [t.get("confidence", 0.5) for t in heuristic_threats if "confidence" in t]
@@ -2561,6 +2811,8 @@ class ThreatAnalyzer:
                 "avg_confidence": round(avg_heuristic_confidence, 2),
                 "max_critical_confidence": round(max_critical_confidence, 2)
             },
+            "source_weighted_confidence": round(weighted_fusion_confidence, 3),
+            "source_confidence_weights": self._source_confidence_weights,
             "apis_checked": len(apis_called),
             "apis_called_list": apis_called,
             "total_apis_available": len(apis_expected),
@@ -2597,6 +2849,15 @@ class ThreatAnalyzer:
             
             # Add corroboration flags
             result['flags'] = corroboration_analysis['flags']
+
+            # Confidence-weighted verdict fusion (local + APIs + corroboration)
+            corroboration_conf = float(corroboration_analysis.get('verdict', {}).get('confidence', 0.0) or 0.0)
+            fused_conf = (
+                (result.get('confidence', 0.0) * 0.40)
+                + (weighted_fusion_confidence * 0.30)
+                + (corroboration_conf * 0.30)
+            )
+            result['confidence'] = max(0.0, min(1.0, round(fused_conf, 3)))
             
             logger.debug(
                 f"Corroboration: {corroboration_analysis['corroboration']['level'].upper()} "
@@ -2607,6 +2868,58 @@ class ThreatAnalyzer:
         except Exception as e:
             logger.error(f"Error in corroboration analysis: {e}")
             # Continue with original verdict if corroboration fails
+
+        # False-positive suppression feedback loop: downgrade low-confidence repeats.
+        try:
+            fingerprint = f"{result.get('input_type','unknown')}|{result.get('summary','')[:220]}"
+            fp_score = security_telemetry.false_positive_score(fingerprint)
+            if fp_score >= 0.75 and str(result.get('verdict','')).lower() == 'suspicious' and float(result.get('confidence', 0.0) or 0.0) <= 0.62:
+                result['verdict'] = ThreatLevel.CLEAN
+                result['confidence'] = min(0.55, float(result.get('confidence', 0.0) or 0.0))
+                result['summary'] = "Downgraded by feedback loop: repeated false-positive pattern detected."
+                result.setdefault('flags', {})['feedback_suppressed'] = True
+            result.setdefault('forensic_metadata', {})['false_positive_score'] = round(fp_score, 3)
+        except Exception:
+            pass
+
+        # Correlation engine across URL/IP/domain/hash events.
+        try:
+            input_type = str(result.get("input_type", "unknown"))
+            input_value = str(result.get("input", ""))
+            security_telemetry.record_correlation_event(
+                event_type=input_type,
+                event_value=input_value,
+                verdict=str(result.get("verdict", "unknown")).lower(),
+                confidence=float(result.get("confidence", 0.0) or 0.0),
+                metadata={
+                    "threats_detected": len(threats),
+                    "apis_called": (result.get("api_results") or {}).get("apis_called", []),
+                },
+            )
+            recent = security_telemetry.get_recent_events(minutes=45)
+            has_phish = any(e.get("type") in {"url", "domain"} and e.get("verdict") in {"suspicious", "malicious", "critical"} for e in recent)
+            has_download_hash = any(e.get("type") == "file_hash" for e in recent)
+            has_c2_ip = any(e.get("type") == "ip" and e.get("verdict") in {"suspicious", "malicious", "critical"} for e in recent)
+            chain = []
+            if has_phish:
+                chain.append("phishing")
+            if has_download_hash:
+                chain.append("download")
+            if has_c2_ip:
+                chain.append("c2")
+            result.setdefault("forensic_metadata", {})["correlation_chain"] = chain
+            if chain == ["phishing", "download", "c2"]:
+                result.setdefault("flags", {})["attack_chain_detected"] = "phishing_download_c2"
+        except Exception:
+            pass
+
+        # Unified threat-intelligence fusion summary for downstream APIs/UI/reporting.
+        try:
+            fusion = self._build_threat_intel_fusion(result, threats)
+            result["threat_intel_fusion"] = fusion
+            result.setdefault("forensic_metadata", {})["threat_intel_fusion"] = fusion
+        except Exception:
+            pass
 
         advanced_forensic = self._build_advanced_forensic_analysis(
             result=result,

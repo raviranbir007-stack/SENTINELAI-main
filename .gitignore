@@ -51,6 +51,8 @@ quarantine_log.json
 
 # Database
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 instance/
 server/generated_reports/

@@ -508,6 +508,22 @@ async def _save_scan_to_db(scan_data: dict, db: AsyncSession):
         db.add(log_entry)
         await db.commit()
 
+        try:
+            from ..core.security_telemetry import security_telemetry
+            security_telemetry.append_immutable_audit(
+                event_type="scan_persisted",
+                actor="compat_api",
+                target=f"{scan_data.get('type', 'unknown')}:{scan_data.get('target', '')}",
+                details={
+                    "scan_id": scan_data.get("scan_id"),
+                    "verdict": scan_data.get("verdict"),
+                    "confidence": float(scan_data.get("confidence", 0.0) or 0.0),
+                    "threats_detected": int(scan_data.get("threats_detected", 0) or 0),
+                },
+            )
+        except Exception:
+            pass
+
         logger.debug(f"Scan {scan_data.get('scan_id')} saved to database successfully")
         
     except Exception as e:

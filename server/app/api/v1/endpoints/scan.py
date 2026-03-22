@@ -340,6 +340,22 @@ class ThreatScanRequest(BaseModel):
         return value
 
 
+class ScanFeedbackRequest(BaseModel):
+    target: str
+    input_type: str
+    analyst_label: str  # false_positive | true_positive | malicious
+    verdict: Optional[str] = None
+    weight: float = 1.0
+
+    @field_validator("analyst_label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        value = (v or "").strip().lower()
+        if value not in {"false_positive", "true_positive", "malicious"}:
+            raise ValueError("analyst_label must be false_positive, true_positive, or malicious")
+        return value
+
+
 class ScanResponse(BaseModel):
     """Response model for scan results"""
 
@@ -381,6 +397,35 @@ async def options_scan_hash():
 async def options_universal_scan():
     """Handle CORS preflight for /scan endpoint."""
     return {}
+
+
+@router.post("/feedback")
+async def submit_scan_feedback(payload: ScanFeedbackRequest):
+    """Record analyst feedback to improve false-positive suppression over time."""
+    try:
+        from ....core.security_telemetry import security_telemetry
+
+        fingerprint = f"{payload.input_type.strip().lower()}|{payload.target.strip().lower()}"
+        security_telemetry.record_false_positive_feedback(
+            fingerprint=fingerprint,
+            input_type=payload.input_type.strip().lower(),
+            verdict=(payload.verdict or "unknown").strip().lower(),
+            analyst_label=payload.analyst_label,
+            weight=float(payload.weight or 1.0),
+        )
+        security_telemetry.append_immutable_audit(
+            event_type="analyst_feedback",
+            actor="analyst",
+            target=f"{payload.input_type}:{payload.target}",
+            details={
+                "label": payload.analyst_label,
+                "verdict": payload.verdict,
+                "weight": float(payload.weight or 1.0),
+            },
+        )
+        return {"status": "ok", "message": "feedback recorded"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to record feedback: {exc}")
 
 
 async def _store_scan_result(scan_data: dict, db: AsyncSession):
@@ -445,6 +490,34 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
                 ))
                 await db.commit()
                 scan_data["scan_id"] = current_scan_id
+
+                try:
+                    from ....core.security_telemetry import security_telemetry
+                    analysis = scan_data.get("analysis") or {}
+                    indicators = analysis.get("threat_indicators") or []
+                    playbook = []
+                    if any("phish" in str(i.get("indicator", "")).lower() for i in indicators if isinstance(i, dict)):
+                        playbook.append("phishing_containment")
+                    if scan_data.get("target_type") in {"file", "hash", "file_hash"}:
+                        playbook.append("download_malware_triage")
+                    if scan_data.get("target_type") == "ip":
+                        playbook.append("c2_ip_block_and_hunt")
+
+                    security_telemetry.append_immutable_audit(
+                        event_type="scan_persisted",
+                        actor="v1_scan_api",
+                        target=f"{scan_data.get('target_type', 'unknown')}:{scan_data.get('target', scan_data.get('filename', ''))}",
+                        details={
+                            "scan_id": current_scan_id,
+                            "verdict": scan_data.get("threat_level", "unknown"),
+                            "confidence": float(scan_data.get("confidence", 0.0) or 0.0),
+                            "threats_detected": int(scan_data.get("threats_detected", 0) or 0),
+                            "recommended_playbooks": playbook,
+                        },
+                    )
+                except Exception:
+                    pass
+
                 logger.debug(f"Scan {current_scan_id} stored in database")
                 return
             except IntegrityError as ie:

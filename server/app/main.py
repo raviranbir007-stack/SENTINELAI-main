@@ -237,6 +237,7 @@ async def lifespan(app: FastAPI):
             # Start automatic activity monitor
             from app.core.auto_monitor import AutomaticActivityMonitor
             from app.core.threat_analyzer import threat_analyzer
+            from app.core.security_telemetry import security_telemetry
             
             async def scan_artifact(
                 artifact_type: str,
@@ -297,6 +298,30 @@ async def lifespan(app: FastAPI):
                         'is_automated': True,
                         'metadata': callback_metadata
                     })
+
+                    # Baseline/anomaly profile per monitor principal + artifact type
+                    try:
+                        principal = str((callback_metadata or {}).get('host_ip') or (callback_metadata or {}).get('browser') or 'auto-monitor')
+                        anomaly = security_telemetry.baseline_anomaly_score(principal, artifact_type, 1)
+                        result.setdefault('forensic_metadata', {})['baseline_anomaly'] = anomaly
+                    except Exception:
+                        pass
+
+                    # Immutable audit log (tamper-evident chain)
+                    try:
+                        security_telemetry.append_immutable_audit(
+                            event_type='scan_detection',
+                            actor='auto_monitor',
+                            target=f"{artifact_type}:{value}",
+                            details={
+                                'verdict': str(result.get('verdict', 'unknown')),
+                                'confidence': float(result.get('confidence', 0.0) or 0.0),
+                                'scan_duration_ms': elapsed_ms,
+                                'external_api_mode': bool(use_external_apis),
+                            },
+                        )
+                    except Exception:
+                        pass
                     
                     # Update terminal monitor
                     if not low_signal_suspicious_ip:

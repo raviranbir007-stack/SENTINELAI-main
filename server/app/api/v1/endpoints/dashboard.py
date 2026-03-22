@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
 from ....config import settings
-from ....models import ScanHistory, SystemLog
+from ....models import AttackEvent, ScanHistory, SystemLog
 
 try:
     import psutil  # type: ignore
@@ -823,6 +823,168 @@ async def get_api_status():
         "services": services,
         "configured_count": sum(1 for s in services if s["key_configured"]),
         "ready_count": sum(1 for s in services if s["status"] == "ready"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# /telemetry/*  — hardening telemetry visibility
+# ---------------------------------------------------------------------------
+
+@router.get("/telemetry/api-quality")
+async def get_api_quality_telemetry(window_hours: int = Query(24, ge=1, le=168)):
+    """Return API quality/circuit snapshot for governance and operator confidence."""
+    try:
+        from ....core.security_telemetry import security_telemetry
+
+        snapshot = security_telemetry.get_api_quality_snapshot(window_hours=window_hours)
+        return {
+            "window_hours": window_hours,
+            "providers": snapshot,
+            "provider_count": len(snapshot),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as exc:
+        logger.warning("API quality telemetry unavailable: %s", exc)
+        return {
+            "window_hours": window_hours,
+            "providers": {},
+            "provider_count": 0,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "warning": "telemetry unavailable",
+        }
+
+
+@router.get("/telemetry/correlation")
+async def get_correlation_telemetry(window_minutes: int = Query(60, ge=5, le=1440)):
+    """Return recent event-correlation trends and common transition chains."""
+    try:
+        from ....core.security_telemetry import security_telemetry
+
+        summary = security_telemetry.get_correlation_summary(minutes=window_minutes)
+        summary["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        return summary
+    except Exception as exc:
+        logger.warning("Correlation telemetry unavailable: %s", exc)
+        return {
+            "window_minutes": window_minutes,
+            "total_events": 0,
+            "by_type": {},
+            "by_verdict": {},
+            "top_transitions": [],
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "warning": "telemetry unavailable",
+        }
+
+
+@router.get("/telemetry/audit")
+async def get_audit_telemetry(limit: int = Query(100, ge=1, le=500), event_type: Optional[str] = None):
+    """Return immutable audit log entries for forensic triage and compliance workflows."""
+    try:
+        from ....core.security_telemetry import security_telemetry
+
+        entries = security_telemetry.get_recent_audit_entries(limit=limit, event_type=event_type)
+        return {
+            "total": len(entries),
+            "items": entries,
+            "limit": limit,
+            "event_type": event_type,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as exc:
+        logger.warning("Audit telemetry unavailable: %s", exc)
+        return {
+            "total": 0,
+            "items": [],
+            "limit": limit,
+            "event_type": event_type,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "warning": "telemetry unavailable",
+        }
+
+
+@router.get("/repeat-offenders")
+async def get_repeat_offenders(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Top recurring attack sources to support NIDS/IPS tuning and containment prioritization."""
+    threshold = _get_time_threshold(time_range)
+    query = (
+        select(
+            AttackEvent.source_ip,
+            AttackEvent.source_domain,
+            func.count(AttackEvent.id).label("hits"),
+            func.max(AttackEvent.detected_at).label("last_seen"),
+        )
+        .where(AttackEvent.detected_at >= threshold)
+        .group_by(AttackEvent.source_ip, AttackEvent.source_domain)
+        .order_by(desc("hits"), desc("last_seen"))
+        .limit(limit)
+    )
+    res = await db.execute(query)
+    rows = res.all()
+    offenders = []
+    for src_ip, src_domain, hits, last_seen in rows:
+        if not src_ip and not src_domain:
+            continue
+        offenders.append(
+            {
+                "source_ip": src_ip,
+                "source_domain": src_domain,
+                "hits": int(hits or 0),
+                "last_seen": last_seen.isoformat() if last_seen else None,
+            }
+        )
+
+    return {
+        "time_range": _label(time_range),
+        "total": len(offenders),
+        "offenders": offenders,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@router.get("/attack-timeline")
+async def get_attack_timeline(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compact timeline for attack-event trend charts and escalation visibility."""
+    threshold = _get_time_threshold(time_range)
+    result = await db.execute(
+        select(AttackEvent)
+        .where(AttackEvent.detected_at >= threshold)
+        .order_by(AttackEvent.detected_at.asc())
+        .limit(3000)
+    )
+    attacks = result.scalars().all()
+
+    buckets: dict = {}
+    for attack in attacks:
+        ts = attack.detected_at
+        if not ts:
+            continue
+        key = ts.strftime("%Y-%m-%d %H:00")
+        if key not in buckets:
+            buckets[key] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+        sev = str((attack.severity.value if attack.severity else "low") or "low").lower()
+        sev = sev if sev in {"critical", "high", "medium", "low"} else "low"
+        buckets[key][sev] += 1
+        buckets[key]["total"] += 1
+
+    series = [
+        {
+            "bucket": bucket,
+            **values,
+        }
+        for bucket, values in sorted(buckets.items(), key=lambda x: x[0])
+    ]
+
+    return {
+        "time_range": _label(time_range),
+        "points": series,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
     }
 
 
