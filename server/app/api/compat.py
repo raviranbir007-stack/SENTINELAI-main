@@ -16,7 +16,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, or_
 
 from ..config import settings
 from ..core.report_generator import report_generator
@@ -1295,6 +1295,12 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ScanHistory)
         .where(ScanHistory.scan_timestamp >= since_24h)
+        .where(
+            or_(
+                ScanHistory.scan_source == "manual",
+                ScanHistory.scan_source.is_(None),
+            )
+        )
         .order_by(desc(ScanHistory.scan_timestamp))
         .limit(5000)
     )
