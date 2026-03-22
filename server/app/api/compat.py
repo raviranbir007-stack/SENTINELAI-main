@@ -604,8 +604,8 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
     scan_start_time = time.time()
     
     try:
-        # Perform real threat analysis using all 5 APIs
-        analysis_result = await threat_analyzer.analyze(req.target)
+        # Manual scans should use full external intelligence plus local analysis.
+        analysis_result = await threat_analyzer.analyze(req.target, use_external_apis=True)
         scan_duration_ms = int((time.time() - scan_start_time) * 1000)
         
         # Map analyzer verdict to threat_level
@@ -765,9 +765,9 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
         # ── LOCAL analysis (always runs, no API keys needed) ─────────────
         local = _local_file_analysis(content, filename)
 
-        # ── EXTERNAL API analysis (hash lookup; skips gracefully if no keys)
+        # ── EXTERNAL API analysis (hash lookup; manual upload should use external APIs)
         try:
-            api_result = await threat_analyzer.analyze(file_hash)
+            api_result = await threat_analyzer.analyze(file_hash, use_external_apis=True)
         except Exception as api_err:
             logger.warning(f"External API analysis failed for file hash: {api_err}")
             api_result = {"verdict": "clean", "confidence": 0.0,

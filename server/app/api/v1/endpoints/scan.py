@@ -302,6 +302,14 @@ def _log_scan_completion(scan_id: str, scan_type: str, result: dict) -> None:
         logger.debug(message)
 
 
+def _resolve_external_api_mode(include_external_apis: Optional[bool], scan_source: Optional[str] = None) -> bool:
+    """Manual scans use external APIs by default unless explicitly disabled."""
+    if include_external_apis is not None:
+        return bool(include_external_apis)
+    normalized_source = (scan_source or "manual").strip().lower()
+    return normalized_source == "manual"
+
+
 class ThreatScanRequest(BaseModel):
     """Request model for threat scanning"""
 
@@ -534,7 +542,7 @@ async def scan_file(
         try:
             analysis_result = await threat_analyzer.analyze(
                 file_hash,
-                use_external_apis=include_external_apis,
+                use_external_apis=_resolve_external_api_mode(include_external_apis, scan_source),
             )
         except Exception as api_err:
             logger.warning(f"External API file-hash lookup failed: {api_err}")
@@ -656,7 +664,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(
             url,
-            use_external_apis=request.include_external_apis,
+            use_external_apis=_resolve_external_api_mode(request.include_external_apis, request.scan_source),
         )
         normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
         analysis_result["verdict"] = normalized_verdict
@@ -729,7 +737,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(
             ip,
-            use_external_apis=request.include_external_apis,
+            use_external_apis=_resolve_external_api_mode(request.include_external_apis, request.scan_source),
         )
         normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
         analysis_result["verdict"] = normalized_verdict
@@ -802,7 +810,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(
             file_hash,
-            use_external_apis=request.include_external_apis,
+            use_external_apis=_resolve_external_api_mode(request.include_external_apis, request.scan_source),
         )
         normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
         analysis_result["verdict"] = normalized_verdict
@@ -874,7 +882,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(
             target,
-            use_external_apis=request.include_external_apis,
+            use_external_apis=_resolve_external_api_mode(request.include_external_apis, request.scan_source),
         )
         normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
         analysis_result["verdict"] = normalized_verdict
