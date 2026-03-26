@@ -19,6 +19,7 @@ from sqlalchemy.future import select
 from ....database import execute_sqlite_write, get_db
 from ....config import settings
 from ....core.nids_ingestor import NIDSIngestor
+from ....core.notifier import NotificationEngine
 from ....core.terminal_monitor import terminal_monitor
 from ....models import (
     AttackEvent,
@@ -352,6 +353,8 @@ async def client_heartbeat(
     Update client last_seen timestamp (heartbeat)
     """
     try:
+        notify_quarantine: dict = {}
+
         async def _persist_heartbeat():
             query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
             result = await db.execute(query)
@@ -408,6 +411,16 @@ async def client_heartbeat(
                                 },
                             )
                         )
+                        if is_quarantined:
+                            notify_quarantine.update(
+                                {
+                                    "client_id": client_id,
+                                    "hostname": client.hostname,
+                                    "ip_address": client.ip_address,
+                                    "active_attacks": active_attacks,
+                                    "timestamp": request.timestamp if request else None,
+                                }
+                            )
             await db.commit()
             return client.last_seen.isoformat()
 
@@ -418,6 +431,20 @@ async def client_heartbeat(
             max_attempts=5,
             base_delay=0.2,
         )
+
+        if notify_quarantine and settings.ALERT_EMAIL:
+            subject = f"SENTINEL-AI Alert: Quarantine active on {notify_quarantine.get('hostname') or client_id}"
+            body = (
+                "<h3>SENTINEL-AI Quarantine Alert</h3>"
+                f"<p><strong>Client ID:</strong> {notify_quarantine.get('client_id')}</p>"
+                f"<p><strong>Hostname:</strong> {notify_quarantine.get('hostname')}</p>"
+                f"<p><strong>IP:</strong> {notify_quarantine.get('ip_address')}</p>"
+                f"<p><strong>Active attacks:</strong> {notify_quarantine.get('active_attacks')}</p>"
+                f"<p><strong>Timestamp:</strong> {notify_quarantine.get('timestamp') or datetime.utcnow().isoformat()}</p>"
+            )
+            sent = await NotificationEngine.send_email(settings.ALERT_EMAIL, subject, body)
+            if not sent:
+                logger.warning("Quarantine email alert failed for client %s", client_id)
 
         return {"status": "ok", "last_seen": last_seen}
 
