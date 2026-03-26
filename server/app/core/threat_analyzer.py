@@ -1943,19 +1943,132 @@ class ThreatAnalyzer:
     async def _analyze_domain(self, domain: str, result: Dict) -> Dict:
         """Analyze domain using VirusTotal, urlscan.io, and heuristic analysis"""
         logger.debug(f"Analyzing domain: {domain}")
-        
+
+        threats = list(result.get("threat_indicators", []))
+        warnings = result.setdefault("warnings", [])
+        self._prepare_api_tracking(result, result.get("input_type", "domain"))
+
         # Run heuristic analysis first
         heuristic_threats = self._analyze_domain_heuristics(domain)
         if heuristic_threats:
-            if "threat_indicators" not in result:
-                result["threat_indicators"] = []
-            result["threat_indicators"].extend(heuristic_threats)
+            threats.extend(heuristic_threats)
             logger.debug(f"Domain heuristic analysis found {len(heuristic_threats)} indicator(s)")
 
-        # Construct URL for domain analysis
-        url = f"https://{domain}"
+        if not result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
+            self._mark_external_apis_skipped(result)
+            result["threat_indicators"] = threats
+            return self._calculate_verdict(result)
 
-        return await self._analyze_url(url, result)
+        vt_result = None
+        urlscan_result = None
+
+        try:
+            logger.debug(f"Checking domain intelligence with VirusTotal and URLScan search: {domain}")
+            vt_result, urlscan_result = await asyncio.gather(
+                self._call_api_with_retry(
+                    "VirusTotal",
+                    lambda: asyncio.wait_for(self.virustotal.scan_domain(domain), timeout=12),
+                    retries=1,
+                ),
+                self._call_api_with_retry(
+                    "URLScan",
+                    lambda: asyncio.wait_for(self.urlscan.search_domain(domain), timeout=10),
+                    retries=1,
+                ),
+                return_exceptions=True,
+            )
+        except Exception as e:
+            logger.warning(f"Concurrent domain intelligence lookup failed for {domain}: {str(e)}")
+
+        try:
+            if isinstance(vt_result, Exception):
+                raise vt_result
+            if vt_result is None:
+                vt_result = await self.virustotal.scan_domain(domain)
+            self._track_api_result(result, "virustotal", "VirusTotal", vt_result, warnings)
+
+            if vt_result and not vt_result.get("error"):
+                attrs = (vt_result.get("data") or {}).get("attributes", {})
+                stats = attrs.get("last_analysis_stats") or attrs.get("stats") or {}
+                malicious = int(stats.get("malicious", 0) or 0)
+                suspicious = int(stats.get("suspicious", 0) or 0)
+                harmless = int(stats.get("harmless", 0) or 0)
+                undetected = int(stats.get("undetected", 0) or 0)
+                total_engines = max(0, malicious + suspicious + harmless + undetected)
+
+                if malicious >= 3:
+                    threats.append(
+                        {
+                            "source": "VirusTotal",
+                            "severity": "critical",
+                            "indicator": f"Malicious domain detection: {malicious}/{total_engines} vendor(s)",
+                            "count": malicious,
+                        }
+                    )
+                elif malicious >= 1 or suspicious >= 2:
+                    threats.append(
+                        {
+                            "source": "VirusTotal",
+                            "severity": "medium",
+                            "indicator": f"Suspicious domain reputation ({malicious} malicious, {suspicious} suspicious)",
+                            "count": malicious + suspicious,
+                        }
+                    )
+
+        except Exception as e:
+            logger.warning(f"VirusTotal domain scan failed for {domain}: {str(e)}")
+            self._track_api_result(result, "virustotal", "VirusTotal", {"error": str(e)}, warnings)
+
+        try:
+            if isinstance(urlscan_result, Exception):
+                raise urlscan_result
+            if urlscan_result is None:
+                urlscan_result = await self.urlscan.search_domain(domain)
+            self._track_api_result(result, "urlscan", "URLScan.io", urlscan_result, warnings)
+
+            if urlscan_result and not urlscan_result.get("error"):
+                results = urlscan_result.get("results", []) if isinstance(urlscan_result, dict) else []
+
+                malicious_hits = 0
+                suspicious_hits = 0
+                for item in results[:10]:
+                    verdicts = (item or {}).get("verdicts", {})
+                    overall = verdicts.get("overall", {}) if isinstance(verdicts, dict) else {}
+                    score = overall.get("score", 0) if isinstance(overall, dict) else 0
+                    is_mal = bool(overall.get("malicious", False)) if isinstance(overall, dict) else False
+                    tags = (item or {}).get("tags", [])
+
+                    if is_mal:
+                        malicious_hits += 1
+                    elif int(score or 0) > 0 or any(str(t).lower() in {"phishing", "malware", "suspicious"} for t in (tags or [])):
+                        suspicious_hits += 1
+
+                if malicious_hits > 0:
+                    threats.append(
+                        {
+                            "source": "URLScan.io",
+                            "severity": "critical",
+                            "indicator": f"Historical malicious URLScan verdict(s): {malicious_hits}",
+                            "count": malicious_hits,
+                        }
+                    )
+                elif suspicious_hits > 0:
+                    threats.append(
+                        {
+                            "source": "URLScan.io",
+                            "severity": "medium",
+                            "indicator": f"Historical suspicious URLScan signal(s): {suspicious_hits}",
+                            "count": suspicious_hits,
+                        }
+                    )
+
+        except Exception as e:
+            logger.warning(f"URLScan domain lookup failed for {domain}: {str(e)}")
+            self._track_api_result(result, "urlscan", "URLScan.io", {"error": str(e)}, warnings)
+
+        result["threat_indicators"] = threats
+        result = self._calculate_verdict(result)
+        return result
 
     def _analyze_filehash_heuristics(self, file_hash: str, hash_type: str) -> List[Dict]:
         """

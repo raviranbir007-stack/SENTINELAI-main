@@ -26,6 +26,75 @@ class VirusTotalService:
     BASE_URL = "https://www.virustotal.com/api/v3"
 
     @staticmethod
+    async def scan_domain(domain: str):
+        """
+        Get domain reputation/analysis from VirusTotal.
+
+        Args:
+            domain: Domain to lookup (e.g. example.com)
+
+        Returns:
+            Dict with VirusTotal domain results
+        """
+        logger.debug(f"VirusTotal.scan_domain called for {domain}")
+        if not settings.VIRUSTOTAL_API_KEY:
+            logger.warning("VirusTotal API key not configured")
+            return {"error": "VirusTotal API key not configured"}
+
+        cache_key = f"virustotal:domain:{domain}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if _vt_in_quota_cooldown():
+            return {"error": "VirusTotal quota cooldown active; retry later"}
+
+        if not rate_limit_allow("virustotal"):
+            return {"error": "VirusTotal rate limit reached"}
+
+        try:
+            headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                response = await client.get(
+                    f"{VirusTotalService.BASE_URL}/domains/{domain}",
+                    headers=headers,
+                    follow_redirects=True,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    set_cached(cache_key, data, service="virustotal")
+                    return data
+                elif response.status_code == 404:
+                    data = {
+                        "data": {
+                            "attributes": {
+                                "last_analysis_stats": {
+                                    "malicious": 0,
+                                    "suspicious": 0,
+                                    "undetected": 1,
+                                }
+                            }
+                        }
+                    }
+                    set_cached(cache_key, data, service="virustotal")
+                    return data
+                elif response.status_code == 429:
+                    _vt_start_quota_cooldown()
+                    logger.warning("VirusTotal quota exceeded for domain lookup; entering cooldown")
+                    return {"error": "VirusTotal quota exceeded"}
+                elif response.status_code == 400:
+                    return {"error": "VirusTotal invalid domain input"}
+                else:
+                    return {"error": f"VirusTotal API error: {response.status_code}"}
+        except httpx.TimeoutException:
+            logger.warning(f"VirusTotal timeout for domain {domain}")
+            return {"error": "VirusTotal API timeout"}
+        except Exception as e:
+            logger.error(f"VirusTotal error for domain {domain}: {str(e)}")
+            return {"error": str(e)}
+
+    @staticmethod
     async def scan_file(file_hash: str):
         """
         Get file analysis from VirusTotal by hash

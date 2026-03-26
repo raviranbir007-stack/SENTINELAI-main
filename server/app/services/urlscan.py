@@ -12,6 +12,59 @@ class URLScanService:
     BASE_URL = "https://urlscan.io/api/v1"
 
     @staticmethod
+    async def search_domain(domain: str):
+        """
+        Query URLScan historical intelligence for a domain.
+
+        Args:
+            domain: Domain to search (e.g. example.com)
+
+        Returns:
+            Dict with URLScan search results
+        """
+        logger.debug(f"URLScan.search_domain called for {domain}")
+        if not settings.URLSCAN_API_KEY:
+            logger.warning("URLScan API key not configured")
+            return {"error": "URLScan API key not configured"}
+
+        cache_key = f"urlscan:domain:{domain}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached
+
+        if not rate_limit_allow("urlscan"):
+            return {"error": "URLScan rate limit reached"}
+
+        try:
+            headers = {"API-Key": settings.URLSCAN_API_KEY}
+
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(
+                    f"{URLScanService.BASE_URL}/search/",
+                    headers=headers,
+                    params={"q": f"domain:{domain}", "size": 10},
+                    follow_redirects=True,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    set_cached(cache_key, data, service="urlscan")
+                    return data
+                elif response.status_code == 400:
+                    return {"error": "URLScan invalid domain input"}
+                elif response.status_code == 429:
+                    return {"error": "URLScan rate limit reached (429)"}
+                else:
+                    return {"error": f"URLScan API error: {response.status_code}"}
+
+        except httpx.TimeoutException:
+            logger.warning(f"URLScan timeout for domain {domain}")
+            return {"error": "URLScan API timeout"}
+        except Exception as e:
+            logger.error(f"URLScan error for domain {domain}: {str(e)}")
+            return {"error": str(e)}
+
+    @staticmethod
     async def scan_url(url: str):
         """
         Scan URL on URLScan for security threats
