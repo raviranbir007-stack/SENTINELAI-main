@@ -54,8 +54,21 @@ class ShodanService:
                     return {"error": "Invalid response format from Shodan"}
 
                 if response.status_code in (401, 403):
-                    logger.warning(f"Shodan authorization failed ({response.status_code}) for {ip_address}")
-                    return {"error": f"Shodan authorization failed ({response.status_code})"}
+                    provider_message = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            provider_message = str(body.get("error") or "").strip()
+                    except Exception:
+                        provider_message = (response.text or "").strip()
+
+                    error_text = (
+                        f"Shodan authorization failed ({response.status_code}): {provider_message}"
+                        if provider_message
+                        else f"Shodan authorization failed ({response.status_code})"
+                    )
+                    logger.warning(f"{error_text} for {ip_address}")
+                    return {"error": error_text}
 
                 if response.status_code == 429:
                     logger.warning(f"Shodan rate limit reached for {ip_address}")
