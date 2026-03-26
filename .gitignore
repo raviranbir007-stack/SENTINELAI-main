@@ -20,9 +20,6 @@ venv.bak/
 dist/
 build/
 
-# Virtual Environment
-.venv/
-
 # API Keys & Secrets
 .env
 .env.local
@@ -66,7 +63,3 @@ htmlcov/
 .ipynb_checkpoints
 
 # PyCharm
-.idea/
-
-# VS Code
-.vscode/
