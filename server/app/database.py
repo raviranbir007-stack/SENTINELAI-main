@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -12,6 +13,9 @@ from sqlalchemy.pool import NullPool
 
 
 logger = logging.getLogger(__name__)
+
+
+SQLITE_WRITE_LOCK = asyncio.Lock()
 
 
 # Ensure an async driver is used for sqlite when running async engine
@@ -138,3 +142,48 @@ async def init_db():
 async def close_db():
     """Close database connection"""
     await engine.dispose()
+
+
+def is_sqlite_lock_error(exc: Exception) -> bool:
+    """Return True when an exception corresponds to a transient SQLite lock."""
+    message = str(exc).lower()
+    return "database is locked" in message or "database table is locked" in message
+
+
+async def execute_sqlite_write(
+    db: AsyncSession,
+    operation_name: str,
+    operation,
+    max_attempts: int = 4,
+    base_delay: float = 0.2,
+):
+    """Serialize and retry SQLite write operations to reduce lock contention."""
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            if is_sqlite_async:
+                async with SQLITE_WRITE_LOCK:
+                    return await operation()
+            return await operation()
+        except OperationalError as exc:
+            last_error = exc
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+            if is_sqlite_lock_error(exc) and attempt < (max_attempts - 1):
+                backoff = base_delay * (attempt + 1)
+                logger.warning(
+                    "Database locked during %s (attempt %s/%s); retrying in %.1fs",
+                    operation_name,
+                    attempt + 1,
+                    max_attempts,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            raise
+
+    if last_error:
+        raise last_error

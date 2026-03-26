@@ -16,7 +16,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from ....database import get_db
+from ....database import execute_sqlite_write, get_db
 from ....config import settings
 from ....core.nids_ingestor import NIDSIngestor
 from ....core.terminal_monitor import terminal_monitor
@@ -352,64 +352,74 @@ async def client_heartbeat(
     Update client last_seen timestamp (heartbeat)
     """
     try:
-        query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
-        result = await db.execute(query)
-        client = result.scalar_one_or_none()
+        async def _persist_heartbeat():
+            query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
+            result = await db.execute(query)
+            client = result.scalar_one_or_none()
 
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            if not client:
+                raise HTTPException(status_code=404, detail="Client not found")
 
-        client.last_seen = datetime.utcnow()
-        client.is_active = True
+            client.last_seen = datetime.utcnow()
+            client.is_active = True
 
-        heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
-        defense_state = heartbeat_status.get("defense_coordinator") if isinstance(heartbeat_status, dict) else {}
-        if isinstance(defense_state, dict):
-            is_quarantined = bool(defense_state.get("is_quarantined"))
-            active_attacks = int(defense_state.get("active_attacks") or 0)
-            if is_quarantined or active_attacks > 0:
-                signature = {
-                    "client_id": client_id,
-                    "is_quarantined": is_quarantined,
-                    "active_attacks": active_attacks,
-                }
-                recent_log_query = (
-                    select(SystemLog)
-                    .where(SystemLog.component == "client_heartbeat")
-                    .order_by(SystemLog.timestamp.desc())
-                    .limit(5)
-                )
-                recent_result = await db.execute(recent_log_query)
-                recent_logs = recent_result.scalars().all()
-
-                should_log = True
-                cutoff = datetime.utcnow() - timedelta(minutes=2)
-                for row in recent_logs:
-                    details = row.details or {}
-                    if details.get("state_signature") == signature and (row.timestamp or cutoff) >= cutoff:
-                        should_log = False
-                        break
-
-                if should_log:
-                    db.add(
-                        SystemLog(
-                            log_level="CRITICAL" if is_quarantined else "WARNING",
-                            component="client_heartbeat",
-                            message=(
-                                f"Client heartbeat indicates {'quarantine active' if is_quarantined else 'active attack pressure'} "
-                                f"for {client_id}"
-                            ),
-                            details={
-                                "client_id": client_id,
-                                "state_signature": signature,
-                                "status": heartbeat_status,
-                                "timestamp": request.timestamp if request else None,
-                            },
-                        )
+            heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
+            defense_state = heartbeat_status.get("defense_coordinator") if isinstance(heartbeat_status, dict) else {}
+            if isinstance(defense_state, dict):
+                is_quarantined = bool(defense_state.get("is_quarantined"))
+                active_attacks = int(defense_state.get("active_attacks") or 0)
+                if is_quarantined or active_attacks > 0:
+                    signature = {
+                        "client_id": client_id,
+                        "is_quarantined": is_quarantined,
+                        "active_attacks": active_attacks,
+                    }
+                    recent_log_query = (
+                        select(SystemLog)
+                        .where(SystemLog.component == "client_heartbeat")
+                        .order_by(SystemLog.timestamp.desc())
+                        .limit(5)
                     )
-        await db.commit()
+                    recent_result = await db.execute(recent_log_query)
+                    recent_logs = recent_result.scalars().all()
 
-        return {"status": "ok", "last_seen": client.last_seen.isoformat()}
+                    should_log = True
+                    cutoff = datetime.utcnow() - timedelta(minutes=2)
+                    for row in recent_logs:
+                        details = row.details or {}
+                        if details.get("state_signature") == signature and (row.timestamp or cutoff) >= cutoff:
+                            should_log = False
+                            break
+
+                    if should_log:
+                        db.add(
+                            SystemLog(
+                                log_level="CRITICAL" if is_quarantined else "WARNING",
+                                component="client_heartbeat",
+                                message=(
+                                    f"Client heartbeat indicates {'quarantine active' if is_quarantined else 'active attack pressure'} "
+                                    f"for {client_id}"
+                                ),
+                                details={
+                                    "client_id": client_id,
+                                    "state_signature": signature,
+                                    "status": heartbeat_status,
+                                    "timestamp": request.timestamp if request else None,
+                                },
+                            )
+                        )
+            await db.commit()
+            return client.last_seen.isoformat()
+
+        last_seen = await execute_sqlite_write(
+            db,
+            f"heartbeat update for {client_id}",
+            _persist_heartbeat,
+            max_attempts=5,
+            base_delay=0.2,
+        )
+
+        return {"status": "ok", "last_seen": last_seen}
 
     except HTTPException:
         raise

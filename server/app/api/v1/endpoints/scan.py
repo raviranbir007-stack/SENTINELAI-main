@@ -24,7 +24,7 @@ from sqlalchemy.future import select
 from ....core.input_detector import InputDetector
 from ....core.report_generator import report_generator
 from ....core.threat_analyzer import threat_analyzer
-from ....database import get_db
+from ....database import execute_sqlite_write, get_db
 from ....models import ClientInstallation, ScanHistory, SystemLog
 
 logger = logging.getLogger(__name__)
@@ -457,38 +457,45 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
         max_attempts = 4
         for attempt in range(max_attempts):
             try:
-                scan_record = ScanHistory(
-                    scan_id=current_scan_id,
-                    target=scan_data.get("target", scan_data.get("filename", "")),
-                    target_type=scan_data.get("target_type", "unknown"),
-                    threat_level=scan_data.get("threat_level", "unknown"),
-                    confidence=scan_data.get("confidence", 0.0),
-                    threats_detected=scan_data.get("threats_detected", 0),
-                    analysis_data=scan_data.get("analysis", {}),
-                    client_id=client_id_fk,
-                    report_generated=scan_data.get("report_url") is not None,
-                    # Scan origin: 'manual' = user/API, 'background' = auto-monitor
-                    scan_source=scan_data.get("scan_source", "manual"),
-                    # Forensic Reliability Fields
-                    evidence_sources=scan_data.get("forensic_metadata", {}).get("evidence_sources", []),
-                    corroboration_count=scan_data.get("forensic_metadata", {}).get("corroboration_count", 0),
-                )
+                async def _persist_once():
+                    scan_record = ScanHistory(
+                        scan_id=current_scan_id,
+                        target=scan_data.get("target", scan_data.get("filename", "")),
+                        target_type=scan_data.get("target_type", "unknown"),
+                        threat_level=scan_data.get("threat_level", "unknown"),
+                        confidence=scan_data.get("confidence", 0.0),
+                        threats_detected=scan_data.get("threats_detected", 0),
+                        analysis_data=scan_data.get("analysis", {}),
+                        client_id=client_id_fk,
+                        report_generated=scan_data.get("report_url") is not None,
+                        scan_source=scan_data.get("scan_source", "manual"),
+                        evidence_sources=scan_data.get("forensic_metadata", {}).get("evidence_sources", []),
+                        corroboration_count=scan_data.get("forensic_metadata", {}).get("corroboration_count", 0),
+                    )
 
-                db.add(scan_record)
-                db.add(SystemLog(
-                    log_level="INFO",
-                    component="scanner",
-                    message=f"Scan completed: {current_scan_id} - {scan_data.get('target', '')}",
-                    details={
-                        "scan_id": current_scan_id,
-                        "target": scan_data.get("target", scan_data.get("filename", "")),
-                        "threat_level": scan_data.get("threat_level"),
-                        "target_type": scan_data.get("target_type"),
-                        "threats_detected": scan_data.get("threats_detected", 0),
-                        "confidence": scan_data.get("confidence", 0.0),
-                    },
-                ))
-                await db.commit()
+                    db.add(scan_record)
+                    db.add(SystemLog(
+                        log_level="INFO",
+                        component="scanner",
+                        message=f"Scan completed: {current_scan_id} - {scan_data.get('target', '')}",
+                        details={
+                            "scan_id": current_scan_id,
+                            "target": scan_data.get("target", scan_data.get("filename", "")),
+                            "threat_level": scan_data.get("threat_level"),
+                            "target_type": scan_data.get("target_type"),
+                            "threats_detected": scan_data.get("threats_detected", 0),
+                            "confidence": scan_data.get("confidence", 0.0),
+                        },
+                    ))
+                    await db.commit()
+
+                await execute_sqlite_write(
+                    db,
+                    f"storing scan {current_scan_id}",
+                    _persist_once,
+                    max_attempts=4,
+                    base_delay=0.2,
+                )
                 scan_data["scan_id"] = current_scan_id
 
                 try:
@@ -528,22 +535,6 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
                         "scan_id collision detected; retrying with regenerated id %s",
                         current_scan_id,
                     )
-                    continue
-                raise
-            except OperationalError as oe:
-                await db.rollback()
-                msg = str(oe).lower()
-                locked = "database is locked" in msg or "database table is locked" in msg
-                if locked and attempt < (max_attempts - 1):
-                    backoff = 0.2 * (attempt + 1)
-                    logger.warning(
-                        "Database locked while storing scan %s (attempt %s/%s); retrying in %.1fs",
-                        current_scan_id,
-                        attempt + 1,
-                        max_attempts,
-                        backoff,
-                    )
-                    await asyncio.sleep(backoff)
                     continue
                 raise
     except Exception as e:
