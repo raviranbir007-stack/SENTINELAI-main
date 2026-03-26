@@ -15,6 +15,7 @@ import signal
 import socket
 import sys
 import time
+import getpass
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -76,6 +77,7 @@ class ConsoleNoiseFilter(logging.Filter):
     # Suppress routine scan/analysis INFO lines in terminal only.
     # Warnings/errors from these loggers are still shown.
     noisy_info_only = (
+        "app.api.compat",
         "app.api.v1.endpoints.scan",
         "app.core.threat_analyzer",
         "app.main",
@@ -256,7 +258,8 @@ def run_protection_client():
                 response = _post_json("/api/v1/network/client/register", payload, timeout=8.0)
                 protection_client_id = response.get("client_id") or protection_client_id
                 if protection_client_id:
-                    logger.info("✅ Protection client registered for dashboard sync: %s", protection_client_id)
+                    # Keep registration state internally without exposing client identifiers on terminal.
+                    logger.debug("✅ Protection client registered for dashboard sync")
             except Exception as exc:
                 logger.debug("Protection client registration skipped: %s", exc)
 
@@ -535,6 +538,10 @@ def run_protection_client():
             if now_ts - last_heartbeat >= 60:
                 try:
                     heartbeat_payload = {
+                        "session": {
+                            "os_user": getpass.getuser(),
+                            "uid": os.getuid() if hasattr(os, "getuid") else None,
+                        },
                         "defense_coordinator": defense_coordinator.get_status(),
                         "vulnerability_scanner": vulnerability_scanner.get_summary(),
                         "behavioral_monitor": behavioral_monitor.get_summary(),
@@ -723,6 +730,7 @@ def run_kali_optimized():
         logger.info("✅ SENTINEL-AI PROTECTION ACTIVE")
         logger.info("="*70)
         logger.info(f"🌐 Dashboard: http://localhost:{settings.API_PORT}")
+        logger.info(f"👥 Active clients: http://localhost:{settings.API_PORT}/api/v1/network/clients?active_only=true")
         logger.info(f"📊 Status: Server | IDS | IPS | Monitor | Traffic | Defense → RUNNING")
         logger.info(f"🚨 Alerts: 3 warnings before auto-quarantine (60s intervals)")
         logger.info(f"📝 Logs: logs/ | Press Ctrl+C to stop")

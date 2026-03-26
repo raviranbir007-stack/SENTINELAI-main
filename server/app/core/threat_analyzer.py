@@ -2833,7 +2833,7 @@ class ThreatAnalyzer:
         api_threats = [t for t in threats if t.get("source") != "Heuristic Analysis"]
         
         for threat in threats:
-            source = threat.get("source")
+            source = threat.get("source") or "Heuristic Analysis"
             if source:
                 unique_sources.add(source)
                 
@@ -3078,6 +3078,15 @@ class ThreatAnalyzer:
         # Add forensic metadata for reliability tracking
         apis_called = result.get("api_results", {}).get("apis_called", [])
         apis_expected = result.get("api_results", {}).get("apis_expected", [])
+        api_status_map = result.get("api_results", {}).get("api_status", {}) or {}
+        api_status_counts: Dict[str, int] = {}
+        for meta in api_status_map.values():
+            status = str((meta or {}).get("status", "unknown") or "unknown").lower()
+            api_status_counts[status] = api_status_counts.get(status, 0) + 1
+
+        unavailable_statuses = {"not_configured", "not_authorized", "rate_limited", "error", "skipped_local_mode"}
+        available_statuses = {"checked", "clean", "no_threat"}
+
         result["forensic_metadata"] = {
             "evidence_sources": evidence_sources,
             "corroboration_count": corroboration_count,
@@ -3105,7 +3114,13 @@ class ThreatAnalyzer:
             "apis_called_list": apis_called,
             "total_apis_available": len(apis_expected),
             "scan_coverage": f"{len(apis_called)}/{len(apis_expected) or 0} relevant APIs",
-            "api_status": result.get("api_results", {}).get("api_status", {}),
+            "api_status": api_status_map,
+            "api_status_counts": api_status_counts,
+            "external_corroboration_available": (len(apis_expected) == 0) or bool(api_status_counts.get("checked", 0)),
+            "external_corroboration_unavailable_reasons": [
+                status for status in unavailable_statuses if api_status_counts.get(status, 0)
+            ],
+            "external_clean_checks": sum(api_status_counts.get(s, 0) for s in available_statuses),
         }
         
         # Enhanced: Apply Multi-API Corroboration Analysis

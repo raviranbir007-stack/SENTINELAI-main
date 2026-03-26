@@ -1953,6 +1953,8 @@ def _format_forensic_status(scan: dict) -> str:
     corroboration_count = forensic.get("corroboration_count", 0)
     corroborated = forensic.get("corroboration_threshold_met", False)
     threats_detected = int(scan.get("threats_detected", 0) or 0)
+    total_apis_available = int(forensic.get("total_apis_available", 0) or 0)
+    unavailable_reasons = forensic.get("external_corroboration_unavailable_reasons", [])
     _, tier = _compute_forensic_integrity(scan)
 
     if corroborated:
@@ -1965,6 +1967,12 @@ def _format_forensic_status(scan: dict) -> str:
         if threats_detected > 0:
             return f"API-VERIFIED, UNCORROBORATED ({apis_checked} API{'s' if apis_checked != 1 else ''}, {tier})"
         return f"VERIFIED CLEAN ({apis_checked} API{'s' if apis_checked != 1 else ''} checked, {tier})"
+
+    if threats_detected > 0 and total_apis_available > 0 and apis_checked == 0:
+        if unavailable_reasons:
+            reason_text = ", ".join(unavailable_reasons[:2])
+            return f"EVIDENCE-LIMITED ({reason_text}, {tier})"
+        return f"EVIDENCE-LIMITED (external corroboration unavailable, {tier})"
 
     if threats_detected > 0:
         return f"HEURISTIC-ONLY DETECTION ({tier}, manual validation recommended)"

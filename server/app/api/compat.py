@@ -658,8 +658,13 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             "ai_analysis": analysis_result.get("ai_analysis", {}),
             "ai_verdict_adjustment": analysis_result.get("ai_verdict_adjustment"),
         }
-        if threat_level in {"malicious", "critical"} or threats_detected > 1:
-            logger.info(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")
+        if verdict in {"malicious", "suspicious"} and threats_detected > 0:
+            logger.warning(
+                "THREAT DETECTED | type=%s | verdict=%s | indicators=%s",
+                result.get("type", req.type),
+                verdict,
+                threats_detected,
+            )
         else:
             logger.debug(f"SCAN {scan_id} | lvl={threat_level} | ind={threats_detected}")
     except Exception as e:
@@ -853,11 +858,22 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
             "forensic_metadata": api_result.get("forensic_metadata", {}),
         }
 
-        log_level = "info" if threat_level in {"malicious", "suspicious"} else "debug"
-        getattr(logger, log_level)(
-            f"FILE SCAN {scan_id} | file={filename} | verdict={final_verdict} "
-            f"| local_risk={local['risk_level']} | indicators={len(all_indicators)}"
-        )
+        if final_verdict in {"malicious", "suspicious"} and len(all_indicators) > 0:
+            logger.warning(
+                "THREAT DETECTED | type=file | file=%s | verdict=%s | indicators=%s",
+                Path(filename).name,
+                final_verdict,
+                len(all_indicators),
+            )
+        else:
+            logger.debug(
+                "FILE SCAN %s | file=%s | verdict=%s | local_risk=%s | indicators=%s",
+                scan_id,
+                Path(filename).name,
+                final_verdict,
+                local["risk_level"],
+                len(all_indicators),
+            )
 
     except HTTPException:
         raise

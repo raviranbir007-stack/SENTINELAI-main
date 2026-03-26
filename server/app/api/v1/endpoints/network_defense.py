@@ -36,6 +36,55 @@ router = APIRouter()
 
 
 _SEVERITY_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+_CLIENT_RUNTIME_STATE: dict[str, dict] = {}
+_RUNTIME_STATE_TTL_SECONDS = 15 * 60
+
+
+def _extract_runtime_identity(status_payload: Optional[dict]) -> dict:
+    """Extract lightweight runtime identity metadata from heartbeat status payload."""
+    if not isinstance(status_payload, dict):
+        return {}
+
+    session = status_payload.get("session") if isinstance(status_payload.get("session"), dict) else {}
+    raw_user = (
+        session.get("os_user")
+        or status_payload.get("current_os_user")
+        or status_payload.get("os_user")
+        or status_payload.get("user")
+    )
+
+    os_user = _sanitize_response_text(raw_user, max_len=80)
+    if os_user:
+        os_user = re.sub(r"[^A-Za-z0-9_.@-]", "", os_user)
+
+    uid_value = session.get("uid") if "uid" in session else status_payload.get("uid")
+    try:
+        uid_value = int(uid_value) if uid_value is not None else None
+    except Exception:
+        uid_value = None
+
+    data = {
+        "current_os_user": os_user or None,
+        "current_os_uid": uid_value,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    if not data["current_os_user"] and data["current_os_uid"] is None:
+        return {}
+    return data
+
+
+def _get_fresh_runtime_identity(client_id: str) -> dict:
+    runtime = _CLIENT_RUNTIME_STATE.get(client_id) or {}
+    if not runtime:
+        return {}
+
+    try:
+        updated_at = datetime.fromisoformat(str(runtime.get("updated_at")))
+        if (datetime.utcnow() - updated_at).total_seconds() > _RUNTIME_STATE_TTL_SECONDS:
+            return {}
+    except Exception:
+        return {}
+    return runtime
 
 
 def _should_auto_block(severity: ThreatSeverity, confidence: float) -> bool:
@@ -329,7 +378,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
             await db.commit()
             await db.refresh(new_client)
 
-            logger.info(f"New client registered: {client_id} ({request.hostname})")
+            logger.info("New client registered from hostname=%s", request.hostname)
 
             return {
                 "status": "registered",
@@ -354,8 +403,10 @@ async def client_heartbeat(
     """
     try:
         notify_quarantine: dict = {}
+        runtime_identity: dict = {}
 
         async def _persist_heartbeat():
+            nonlocal runtime_identity
             query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
             result = await db.execute(query)
             client = result.scalar_one_or_none()
@@ -367,6 +418,7 @@ async def client_heartbeat(
             client.is_active = True
 
             heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
+            runtime_identity = _extract_runtime_identity(heartbeat_status)
             defense_state = heartbeat_status.get("defense_coordinator") if isinstance(heartbeat_status, dict) else {}
             if isinstance(defense_state, dict):
                 is_quarantined = bool(defense_state.get("is_quarantined"))
@@ -432,6 +484,9 @@ async def client_heartbeat(
             base_delay=0.2,
         )
 
+        if runtime_identity:
+            _CLIENT_RUNTIME_STATE[client_id] = runtime_identity
+
         if notify_quarantine and settings.ALERT_EMAIL:
             subject = f"SENTINEL-AI Alert: Quarantine active on {notify_quarantine.get('hostname') or client_id}"
             body = (
@@ -478,9 +533,16 @@ async def list_clients(
         result = await db.execute(query)
         clients = result.scalars().all()
 
-        return {
-            "total": len(clients),
-            "clients": [
+        clients_payload = []
+        identified_users = set()
+
+        for c in clients:
+            runtime_identity = _get_fresh_runtime_identity(c.client_id)
+            current_user = runtime_identity.get("current_os_user")
+            if current_user:
+                identified_users.add(current_user)
+
+            clients_payload.append(
                 {
                     "client_id": c.client_id,
                     "hostname": c.hostname,
@@ -492,9 +554,17 @@ async def list_clients(
                     "protection_enabled": c.protection_enabled,
                     "blocked_ips_count": len(c.blocked_ips) if c.blocked_ips else 0,
                     "blocked_domains_count": len(c.blocked_domains) if c.blocked_domains else 0,
+                    "current_os_user": current_user,
+                    "current_os_uid": runtime_identity.get("current_os_uid"),
+                    "runtime_identity_updated_at": runtime_identity.get("updated_at"),
                 }
-                for c in clients
-            ],
+            )
+
+        return {
+            "total": len(clients_payload),
+            "identified_active_users_count": len(identified_users),
+            "identified_active_users": sorted(identified_users),
+            "clients": clients_payload,
         }
 
     except Exception as e:

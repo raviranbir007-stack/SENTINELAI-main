@@ -592,6 +592,9 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
             corroboration_met = forensic_metadata.get("corroboration_threshold_met", False)
             unique_sources = forensic_metadata.get("unique_sources", [])
             total_indicators = forensic_metadata.get("total_indicators", len(threats))
+            apis_checked_count = int(forensic_metadata.get("apis_checked", len(apis_called)) or 0)
+            total_apis_available = int(forensic_metadata.get("total_apis_available", len(apis_called)) or 0)
+            unavailable_reasons = forensic_metadata.get("external_corroboration_unavailable_reasons", [])
             
             if total_indicators == 0:
                 analysis += f"**FORENSIC STATUS: BASELINE CLEAR**\n\n"
@@ -609,9 +612,29 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 analysis += "⚠️ FORENSIC CAUTION: Single-source detection has moderate reliability. Obtain at least one independent confirmation "
                 analysis += "before initiating irreversible remediation or legal/compliance actions.\n\n"
             else:
-                analysis += f"**FORENSIC STATUS: UNCORROBORATED**\n\n"
-                analysis += "Threat signals were detected, but no independent source corroboration is currently available.\n\n"
-                analysis += "⚠️ FORENSIC CAUTION: Re-scan and validate with additional sources to reduce false positives and improve evidence quality.\n\n"
+                if total_apis_available > 0 and apis_checked_count == 0:
+                    analysis += f"**FORENSIC STATUS: EVIDENCE-LIMITED (EXTERNAL CORROBORATION UNAVAILABLE)**\n\n"
+                    analysis += (
+                        "Threat signals were detected, but relevant external corroboration sources were not reachable/configured for this scan window. "
+                        "This is an evidence-availability limitation, not proof that the signal is false.\n\n"
+                    )
+                    if unavailable_reasons:
+                        analysis += f"External corroboration blockers: {', '.join(unavailable_reasons)}.\n\n"
+                    analysis += (
+                        "⚠️ INVESTIGATION GUIDANCE: Preserve endpoint/network artifacts, re-run scan when API coverage is restored, and seek at least "
+                        "one independent external confirmation before legal/compliance escalation.\n\n"
+                    )
+                elif apis_checked_count > 0:
+                    analysis += f"**FORENSIC STATUS: API-CHECKED, NO POSITIVE CORROBORATION**\n\n"
+                    analysis += (
+                        "Threat signals were detected, but completed external checks did not independently confirm the same threat pattern. "
+                        "Treat as investigational and continue evidence collection.\n\n"
+                    )
+                    analysis += "⚠️ FORENSIC CAUTION: Re-scan and validate with additional sources to reduce false positives and improve evidence quality.\n\n"
+                else:
+                    analysis += f"**FORENSIC STATUS: UNCORROBORATED**\n\n"
+                    analysis += "Threat signals were detected, but no independent source corroboration is currently available.\n\n"
+                    analysis += "⚠️ FORENSIC CAUTION: Re-scan and validate with additional sources to reduce false positives and improve evidence quality.\n\n"
             
             # Add indicator breakdown
             if total_indicators > 0:
@@ -949,6 +972,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         corroboration_count = forensic_metadata.get("corroboration_count", 0)
         corroboration_met = forensic_metadata.get("corroboration_threshold_met", False)
         threat_indicators_count = len(threat_analysis.get("threat_indicators", []))
+        apis_checked_count = int(forensic_metadata.get("apis_checked", 0) or 0)
+        total_apis_available = int(forensic_metadata.get("total_apis_available", 0) or 0)
 
         verdict_palette = {
             "safe": {"bg": colors.HexColor("#e8f5e9"), "fg": colors.HexColor("#1b5e20")},
@@ -971,9 +996,18 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
             forensic_cell_bg = colors.HexColor("#fff3e0")
             forensic_cell_fg = colors.HexColor("#e65100")
         else:
-            forensic_threshold_text = "NO (uncorroborated)"
-            forensic_cell_bg = colors.HexColor("#ffebee")
-            forensic_cell_fg = colors.HexColor("#b71c1c")
+            if total_apis_available > 0 and apis_checked_count == 0:
+                forensic_threshold_text = "NO (external corroboration unavailable)"
+                forensic_cell_bg = colors.HexColor("#fff8e1")
+                forensic_cell_fg = colors.HexColor("#8d6e63")
+            elif apis_checked_count > 0:
+                forensic_threshold_text = "NO (API-checked, no positive corroboration)"
+                forensic_cell_bg = colors.HexColor("#ffebee")
+                forensic_cell_fg = colors.HexColor("#b71c1c")
+            else:
+                forensic_threshold_text = "NO (uncorroborated)"
+                forensic_cell_bg = colors.HexColor("#ffebee")
+                forensic_cell_fg = colors.HexColor("#b71c1c")
 
         info_data = [
             ["Report Generated:", timestamp],
