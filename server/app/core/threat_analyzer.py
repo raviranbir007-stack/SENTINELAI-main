@@ -7,6 +7,7 @@ Enhanced with Multi-API Corroboration Engine
 import asyncio
 import logging
 import os
+import socket
 import time
 from datetime import datetime
 from enum import Enum
@@ -52,13 +53,13 @@ ALL_EXTERNAL_APIS = [
         "key": "abuseipdb",
         "name": "AbuseIPDB",
         "config_attr": "ABUSEIPDB_API_KEY",
-        "supported_inputs": {"ip"},
+        "supported_inputs": {"ip", "url", "domain"},
     },
     {
         "key": "shodan",
         "name": "Shodan",
         "config_attr": "SHODAN_API_KEY",
-        "supported_inputs": {"ip"},
+        "supported_inputs": {"ip", "url", "domain"},
     },
     {
         "key": "urlscan",
@@ -576,10 +577,14 @@ class ThreatAnalyzer:
             "url": [
                 {"key": "virustotal", "name": "VirusTotal"},
                 {"key": "urlscan", "name": "URLScan.io"},
+                {"key": "abuseipdb", "name": "AbuseIPDB"},
+                {"key": "shodan", "name": "Shodan"},
             ],
             "domain": [
                 {"key": "virustotal", "name": "VirusTotal"},
                 {"key": "urlscan", "name": "URLScan.io"},
+                {"key": "abuseipdb", "name": "AbuseIPDB"},
+                {"key": "shodan", "name": "Shodan"},
             ],
             "file_hash": [
                 {"key": "virustotal", "name": "VirusTotal"},
@@ -598,6 +603,55 @@ class ThreatAnalyzer:
             reverse=True,
         )
         return ranked
+
+    def _mark_expected_apis_not_applicable(self, result: Dict, reason: str) -> None:
+        """Mark all expected API calls as not_applicable for non-actionable test inputs."""
+        api_results = result.setdefault("api_results", {})
+        api_status = api_results.setdefault("api_status", {})
+        for _api_key, meta in api_status.items():
+            if not isinstance(meta, dict):
+                continue
+            if meta.get("status") in {"pending", "unknown"}:
+                meta["status"] = "not_applicable"
+                meta["error"] = reason
+
+    def _resolve_public_ip(self, value: str, input_type: str) -> str | None:
+        """Resolve URL/domain to a public IPv4 address for IP-intel enrichment."""
+        try:
+            from urllib.parse import urlparse
+            import ipaddress
+
+            normalized = (input_type or "").lower()
+            host = ""
+            if normalized == "url":
+                host = (urlparse(str(value)).hostname or "").strip().lower().rstrip('.')
+            elif normalized == "domain":
+                host = str(value).split(":", 1)[0].strip().lower().rstrip('.')
+            elif normalized == "ip":
+                host = str(value).strip()
+            else:
+                return None
+
+            if not host:
+                return None
+
+            try:
+                ip_obj = ipaddress.ip_address(host)
+                return None if (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local) else str(ip_obj)
+            except Exception:
+                pass
+
+            reserved_tlds = (".test", ".example", ".invalid", ".localhost")
+            if host.endswith(reserved_tlds):
+                return None
+
+            resolved = socket.gethostbyname(host)
+            ip_obj = ipaddress.ip_address(resolved)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                return None
+            return str(ip_obj)
+        except Exception:
+            return None
 
     def _prepare_api_tracking(self, result: Dict, input_type: str) -> None:
         """Initialize API tracking metadata for a scan."""
@@ -1577,6 +1631,18 @@ class ThreatAnalyzer:
             logger.warning(f"Concurrent URL intelligence lookup failed for {url}: {str(e)}")
 
         try:
+            target_host = ""
+            try:
+                from urllib.parse import urlparse
+                target_host = (urlparse(url).hostname or "").strip().lower()
+            except Exception:
+                target_host = ""
+
+            if target_host.endswith((".test", ".example", ".invalid", ".localhost")):
+                self._mark_expected_apis_not_applicable(result, "Reserved test/non-routable domain input")
+                result["threat_indicators"] = threats
+                return self._calculate_verdict(result)
+
             # Scan with VirusTotal
             logger.debug(f"Scanning URL with VirusTotal: {url}")
             if isinstance(vt_result, Exception):
@@ -1705,6 +1771,58 @@ class ThreatAnalyzer:
         except Exception as e:
             logger.warning(f"URLScan scan failed for {url}: {str(e)}")
             self._track_api_result(result, "urlscan", "URLScan.io", {"error": str(e)}, warnings)
+
+        # IP enrichment path: resolve URL host to public IP and query IP intelligence APIs.
+        enrichment_ip = self._resolve_public_ip(url, "url")
+        if enrichment_ip:
+            abuse_result = None
+            shodan_result = None
+            try:
+                abuse_result, shodan_result = await asyncio.gather(
+                    self._call_api_with_retry(
+                        "AbuseIPDB",
+                        lambda: asyncio.wait_for(self.abuseipdb.check_ip(enrichment_ip), timeout=10),
+                        retries=1,
+                    ),
+                    self._call_api_with_retry(
+                        "Shodan",
+                        lambda: asyncio.wait_for(self.shodan.search_ip(enrichment_ip), timeout=10),
+                        retries=1,
+                    ),
+                    return_exceptions=True,
+                )
+            except Exception as e:
+                logger.debug(f"URL->IP enrichment failed for {url}: {e}")
+
+            try:
+                if isinstance(abuse_result, Exception):
+                    raise abuse_result
+                if abuse_result is None:
+                    abuse_result = await self.abuseipdb.check_ip(enrichment_ip)
+                self._track_api_result(result, "abuseipdb", "AbuseIPDB", abuse_result, warnings)
+            except Exception as e:
+                self._track_api_result(result, "abuseipdb", "AbuseIPDB", {"error": str(e)}, warnings)
+
+            try:
+                if isinstance(shodan_result, Exception):
+                    raise shodan_result
+                if shodan_result is None:
+                    shodan_result = await self.shodan.search_ip(enrichment_ip)
+                self._track_api_result(result, "shodan", "Shodan", shodan_result, warnings)
+            except Exception as e:
+                self._track_api_result(result, "shodan", "Shodan", {"error": str(e)}, warnings)
+        else:
+            api_status = result.setdefault("api_results", {}).setdefault("api_status", {})
+            for api_key, api_name in (("abuseipdb", "AbuseIPDB"), ("shodan", "Shodan")):
+                previous = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
+                api_status[api_key] = {
+                    "name": api_name,
+                    "status": "not_applicable",
+                    "configured": previous.get("configured", True),
+                    "applicable": True,
+                    "supported_inputs": previous.get("supported_inputs"),
+                    "error": "Target host did not resolve to a public IP",
+                }
 
         result["threat_indicators"] = threats
             
@@ -1954,6 +2072,11 @@ class ThreatAnalyzer:
             threats.extend(heuristic_threats)
             logger.debug(f"Domain heuristic analysis found {len(heuristic_threats)} indicator(s)")
 
+        if str(domain).lower().endswith((".test", ".example", ".invalid", ".localhost")):
+            self._mark_expected_apis_not_applicable(result, "Reserved test/non-routable domain input")
+            result["threat_indicators"] = threats
+            return self._calculate_verdict(result)
+
         if not result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
             self._mark_external_apis_skipped(result)
             result["threat_indicators"] = threats
@@ -2065,6 +2188,58 @@ class ThreatAnalyzer:
         except Exception as e:
             logger.warning(f"URLScan domain lookup failed for {domain}: {str(e)}")
             self._track_api_result(result, "urlscan", "URLScan.io", {"error": str(e)}, warnings)
+
+        # IP enrichment path for domain scans (AbuseIPDB + Shodan)
+        enrichment_ip = self._resolve_public_ip(domain, "domain")
+        if enrichment_ip:
+            abuse_result = None
+            shodan_result = None
+            try:
+                abuse_result, shodan_result = await asyncio.gather(
+                    self._call_api_with_retry(
+                        "AbuseIPDB",
+                        lambda: asyncio.wait_for(self.abuseipdb.check_ip(enrichment_ip), timeout=10),
+                        retries=1,
+                    ),
+                    self._call_api_with_retry(
+                        "Shodan",
+                        lambda: asyncio.wait_for(self.shodan.search_ip(enrichment_ip), timeout=10),
+                        retries=1,
+                    ),
+                    return_exceptions=True,
+                )
+            except Exception as e:
+                logger.debug(f"Domain->IP enrichment failed for {domain}: {e}")
+
+            try:
+                if isinstance(abuse_result, Exception):
+                    raise abuse_result
+                if abuse_result is None:
+                    abuse_result = await self.abuseipdb.check_ip(enrichment_ip)
+                self._track_api_result(result, "abuseipdb", "AbuseIPDB", abuse_result, warnings)
+            except Exception as e:
+                self._track_api_result(result, "abuseipdb", "AbuseIPDB", {"error": str(e)}, warnings)
+
+            try:
+                if isinstance(shodan_result, Exception):
+                    raise shodan_result
+                if shodan_result is None:
+                    shodan_result = await self.shodan.search_ip(enrichment_ip)
+                self._track_api_result(result, "shodan", "Shodan", shodan_result, warnings)
+            except Exception as e:
+                self._track_api_result(result, "shodan", "Shodan", {"error": str(e)}, warnings)
+        else:
+            api_status = result.setdefault("api_results", {}).setdefault("api_status", {})
+            for api_key, api_name in (("abuseipdb", "AbuseIPDB"), ("shodan", "Shodan")):
+                previous = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
+                api_status[api_key] = {
+                    "name": api_name,
+                    "status": "not_applicable",
+                    "configured": previous.get("configured", True),
+                    "applicable": True,
+                    "supported_inputs": previous.get("supported_inputs"),
+                    "error": "Target host did not resolve to a public IP",
+                }
 
         result["threat_indicators"] = threats
         result = self._calculate_verdict(result)
