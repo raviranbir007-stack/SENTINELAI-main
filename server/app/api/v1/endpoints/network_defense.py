@@ -378,7 +378,56 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
             await db.commit()
             await db.refresh(new_client)
 
-            logger.info("New client registered from hostname=%s", request.hostname)
+            logger.info("New client registered from hostname=%s ip=%s", request.hostname, request.ip_address)
+
+            # ── Email alert: new client enrolled ──────────────────────────
+            if settings.ALERT_EMAIL:
+                _now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                _subj = f"SENTINEL-AI: New Client Enrolled — {request.hostname}"
+                _body = (
+                    "<div style='font-family:Inter,system-ui,sans-serif;max-width:580px;"
+                    "margin:0 auto;background:#070b12;border:1px solid #22324a;"
+                    "border-radius:10px;overflow:hidden'>"
+                    "<div style='background:#0e1522;padding:16px 22px;"
+                    "border-bottom:3px solid #14b8a6'>"
+                    "<h2 style='margin:0;color:#14b8a6;font-size:1rem;font-weight:700'>"
+                    "🖥️&nbsp; SENTINEL-AI &mdash; New Client Enrolled</h2>"
+                    "</div>"
+                    "<div style='padding:20px 22px;color:#e6f0ff;font-size:0.9rem;line-height:1.6'>"
+                    "<p style='margin-top:0'>A new endpoint has successfully registered with "
+                    "the SENTINEL-AI protection network and real-time protection is now active.</p>"
+                    "<table style='width:100%;border-collapse:collapse;background:#0a1525;"
+                    "border-radius:8px;overflow:hidden;margin-bottom:14px'>"
+                    f"<tr style='border-bottom:1px solid #22324a'>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem;width:140px'>Client ID</td>"
+                    f"<td style='padding:10px 14px;font-family:monospace;color:#86efac'>{client_id}</td></tr>"
+                    f"<tr style='border-bottom:1px solid #22324a'>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Hostname</td>"
+                    f"<td style='padding:10px 14px'>{request.hostname}</td></tr>"
+                    f"<tr style='border-bottom:1px solid #22324a'>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>IP Address</td>"
+                    f"<td style='padding:10px 14px;font-family:monospace'>{request.ip_address}</td></tr>"
+                    f"<tr style='border-bottom:1px solid #22324a'>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Operating System</td>"
+                    f"<td style='padding:10px 14px'>{request.os_type}"
+                    f"{' &mdash; ' + request.os_version if request.os_version else ''}</td></tr>"
+                    f"<tr style='border-bottom:1px solid #22324a'>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Agent Version</td>"
+                    f"<td style='padding:10px 14px'>{request.version}</td></tr>"
+                    f"<tr>"
+                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Enrolled At</td>"
+                    f"<td style='padding:10px 14px'>{_now} UTC</td></tr>"
+                    "</table>"
+                    "<p style='margin:0;color:#8ea3c0;font-size:0.82rem'>"
+                    "View and manage all enrolled clients on the "
+                    "<a href='http://localhost:8000/static/clients.html' "
+                    "style='color:#14b8a6'>SENTINEL-AI Clients Dashboard</a>."
+                    "</p></div></div>"
+                )
+                asyncio.create_task(
+                    NotificationEngine.send_email(settings.ALERT_EMAIL, _subj, _body)
+                )
+            # ──────────────────────────────────────────────────────────────
 
             return {
                 "status": "registered",
@@ -565,6 +614,7 @@ async def list_clients(
             "identified_active_users_count": len(identified_users),
             "identified_active_users": sorted(identified_users),
             "clients": clients_payload,
+            "server_time": datetime.utcnow().isoformat() + "Z",
         }
 
     except Exception as e:

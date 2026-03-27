@@ -1914,6 +1914,7 @@
             .task-usage-strip { grid-template-columns: 1fr 1fr; }
             .task-mini-grid { grid-template-columns: 1fr 1fr; }
             .task-ops-grid { grid-template-columns: 1fr 1fr; }
+            .clients-overview-grid { grid-template-columns: 1fr 1fr; }
         }
 
         @media (max-width: 480px) {
@@ -1943,6 +1944,7 @@
                 </div>
                 <nav class="nav">
                     <button class="nav-btn active" data-page="dashboard">Dashboard</button>
+                    <button class="nav-btn" data-page="clients">Clients</button>
                     <button class="nav-btn" data-page="scans">Scans</button>
                     <button class="nav-btn" data-page="threats">Threats</button>
                     <button class="nav-btn" data-page="reports">Reports</button>
@@ -2253,6 +2255,22 @@
             </div>
         </section>
 
+        <!-- Active Clients Section -->
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>👥 Active Clients & Users</h2>
+                        <p>Real-time endpoint client visibility with heartbeat health and identified active OS users</p>
+                    </div>
+                    <button id="refreshActiveClientsBtn" class="btn btn-outline btn-sm" onclick="fetchActiveClients()" title="Refresh active clients">↺ Refresh</button>
+                </div>
+                <div id="activeClientsCard" class="card card-glass" style="padding: 1.1rem;">
+                    <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading active clients...</div>
+                </div>
+            </div>
+        </section>
+
         <!-- Security Task Monitor Section -->
         <section class="section">
             <div class="container">
@@ -2491,6 +2509,49 @@
                         <div id="recentReports">
                             <!-- Reports will be inserted here -->
                         </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Clients Page -->
+    <div class="page" id="clients">
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>👥 Client Operations Dashboard</h2>
+                        <p>Track online/offline clients, client IDs, active users, heartbeat state, and endpoint activity</p>
+                    </div>
+                    <button id="refreshClientsPageBtn" class="btn btn-outline btn-sm" onclick="refreshClientsPage()" title="Refresh clients dashboard">↺ Refresh</button>
+                </div>
+
+                <div id="clientsPageCard" class="card card-glass" style="padding: 1.1rem; margin-bottom: 1rem;">
+                    <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading clients dashboard...</div>
+                </div>
+
+                <div class="card card-glass" style="padding:0; margin-bottom: 1rem;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem;border-bottom:1px solid var(--border);">
+                        <h3 style="margin:0;font-size:0.95rem;">Recent Endpoint Activity (Client Perspective)</h3>
+                        <span id="clientsActivityCount" style="font-size:0.75rem;color:var(--muted-foreground);">0 events</span>
+                    </div>
+                    <div class="clients-table-wrap">
+                        <table class="clients-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Type</th>
+                                    <th>Target</th>
+                                    <th>Verdict</th>
+                                    <th>Confidence</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clientsActivityTableBody">
+                                <tr><td colspan="6" style="text-align:center; padding:1rem; color:var(--muted-foreground);">Loading activity...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -2927,6 +2988,124 @@
             background: rgba(45, 212, 191, 0.05);
             border-left: 3px solid var(--primary);
         }
+
+        .clients-panel-shell {
+            display: grid;
+            gap: 0.95rem;
+        }
+
+        .clients-overview-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem;
+        }
+
+        .clients-overview-card {
+            border: 1px solid rgba(45, 212, 191, 0.2);
+            border-radius: 10px;
+            padding: 0.78rem;
+            background: rgba(8, 24, 38, 0.58);
+            display: grid;
+            gap: 0.28rem;
+        }
+
+        .clients-overview-label {
+            font-size: 0.67rem;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: rgba(163, 214, 207, 0.9);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .clients-overview-value {
+            font-size: 1.12rem;
+            font-weight: 700;
+            color: #defcf8;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .clients-overview-note {
+            font-size: 0.72rem;
+            color: rgba(170, 210, 204, 0.84);
+        }
+
+        .clients-table-wrap {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 10px;
+            overflow: auto;
+            background: rgba(5, 17, 29, 0.74);
+        }
+
+        .clients-table {
+            width: 100%;
+            min-width: 980px;
+            border-collapse: collapse;
+        }
+
+        .clients-table th,
+        .clients-table td {
+            text-align: left;
+            padding: 0.62rem 0.72rem;
+            border-bottom: 1px solid rgba(45, 212, 191, 0.12);
+            font-size: 0.78rem;
+            color: #d8f8f4;
+        }
+
+        .clients-table th {
+            font-size: 0.67rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: rgba(163, 214, 207, 0.9);
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(8, 24, 38, 0.75);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .client-state-pill {
+            border-radius: 999px;
+            padding: 0.16rem 0.46rem;
+            font-size: 0.68rem;
+            font-family: 'JetBrains Mono', monospace;
+            border: 1px solid rgba(45, 212, 191, 0.22);
+            background: rgba(45, 212, 191, 0.1);
+            color: #d8fef8;
+        }
+
+        .client-state-pill.warning {
+            border-color: rgba(245, 158, 11, 0.45);
+            background: rgba(245, 158, 11, 0.14);
+            color: #fde68a;
+        }
+
+        .client-state-pill.danger {
+            border-color: rgba(239, 68, 68, 0.5);
+            background: rgba(239, 68, 68, 0.16);
+            color: #fecaca;
+        }
+
+        .clients-identified-users {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.42rem;
+        }
+
+        .client-user-chip {
+            border-radius: 999px;
+            border: 1px solid rgba(45, 212, 191, 0.25);
+            padding: 0.16rem 0.46rem;
+            font-size: 0.68rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: rgba(210, 251, 245, 0.96);
+            background: rgba(45, 212, 191, 0.1);
+        }
+
+        .client-user-chip.muted {
+            color: rgba(171, 201, 196, 0.9);
+            border-color: rgba(148, 163, 184, 0.32);
+            background: rgba(100, 116, 139, 0.14);
+        }
         #toastContainer {
             position: fixed;
             top: 1rem;
@@ -2973,6 +3152,8 @@
         let latestSecurityPosture = null;
         let latestSystemHealth = null;
         let latestMonitoringStats = null;
+        let latestActiveClients = null;
+        let knownClientIdsForAlerts = null; // null = first load, Set after first fetch
         let securityTaskHistory = {
             cpu: [],
             scans: [],
@@ -3005,6 +3186,7 @@
             quarantine: { label: 'Quarantine', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
             health: { label: 'System Health', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
             monitor: { label: 'Monitoring Stats', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
+            clients: { label: 'Active Clients', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
         };
 
         const FRESHNESS_THRESHOLDS_MS = {
@@ -3025,6 +3207,7 @@
             dashboardSecurityPosture: '/api/v1/dashboard/security-posture',
             dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
             dashboardDefenseResponse: '/api/v1/network/event/respond',
+            dashboardActiveClients: '/api/v1/network/clients?active_only=false',
 
             // Monitoring activity feeds
             monitoringWebsites: '/api/v1/monitoring/websites',
@@ -3511,6 +3694,7 @@
             return Promise.allSettled([
                 fetchSystemHealth(),
                 fetchMonitoringStats(),
+                fetchActiveClients(),
                 fetchDashboardStats(),
                 fetchThreats(),
                 fetchLogs(),
@@ -5238,6 +5422,8 @@
 
             if (page === 'scans') {
                 fetchScanHistory();
+            } else if (page === 'clients') {
+                refreshClientsPage();
             } else if (page === 'reports') {
                 renderAllReportsPage();
             } else if (page === 'dashboard') {
@@ -5390,6 +5576,7 @@
                     fetchApiStatus();
                     fetchSystemHealth();
                     fetchMonitoringStats();
+                    fetchActiveClients();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
                     refreshLiveActivity();
@@ -6893,11 +7080,221 @@
                 if (Array.isArray(payload.recent_activity) && payload.recent_activity.length > 0) {
                     renderLiveActivity(payload.recent_activity);
                 }
+                renderClientActivityPanel();
             } catch (error) {
                 latestMonitoringStats = null;
                 updateSourceSignal('monitor', { ok: false, error: error?.message || 'monitoring_stats_failed' });
                 renderSecurityTaskMonitor();
+                renderClientActivityPanel();
             }
+        }
+
+        async function fetchActiveClients() {
+            const dashboardContainer = document.getElementById('activeClientsCard');
+            const clientsPageContainer = document.getElementById('clientsPageCard');
+            if (!dashboardContainer && !clientsPageContainer) return;
+            await runWithRefreshIndicator('refreshActiveClientsBtn', async () => {
+                try {
+                    const data = await apiRequest(API_ENDPOINTS.dashboardActiveClients);
+                    const payload = asObject(data);
+                    if (!payload) {
+                        throw new Error('Invalid active clients payload');
+                    }
+                    latestActiveClients = payload;
+
+                    // ── New-client alert ────────────────────────────────────────
+                    try {
+                        const _allClients = asArray(payload.clients);
+                        const _newIds = new Set(_allClients.map(c => c?.client_id).filter(Boolean));
+                        if (knownClientIdsForAlerts === null) {
+                            // First load — just record baseline, no notification
+                            knownClientIdsForAlerts = _newIds;
+                        } else {
+                            const _fresh = _allClients.filter(c => c?.client_id && !knownClientIdsForAlerts.has(c.client_id));
+                            for (const nc of _fresh) {
+                                const _detail = [
+                                    nc.hostname ? `Host: ${nc.hostname}` : null,
+                                    nc.ip_address ? `IP: ${nc.ip_address}` : null,
+                                    nc.os_type ? `OS: ${nc.os_type}` : null,
+                                ].filter(Boolean).join(' · ');
+                                addNotification(
+                                    `🖥️ New Client Enrolled: ${nc.client_id}`,
+                                    _detail || 'A new endpoint has joined the protection network.',
+                                    'info',
+                                    `new_client:${nc.client_id}`,
+                                    0  // no cooldown — always show for genuinely new client IDs
+                                );
+                                showToast(`New client enrolled: ${nc.hostname || nc.client_id}`, 'success');
+                            }
+                            knownClientIdsForAlerts = _newIds;
+                        }
+                    } catch (_e) { /* non-critical — ignore */ }
+                    // ──────────────────────────────────────────────
+                    updateSourceSignal('clients', { ok: true, dataTimestamp: Date.now() });
+                    renderActiveClients(payload);
+                    renderClientActivityPanel();
+                } catch (error) {
+                    latestActiveClients = null;
+                    updateSourceSignal('clients', { ok: false, error: error?.message || 'clients_failed' });
+                    if (dashboardContainer) {
+                        dashboardContainer.innerHTML = '<div style="padding:1rem; color:var(--muted-foreground);">Active clients data unavailable.</div>';
+                    }
+                    if (clientsPageContainer) {
+                        clientsPageContainer.innerHTML = '<div style="padding:1rem; color:var(--muted-foreground);">Active clients data unavailable.</div>';
+                    }
+                    updateSystemStatusPanel();
+                }
+            });
+        }
+
+        function clientTimeSince(isoTime) {
+            if (!isoTime) return 'No heartbeat';
+            const age = Date.now() - (Date.parse(isoTime) || 0);
+            if (!Number.isFinite(age) || age < 0) return 'No heartbeat';
+            if (age < 60 * 1000) return `${Math.floor(age / 1000)}s ago`;
+            if (age < 60 * 60 * 1000) return `${Math.floor(age / (60 * 1000))}m ago`;
+            return `${Math.floor(age / (60 * 60 * 1000))}h ago`;
+        }
+
+        function clientStateFromHeartbeat(isoTime) {
+            if (!isoTime) return { label: 'offline', tone: 'danger' };
+            const age = Date.now() - (Date.parse(isoTime) || 0);
+            if (!Number.isFinite(age) || age < 0) return { label: 'unknown', tone: 'warning' };
+            if (age <= 2 * 60 * 1000) return { label: 'live', tone: '' };
+            if (age <= 10 * 60 * 1000) return { label: 'warning', tone: 'warning' };
+            return { label: 'offline', tone: 'danger' };
+        }
+
+        function buildActiveClientsMarkup(data) {
+            const clients = asArray(data.clients);
+            const total = toFiniteNumber(data.total, clients.length);
+            const users = asArray(data.identified_active_users);
+            const usersCount = toFiniteNumber(data.identified_active_users_count, users.length);
+            const withIdentity = clients.filter(c => !!c?.current_os_user).length;
+            const onlineClients = clients.filter(c => clientStateFromHeartbeat(c?.last_seen).label === 'live').length;
+            const warningClients = clients.filter(c => clientStateFromHeartbeat(c?.last_seen).label === 'warning').length;
+            const offlineClients = clients.filter(c => clientStateFromHeartbeat(c?.last_seen).label === 'offline').length;
+
+            return `
+                <div class="clients-panel-shell">
+                    <div class="clients-overview-grid">
+                        <div class="clients-overview-card">
+                            <div class="clients-overview-label">Total Clients</div>
+                            <div class="clients-overview-value">${total}</div>
+                            <div class="clients-overview-note">All registered endpoint clients</div>
+                        </div>
+                        <div class="clients-overview-card">
+                            <div class="clients-overview-label">Online / Warning / Offline</div>
+                            <div class="clients-overview-value">${onlineClients} / ${warningClients} / ${offlineClients}</div>
+                            <div class="clients-overview-note">Heartbeat state distribution</div>
+                        </div>
+                        <div class="clients-overview-card">
+                            <div class="clients-overview-label">Identified Users</div>
+                            <div class="clients-overview-value">${usersCount}</div>
+                            <div class="clients-overview-note">Distinct OS users in active sessions</div>
+                        </div>
+                        <div class="clients-overview-card">
+                            <div class="clients-overview-label">Identity Coverage</div>
+                            <div class="clients-overview-value">${withIdentity}/${total || 0}</div>
+                            <div class="clients-overview-note">Clients reporting current OS user</div>
+                        </div>
+                    </div>
+
+                    <div class="clients-identified-users">
+                        ${(users.length ? users : ['No active user identities reported']).map(u => `<span class="client-user-chip ${users.length ? '' : 'muted'}">${escHtml(u)}</span>`).join('')}
+                    </div>
+
+                    <div class="clients-table-wrap">
+                        <table class="clients-table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Hostname</th>
+                                    <th>IP Address</th>
+                                    <th>OS/User</th>
+                                    <th>Version</th>
+                                    <th>Protection</th>
+                                    <th>Blocks (IP/Domain)</th>
+                                    <th>Heartbeat</th>
+                                    <th>State</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${clients.length ? clients.map(client => {
+                                    const state = clientStateFromHeartbeat(client?.last_seen);
+                                    const userText = client?.current_os_user ? `${client.current_os_user}${client?.current_os_uid !== null && client?.current_os_uid !== undefined ? ` (uid:${client.current_os_uid})` : ''}` : 'N/A';
+                                    const protectionState = client?.protection_enabled ? 'enabled' : 'disabled';
+                                    const blocks = `${toFiniteNumber(client?.blocked_ips_count, 0)}/${toFiniteNumber(client?.blocked_domains_count, 0)}`;
+                                    return `
+                                        <tr>
+                                            <td><code class="threat-target">${escHtml(client?.client_id || 'N/A')}</code></td>
+                                            <td>${escHtml(client?.hostname || 'N/A')}</td>
+                                            <td style="font-family:'JetBrains Mono',monospace;">${escHtml(client?.ip_address || 'N/A')}</td>
+                                            <td>${escHtml((client?.os_type || 'N/A') + ' / ' + userText)}</td>
+                                            <td>${escHtml(client?.version || 'N/A')}</td>
+                                            <td><span class="client-state-pill ${protectionState === 'enabled' ? '' : 'warning'}">${escHtml(protectionState.toUpperCase())}</span></td>
+                                            <td style="font-family:'JetBrains Mono',monospace;">${blocks}</td>
+                                            <td>${escHtml(clientTimeSince(client?.last_seen))}</td>
+                                            <td><span class="client-state-pill ${state.tone}">${escHtml(state.label.toUpperCase())}</span></td>
+                                        </tr>
+                                    `;
+                                }).join('') : '<tr><td colspan="9" style="text-align:center; padding:1rem; color:var(--muted-foreground);">No registered clients found.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderActiveClients(data) {
+            const dashboardCard = document.getElementById('activeClientsCard');
+            const clientsPageCard = document.getElementById('clientsPageCard');
+            const html = buildActiveClientsMarkup(data);
+            if (dashboardCard) dashboardCard.innerHTML = html;
+            if (clientsPageCard) clientsPageCard.innerHTML = html;
+            updateSystemStatusPanel();
+        }
+
+        function renderClientActivityPanel() {
+            const tbody = document.getElementById('clientsActivityTableBody');
+            const countEl = document.getElementById('clientsActivityCount');
+            if (!tbody) return;
+            const payload = asObject(latestMonitoringStats) || {};
+            const items = asArray(payload.recent_activity).slice(0, 60);
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1rem; color:var(--muted-foreground);">No recent endpoint activity available.</td></tr>';
+                if (countEl) countEl.textContent = '0 events';
+                return;
+            }
+            tbody.innerHTML = items.map(item => {
+                const type = String(item?.type || 'unknown').toUpperCase();
+                const target = String(item?.value || 'N/A');
+                const shortTarget = target.length > 72 ? `${target.slice(0, 69)}…` : target;
+                const verdict = String(item?.verdict || 'unknown');
+                const conf = item?.confidence !== undefined && item?.confidence !== null
+                    ? `${Math.round(Number(item.confidence) * 100)}%`
+                    : 'N/A';
+                const source = item?.automated ? 'AUTO' : 'MANUAL';
+                const when = formatRelativeTime(item?.time);
+                return `
+                    <tr>
+                        <td>${escHtml(when)}</td>
+                        <td>${escHtml(type)}</td>
+                        <td><code class="threat-target" title="${escHtml(target)}">${escHtml(shortTarget)}</code></td>
+                        <td>${verdictBadgeHtml(verdict)}</td>
+                        <td style="font-family:'JetBrains Mono',monospace;">${escHtml(conf)}</td>
+                        <td>${escHtml(source)}</td>
+                    </tr>
+                `;
+            }).join('');
+            if (countEl) countEl.textContent = `${items.length} events`;
+            updateSystemStatusPanel();
+        }
+
+        function refreshClientsPage() {
+            return Promise.allSettled([fetchActiveClients(), fetchMonitoringStats()]).finally(() => {
+                renderClientActivityPanel();
+            });
         }
 
         // ── Live Activity Monitor ────────────────────────────────────────────
@@ -7807,6 +8204,7 @@
             fetchApiStatus();
             fetchSystemHealth();
             fetchMonitoringStats();
+            fetchActiveClients();
             fetchSecurityPosture();
             fetchQuarantineInventory();
             refreshLiveActivity();
@@ -7853,6 +8251,7 @@
                     fetchApiStatus();
                     fetchSystemHealth();
                     fetchMonitoringStats();
+                    fetchActiveClients();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
                     refreshLiveActivity();
