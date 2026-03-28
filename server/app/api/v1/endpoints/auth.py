@@ -1,3 +1,21 @@
+from fastapi import Depends, HTTPException, status
+from ....models import User
+from ....database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def get_current_user_obj(db: AsyncSession = Depends(get_db)):
+    # This is a placeholder. Replace with real authentication (token/cookie based)
+    user = await db.execute("SELECT * FROM users WHERE username='admin'")
+    user_obj = user.fetchone()
+    if not user_obj:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user_obj
+
+async def admin_required(user=Depends(get_current_user_obj)):
+    # In real code, check user['is_admin'] or similar
+    if not user or not getattr(user, 'is_admin', True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
 from fastapi import APIRouter
 from pydantic import BaseModel
 

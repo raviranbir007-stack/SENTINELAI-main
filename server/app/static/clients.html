@@ -418,6 +418,31 @@
     </div>
   </div>
 
+  <!-- Pending Clients Section (Admin Only) -->
+  <div id="pendingClientsSection" style="margin-bottom:32px;display:none">
+    <div class="tbl-top">
+      <span class="tbl-top-lbl">Pending Client Approvals</span>
+      <span class="tbl-top-ct" id="pendingCount">0 pending</span>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Client ID</th>
+            <th>Hostname</th>
+            <th>IP Address</th>
+            <th>OS</th>
+            <th>Version</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="pendingTb">
+          <tr class="empty-row"><td colspan="6"><span class="e-icon">⏳</span><div class="e-msg">Loading…</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="tbl-shell">
     <div class="tbl-top">
       <span class="tbl-top-lbl">Enrolled Clients</span>
@@ -602,7 +627,7 @@
   /* ── Render ── */
   function render() {
     const q    = (G('si').value||'').trim().toLowerCase();
-    let list   = sorted(S.clients);
+    let list   = sorted(S.clients.filter(c => c.is_active !== false));
     if (S.filter !== 'all') list = list.filter(c => hbState(c.last_seen) === S.filter);
     if (q) list = list.filter(c =>
       [c.client_id,c.hostname,c.ip_address,c.os_type,c.current_os_user,c.version,c.network_segment]
@@ -610,12 +635,12 @@
     );
 
     const all   = S.clients;
-    const nL    = all.filter(c => hbState(c.last_seen)==='live').length;
-    const nW    = all.filter(c => hbState(c.last_seen)==='warning').length;
-    const nO    = all.filter(c => hbState(c.last_seen)==='offline').length;
-    const users = [...new Set(all.map(c=>c.current_os_user).filter(Boolean))];
-    const withId = all.filter(c=>!!c.current_os_user).length;
-    const total  = all.length;
+    const nL    = all.filter(c => hbState(c.last_seen)==='live' && c.is_active !== false).length;
+    const nW    = all.filter(c => hbState(c.last_seen)==='warning' && c.is_active !== false).length;
+    const nO    = all.filter(c => hbState(c.last_seen)==='offline' && c.is_active !== false).length;
+    const users = [...new Set(all.filter(c => c.is_active !== false).map(c=>c.current_os_user).filter(Boolean))];
+    const withId = all.filter(c=>!!c.current_os_user && c.is_active !== false).length;
+    const total  = all.filter(c => c.is_active !== false).length;
     const pct    = total>0 ? Math.round(withId/total*100) : 0;
 
     G('kT').textContent  = String(total);
@@ -640,6 +665,31 @@
     }
 
     G('rc').textContent = `${list.length} client${list.length!==1?'s':''}${S.filter!=='all'?` · ${S.filter}`:''}${q?` · "${q}"`:''}`;
+
+    // --- Pending Clients Section ---
+    const pending = S.clients.filter(c => c.is_active === false);
+    const pendingSection = G('pendingClientsSection');
+    const pendingTb = G('pendingTb');
+    G('pendingCount').textContent = `${pending.length} pending`;
+    if (pending.length) {
+      pendingSection.style.display = '';
+      pendingTb.innerHTML = pending.map(c =>
+        `<tr>
+          <td><span class="cid-main">${esc(c.client_id||'N/A')}</span></td>
+          <td>${esc(c.hostname||'N/A')}</td>
+          <td><span class="mono">${esc(c.ip_address||'N/A')}</span></td>
+          <td>${osIcon(c.os_type)} ${esc(c.os_type||'N/A')}</td>
+          <td>${esc(c.version||'?')}</td>
+          <td>
+            <button class="row-view-btn" onclick="approveClient('${esc(c.client_id||'')}', true)">✅ Approve</button>
+            <button class="row-view-btn" style="color:var(--danger);border-color:var(--danger)" onclick="approveClient('${esc(c.client_id||'')}', false)">❌ Deny</button>
+          </td>
+        </tr>`
+      ).join('');
+    } else {
+      pendingSection.style.display = 'none';
+      pendingTb.innerHTML = `<tr class='empty-row'><td colspan='6'><span class='e-icon'>📡</span><div class='e-msg'>No pending clients.</div></td></tr>`;
+    }
 
     if (!list.length) {
       const noClients = !total;
@@ -709,6 +759,28 @@
         </td>
       </tr>`;
     }).join('');
+  }
+
+  // Approve/Deny client (admin only)
+  function approveClient(clientId, approve) {
+    if (!clientId) return;
+    const action = approve ? 'approve' : 'deny';
+    if (!confirm(`Are you sure you want to ${approve ? 'APPROVE' : 'DENY'} this client?`)) return;
+    fetch('/api/v1/network/client/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, approve: approve })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.success) {
+        alert(`Client ${approve ? 'approved' : 'denied and removed'} successfully.`);
+        load();
+      } else {
+        alert('Failed: ' + (d.error || d.message || 'Unknown error'));
+      }
+    })
+    .catch(e => alert('Error: ' + e));
   }
 
 

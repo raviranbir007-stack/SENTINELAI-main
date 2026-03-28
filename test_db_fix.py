@@ -22,8 +22,8 @@ def _check_client_db() -> bool:
         print(f"✓ Removed existing {db_path}")
     
     # Initialize database using the ActivityLogger
-    sys.path.insert(0, str(Path(__file__).parent / "client"))
-    from scanner.activity_logger import ActivityLogger
+    sys.path.insert(0, str(Path(__file__).parent))
+    from client.scanner.activity_logger import ActivityLogger
     
     logger = ActivityLogger(db_path=str(db_path))
     print(f"✓ ActivityLogger initialized")
@@ -72,8 +72,8 @@ def _check_server_db() -> bool:
         print(f"✓ Removed existing {db_path}")
     
     # Initialize database using ActivityDatabase
-    sys.path.insert(0, str(Path(__file__).parent / "server"))
-    from app.core.activity_database import ActivityDatabase
+    sys.path.insert(0, str(Path(__file__).parent))
+    from server.app.core.activity_database import ActivityDatabase
     
     activity_db = ActivityDatabase(db_path=str(db_path))
     print(f"✓ ActivityDatabase initialized")

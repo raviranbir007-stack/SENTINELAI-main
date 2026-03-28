@@ -251,7 +251,9 @@ echo "📊 Check Status:"
 echo "   tail -f sentinel_client.log"
 echo ""
 echo "🌐 Server Dashboard:"
-echo "   $SERVER_URL/static/index.html"
+if [ "$(whoami)" = "admin" ]; then
+    echo "   $SERVER_URL/static/index.html"
+fi
 echo ""
 
 if [ -f ".client_id" ]; then

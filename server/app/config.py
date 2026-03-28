@@ -17,6 +17,9 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
+    # SentinelAI Client Master Password and Admin Email
+    MASTER_CLIENT_PASSWORD: str = os.getenv("MASTER_CLIENT_PASSWORD", "changeme-please")
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "your-admin@email.com")
     model_config = ConfigDict(env_file=".env", extra="ignore")
     # Project metadata
     PROJECT_NAME: str = "SENTINEL-AI"
@@ -117,6 +120,7 @@ class Settings(BaseSettings):
     SENTINEL_AUTO_BLOCK_MIN_SEVERITY: str = os.getenv("SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high")
     SENTINEL_ENABLE_MANUAL_APPROVAL: bool = os.getenv("SENTINEL_ENABLE_MANUAL_APPROVAL", "True").lower() == "true"
     SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE: float = float(os.getenv("SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", "0.65"))
+
 
 
 settings = Settings()

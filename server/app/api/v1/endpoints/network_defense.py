@@ -1,4 +1,102 @@
+from app.api.v1.endpoints.auth import admin_required
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from fastapi import Request, APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import smtplib
+from email.mime.text import MIMEText
+import logging
+
+from app.config import settings
+from app.database import get_db
+
+# Dependency to enforce only approved clients can access features
+async def approved_client_required(request: Request, db: AsyncSession = Depends(get_db)):
+    client_id = request.headers.get("X-Client-ID")
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Missing client ID header")
+    query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    if not client or not client.is_active:
+        raise HTTPException(status_code=403, detail="Client not approved or inactive")
+    return client
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+class ClientRegistrationRequest(BaseModel):
+    hostname: str
+    ip_address: str
+    os_type: str
+    version: str
+    master_password: str
+
+@router.post("/client/register")
+async def register_client(request: ClientRegistrationRequest, db: AsyncSession = Depends(get_db)):
+    # Check master password
+    if request.master_password != settings.MASTER_CLIENT_PASSWORD:
+        return JSONResponse({"success": False, "message": "Invalid master password."}, status_code=403)
+
+    # Mark client as pending approval
+    new_client = ClientInstallation(
+        client_id=str(uuid.uuid4()),
+        hostname=request.hostname,
+        ip_address=request.ip_address,
+        os_type=request.os_type,
+        version=request.version,
+        is_active=False  # Not active until admin approves
+    )
+    db.add(new_client)
+    await db.commit()
+    await db.refresh(new_client)
+
+    # Notify admin (dashboard notification + email)
+    _notify_admin_new_client(new_client)
+
+    return JSONResponse({"success": True, "message": "Registration pending admin approval."})
+
+def _notify_admin_new_client(client):
+    # Email notification
+    try:
+        msg = MIMEText(f"New client registration request:\n\nHostname: {client.hostname}\nIP: {client.ip_address}\nOS: {client.os_type}\nVersion: {client.version}\n\nApprove in the admin dashboard.")
+        msg["Subject"] = "SentinelAI: New Client Registration Request"
+        msg["From"] = settings.FROM_EMAIL
+        msg["To"] = settings.ADMIN_EMAIL
+        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
+            server.starttls()
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(settings.FROM_EMAIL, [settings.ADMIN_EMAIL], msg.as_string())
+    except Exception as e:
+        logger.warning(f"Failed to send admin email: {e}")
+    # TODO: Add dashboard notification logic (frontend integration required)
+
+# Admin approval endpoint
+class ClientApprovalRequest(BaseModel):
+    client_id: str
+    approve: bool
+
+@router.post("/client/approve")
+async def approve_client(request: ClientApprovalRequest, db: AsyncSession = Depends(get_db), user=Depends(admin_required)):
+    query = select(ClientInstallation).where(ClientInstallation.client_id == request.client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    if not client:
+        return JSONResponse({"success": False, "message": "Client not found."}, status_code=404)
+    if request.approve:
+        client.is_active = True
+        await db.commit()
+        await db.refresh(client)
+        return JSONResponse({"success": True, "message": "Client approved and activated."})
+    else:
+        await db.delete(client)
+        await db.commit()
+        return JSONResponse({"success": True, "message": "Client registration denied and removed."})
+# --- Block & Shutdown and Resume endpoints (move from client_admin.py for correct routing) ---
+from fastapi.responses import JSONResponse
+from ..endpoints.auth import admin_required
 # --- Block & Shutdown and Resume endpoints (move from client_admin.py for correct routing) ---
 """
 Network Monitoring and Defense System
@@ -487,6 +585,7 @@ async def client_heartbeat(
     client_id: str,
     request: Optional[ClientHeartbeatRequest] = None,
     db: AsyncSession = Depends(get_db),
+    client=Depends(approved_client_required),
 ):
     """
     Update client last_seen timestamp (heartbeat)
@@ -605,6 +704,7 @@ async def client_heartbeat(
 async def list_clients(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
+    user=Depends(admin_required),
 ):
     """
     List all client installations
@@ -669,6 +769,7 @@ async def report_attack(
     request: AttackReportRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    client=Depends(approved_client_required),
 ):
     """
     Report an attack detected on a client
