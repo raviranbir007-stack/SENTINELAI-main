@@ -1,3 +1,107 @@
+
+# ...existing code...
+
+# Add the resume_client endpoint after router is defined
+
+@router.post("/clients/{client_id}/resume")
+async def resume_client(client_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Resume all SENTINEL-AI features and reactivate the client system.
+    - Enables all features for the client in the database
+    - Removes shutdown/disable flags in runtime state
+    """
+    try:
+        # Fetch client
+        result = await db.execute(select(ClientInstallation).where(ClientInstallation.client_id == client_id))
+        client = result.scalar_one_or_none()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Enable all features
+        client.protection_enabled = True
+        client.is_active = True
+        client.updated_at = datetime.utcnow()
+
+        # Optionally, log the action
+        log_entry = SystemLog(
+            event_type="resume_client",
+            client_id=client_id,
+            message="All features resumed and client reactivated.",
+            created_at=datetime.utcnow(),
+        )
+        db.add(log_entry)
+
+        # Commit DB changes
+        await db.commit()
+
+        # Remove shutdown/disable flags in runtime state
+        runtime = _CLIENT_RUNTIME_STATE.get(client_id)
+        if runtime is not None:
+            runtime['shutdown'] = False
+            runtime['features_disabled'] = False
+            runtime['updated_at'] = datetime.utcnow().isoformat()
+
+        # Optionally, notify the client agent via NotificationEngine or other mechanism
+        # NotificationEngine.send_resume(client_id)  # Uncomment if implemented
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resume client {client_id}: {str(e)}")
+        await db.rollback()
+        return {"success": False, "error": str(e)}
+@router.post("/clients/{client_id}/block_shutdown")
+async def block_and_shutdown_client(client_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Block all SENTINEL-AI features and shutdown the client system.
+    - Disables all features for the client in the database
+    - Sends a shutdown command to the client agent (if supported)
+    """
+    try:
+        # Fetch client
+        result = await db.execute(select(ClientInstallation).where(ClientInstallation.client_id == client_id))
+        client = result.scalar_one_or_none()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Disable all features
+        client.protection_enabled = False
+        client.is_active = False
+        client.blocked_ips = []
+        client.blocked_domains = []
+        client.updated_at = datetime.utcnow()
+
+        # Optionally, log the action
+        log_entry = SystemLog(
+            event_type="block_shutdown",
+            client_id=client_id,
+            message="All features blocked and shutdown command issued.",
+            created_at=datetime.utcnow(),
+        )
+        db.add(log_entry)
+
+        # Commit DB changes
+        await db.commit()
+
+        # Send shutdown command to client agent (if runtime state exists)
+        # This assumes you have a mechanism to send commands to the client, e.g., via a message queue or runtime state
+        runtime = _CLIENT_RUNTIME_STATE.get(client_id)
+        if runtime is not None:
+            runtime['shutdown'] = True
+            runtime['features_disabled'] = True
+            runtime['updated_at'] = datetime.utcnow().isoformat()
+
+        # Optionally, notify the client agent via NotificationEngine or other mechanism
+        # NotificationEngine.send_shutdown(client_id)  # Uncomment if implemented
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to block and shutdown client {client_id}: {str(e)}")
+        await db.rollback()
+        return {"success": False, "error": str(e)}
 """
 Network Monitoring and Defense System
 Tracks attacks across all client installations and implements defense mechanisms
