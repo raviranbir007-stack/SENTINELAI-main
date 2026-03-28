@@ -1,55 +1,5 @@
-
-@router.post("/clients/{client_id}/block_shutdown")
-async def block_and_shutdown_client(client_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Block all SENTINEL-AI features and shutdown the client system.
-    - Disables all features for the client in the database
-    - Sends a shutdown command to the client agent (if supported)
-    """
-    try:
-        # Fetch client
-        result = await db.execute(select(ClientInstallation).where(ClientInstallation.client_id == client_id))
-        client = result.scalar_one_or_none()
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
-
-        # Disable all features
-        client.protection_enabled = False
-        client.is_active = False
-        client.blocked_ips = []
-        client.blocked_domains = []
-        client.updated_at = datetime.utcnow()
-
-        # Optionally, log the action
-        log_entry = SystemLog(
-            event_type="block_shutdown",
-            client_id=client_id,
-            message="All features blocked and shutdown command issued.",
-            created_at=datetime.utcnow(),
-        )
-        db.add(log_entry)
-
-        # Commit DB changes
-        await db.commit()
-
-        # Send shutdown command to client agent (if runtime state exists)
-        # This assumes you have a mechanism to send commands to the client, e.g., via a message queue or runtime state
-        runtime = _CLIENT_RUNTIME_STATE.get(client_id)
-        if runtime is not None:
-            runtime['shutdown'] = True
-            runtime['features_disabled'] = True
-            runtime['updated_at'] = datetime.utcnow().isoformat()
-
-        # Optionally, notify the client agent via NotificationEngine or other mechanism
-        # NotificationEngine.send_shutdown(client_id)  # Uncomment if implemented
-
-        return {"success": True}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to block and shutdown client {client_id}: {str(e)}")
-        await db.rollback()
-        return {"success": False, "error": str(e)}
+from fastapi.responses import JSONResponse
+# --- Block & Shutdown and Resume endpoints (move from client_admin.py for correct routing) ---
 """
 Network Monitoring and Defense System
 Tracks attacks across all client installations and implements defense mechanisms
@@ -85,6 +35,44 @@ from ....models import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# --- Block & Shutdown and Resume endpoints (must be after router is defined) ---
+from fastapi.responses import JSONResponse
+
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+@router.post("/clients/{client_id}/block_shutdown")
+async def block_and_shutdown_client(client_id: str, db: AsyncSession = Depends(get_db)):
+    logger.info(f"[BLOCK] Attempting to block client {client_id}")
+    query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    if not client:
+        logger.error(f"[BLOCK] Client not found: {client_id}")
+        return JSONResponse({"success": False, "message": "Client not found."}, status_code=404)
+    client.protection_enabled = False
+    await db.commit()
+    await db.refresh(client)
+    logger.info(f"[BLOCK] Client {client_id} protection_enabled set to {client.protection_enabled}")
+    return JSONResponse({"success": True, "message": f"Client has been blocked and shut down. protection_enabled={client.protection_enabled}. This action is reversible via the Resume button."})
+
+@router.post("/clients/{client_id}/resume")
+async def resume_client(client_id: str, db: AsyncSession = Depends(get_db)):
+    logger.info(f"[RESUME] Attempting to resume client {client_id}")
+    query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    if not client:
+        logger.error(f"[RESUME] Client not found: {client_id}")
+        return JSONResponse({"success": False, "message": "Client not found."}, status_code=404)
+    client.protection_enabled = True
+    await db.commit()
+    await db.refresh(client)
+    logger.info(f"[RESUME] Client {client_id} protection_enabled set to {client.protection_enabled}")
+    return JSONResponse({"success": True, "message": f"Client has been resumed and all features re-enabled. protection_enabled={client.protection_enabled}"})
 
 
 _SEVERITY_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -393,11 +381,12 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
         existing_client = result.scalar_one_or_none()
 
         if existing_client:
-            # Update existing client
+            # Update existing client (do NOT reset protection_enabled)
             existing_client.last_seen = datetime.utcnow()
             existing_client.is_active = True
             existing_client.version = request.version
             existing_client.os_version = request.os_version or existing_client.os_version
+            # DO NOT reset protection_enabled here!
             await db.commit()
             await db.refresh(existing_client)
 
@@ -517,6 +506,7 @@ async def client_heartbeat(
 
             client.last_seen = datetime.utcnow()
             client.is_active = True
+            # DO NOT reset protection_enabled here!
 
             heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
             runtime_identity = _extract_runtime_identity(heartbeat_status)
@@ -620,17 +610,17 @@ async def list_clients(
     List all client installations
     """
     try:
-        query = select(ClientInstallation)
-
         if active_only:
-            # Consider clients active if seen within last 10 minutes
+            # Only show clients seen in last 10 minutes and marked active
             cutoff_time = datetime.utcnow() - timedelta(minutes=10)
-            query = query.where(
+            query = select(ClientInstallation).where(
                 and_(ClientInstallation.is_active == True, ClientInstallation.last_seen >= cutoff_time)
             )
+        else:
+            # Show ALL clients, regardless of is_active or last_seen
+            query = select(ClientInstallation)
 
         query = query.order_by(ClientInstallation.last_seen.desc())
-
         result = await db.execute(query)
         clients = result.scalars().all()
 
