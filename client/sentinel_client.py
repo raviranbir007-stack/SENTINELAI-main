@@ -1,3 +1,6 @@
+# DEPRECATED: Use sentinel_client_v3.py as the main client entry point.
+# This file is retained for legacy reference only.
+
 """
 SENTINEL-AI Client
 Standalone Python client for threat detection and reporting

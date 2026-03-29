@@ -123,7 +123,7 @@ python3 << PYEOF
 import asyncio
 import sys
 sys.path.insert(0, '.')
-from sentinel_client_enhanced import SentinelClient
+from sentinel_client_v3 import SentinelClient
 
 async def test_registration():
     try:
@@ -173,7 +173,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$CURRENT_DIR
 Environment="PATH=$CURRENT_DIR/venv/bin"
-ExecStart=$CURRENT_DIR/venv/bin/python sentinel_client_enhanced.py
+ExecStart=$CURRENT_DIR/venv/bin/python sentinel_client_v3.py
 Restart=always
 RestartSec=10
 
@@ -199,7 +199,7 @@ cat > start_client.sh << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 source venv/bin/activate
-python sentinel_client_enhanced.py
+python sentinel_client_v3.py
 EOF
 chmod +x start_client.sh
 echo -e "${GREEN}✓ Startup script created (start_client.sh)${NC}"
@@ -225,7 +225,7 @@ Client Configuration:
 - File monitoring: Enabled
 
 Startup:
-- Manual: ./start_client.sh or python sentinel_client_enhanced.py
+- Manual: ./start_client.sh or python sentinel_client_v3.py
 - Service: sudo systemctl start sentinelai-client (if configured)
 
 Logs:

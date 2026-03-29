@@ -30,3 +30,11 @@ See documentation files for additional configuration notes.
 - **Browser activity**: refer to `BROWSER_MONITORING.md` for tips when running as root.
 - **API connectivity**: run `python3 test_services_api.py` to verify that VirusTotal, AbuseIPDB, URLScan, Shodan and Hybrid Analysis are reachable and returning results.
 - **Monitoring simulation**: use the demo snippet in `BROWSER_MONITORING.md` or simply open a website while the server is running and watch the console/logs.
+
+## Main Client Entry Point
+
+**Use only `client/sentinel_client_v3.py` as the main entry point for all client deployments.**
+
+All other client files (`sentinel_client.py`, `sentinel_client_enhanced.py`, `sentinel_integrated_protection.py`, `sentinel_realtime_protection.py`, `sentinel_automated.py`) are now deprecated and retained for legacy reference only. All new development, deployment, and integration should use `sentinel_client_v3.py`.
+
+For specialized or legacy use cases, review the deprecated files for reference, but do not use them as the main client.
