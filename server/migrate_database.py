@@ -181,7 +181,7 @@ async def main():
     print()
     print("Next steps:")
     print("1. Start the server: python run_server.py")
-    print("2. Register clients: python client/sentinel_client_enhanced.py")
+    print("2. Register clients: python client/sentinel_client_v3.py")
     print("3. Generate reports via API endpoints")
     print()
 
