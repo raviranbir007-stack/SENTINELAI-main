@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -509,56 +508,49 @@
     sortCol:   'state',
     sortDir:   1,
     loading:   false,
+    connectionStatus: 'connecting', // 'connecting' | 'connected' | 'disconnected' | 'error'
+    lastSuccessfulUpdate: null,
+    requestToken: 0,
   };
 
   const G = (id) => document.getElementById(id);
   const esc = (v) => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-  /* Parse server UTC timestamp (no Z suffix) safely */
+  // Helper: parse server UTC timestamp (no Z suffix) safely
   function parseUTC(ts) {
+    // Defensive: fallback to Date.parse if missing
     if (!ts) return null;
-    let s = String(ts).trim();
-    // Append Z if no timezone info present — server returns bare UTC
-    if (!s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
-    const n = Date.parse(s);
-    return Number.isFinite(n) ? n : null;
+    if (typeof ts === 'number') return ts;
+    if (typeof ts === 'string') {
+      // Try to parse as ISO string
+      const d = Date.parse(ts.replace(/\s/, 'T'));
+      if (!isNaN(d)) return d;
+    }
+    return null;
   }
 
-  /* Age in ms, corrected for server-client clock skew */
-  function ageMs(ts) {
-    const t = parseUTC(ts);
-    if (t === null) return null;
-    const now = (S.serverNow && S.fetchAt)
-      ? S.serverNow + (Date.now() - S.fetchAt)
-      : Date.now();
-    return now - t;
-  }
-
-  function hbState(ts) {
-    const ms = ageMs(ts);
-    if (ms === null || ms < 0) return 'offline';
-    if (ms <=  2 * 60000) return 'live';
-    if (ms <= 10 * 60000) return 'warning';
+  // Defensive: fallback for missing helpers
+  function hbState(last_seen) {
+    if (!last_seen) return 'offline';
+    const age = Date.now() - (typeof last_seen === 'string' ? Date.parse(last_seen) : last_seen);
+    if (!Number.isFinite(age) || age < 0) return 'unknown';
+    if (age <= 2 * 60 * 1000) return 'live';
+    if (age <= 10 * 60 * 1000) return 'warning';
     return 'offline';
   }
-
   function timeSince(ts) {
-    const ms = ageMs(ts);
-    if (ms === null) return null;
-    if (ms < 0)           return 'just now';
-    if (ms < 60000)       return `${Math.floor(ms/1000)}s ago`;
-    if (ms < 3600000)     return `${Math.floor(ms/60000)}m ago`;
-    if (ms < 86400000)    return `${Math.floor(ms/3600000)}h ago`;
-    return `${Math.floor(ms/86400000)}d ago`;
+    if (!ts) return null;
+    const age = Date.now() - (typeof ts === 'string' ? Date.parse(ts) : ts);
+    if (!Number.isFinite(age) || age < 0) return null;
+    if (age < 60 * 1000) return `${Math.floor(age / 1000)}s ago`;
+    if (age < 60 * 60 * 1000) return `${Math.floor(age / (60 * 1000))}m ago`;
+    if (age < 24 * 60 * 60 * 1000) return `${Math.floor(age / (60 * 60 * 1000))}h ago`;
+    return `${Math.floor(age / (24 * 60 * 60 * 1000))}d ago`;
   }
-
   function fmtAbs(ts) {
-    const t = parseUTC(ts);
-    if (!t) return '';
-    return new Date(t).toLocaleString(undefined, {
-      month:'short', day:'numeric',
-      hour:'2-digit', minute:'2-digit', second:'2-digit'
-    });
+    if (!ts) return '';
+    const d = new Date(typeof ts === 'string' ? Date.parse(ts) : ts);
+    return d.toLocaleString();
   }
 
   function osIcon(o) {
@@ -832,21 +824,40 @@
     .catch(e => alert('Error: ' + e));
   }
 
-  /* ── Fetch ── */
+  /* ── Fetch with timeout, race, and robust status ── */
   async function load() {
     if (S.loading) return;
     S.loading = true;
+    S.connectionStatus = 'connecting';
+    updateConnectionUI();
     const btn = G('refreshBtn');
     btn.classList.add('spin');
+    const myToken = ++S.requestToken;
+    let timeoutId;
     try {
-      const r = await fetch('/api/v1/network/clients?active_only=false');
+      // Timeout after 10s
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 10000);
+      const r = await fetch('/api/v1/network/clients?active_only=false', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (myToken !== S.requestToken) return; // Outdated request
+      if (r.status === 401) {
+        S.connectionStatus = 'error';
+        updateConnectionUI('Unauthorized: Please log in as admin.');
+        G('lu').textContent = 'Failed to load (401)';
+        if (!S._401shown) { errToast('Unauthorized: Please log in as admin.'); S._401shown = true; }
+        S.clients = [];
+        render();
+        return;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
       const d = await r.json();
-
+      if (typeof d !== 'object' || !('clients' in d)) throw new Error('Malformed API response');
       S.clients   = Array.isArray(d.clients) ? d.clients : [];
       S.serverNow = d.server_time ? parseUTC(d.server_time) : null;
       S.fetchAt   = Date.now();
-
+      S.lastSuccessfulUpdate = S.fetchAt;
+      S.connectionStatus = 'connected';
       if (S.serverNow) {
         const skewS = Math.round((S.serverNow - Date.now()) / 1000);
         const skwEl = G('skw');
@@ -858,26 +869,60 @@
         }
         G('sbt').textContent = `Server time: ${new Date(S.serverNow).toLocaleTimeString()}`;
       }
-
       checkNew(S.clients);
-
-      G('connDot').className = 'conn-dot';
-      G('connTxt').textContent = 'Live';
-      G('sbd').className = 'sb-dot';
-      const nL = S.clients.filter(c => hbState(c.last_seen)==='live').length;
-      G('sbm').textContent = `Connected · ${S.clients.length} client${S.clients.length!==1?'s':''} · ${nL} online`;
-      G('lu').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      updateConnectionUI();
       render();
-
     } catch(e) {
-      G('connDot').className = 'conn-dot err';
-      G('connTxt').textContent = 'Error';
-      G('sbd').className = 'sb-dot err';
-      G('sbm').textContent = `Error: ${e.message}`;
-      errToast(e.message);
+      clearTimeout(timeoutId);
+      if (myToken !== S.requestToken) return;
+      S.connectionStatus = (e.name === 'AbortError') ? 'disconnected' : 'error';
+      updateConnectionUI(e.message);
+      S.clients = [];
+      render();
+      if (!S._errToastShown) { errToast(e.message); S._errToastShown = true; }
     } finally {
       S.loading = false;
       btn.classList.remove('spin');
+    }
+  }
+  // Update connection badge and status bar
+  function updateConnectionUI(errorMsg) {
+    const dot = G('connDot');
+    const txt = G('connTxt');
+    const sbd = G('sbd');
+    const sbm = G('sbm');
+    let nL = S.clients.filter(c => hbState(c.last_seen)==='live').length;
+    switch (S.connectionStatus) {
+      case 'connecting':
+        dot.className = 'conn-dot';
+        txt.textContent = 'Connecting…';
+        sbd.className = 'sb-dot';
+        sbm.textContent = 'Connecting to backend…';
+        break;
+      case 'connected':
+        dot.className = 'conn-dot';
+        txt.textContent = 'Connected';
+        sbd.className = 'sb-dot';
+        sbm.textContent = `Connected · ${S.clients.length} client${S.clients.length!==1?'s':''} · ${nL} online`;
+        break;
+      case 'disconnected':
+        dot.className = 'conn-dot err';
+        txt.textContent = 'Backend unreachable';
+        sbd.className = 'sb-dot err';
+        sbm.textContent = 'Backend unreachable or timed out';
+        break;
+      case 'error':
+        dot.className = 'conn-dot err';
+        txt.textContent = 'Connection error';
+        sbd.className = 'sb-dot err';
+        sbm.textContent = errorMsg ? `Error: ${errorMsg}` : 'Connection error';
+        break;
+    }
+    // Last update
+    if (S.lastSuccessfulUpdate) {
+      G('lu').textContent = `Last update: ${new Date(S.lastSuccessfulUpdate).toLocaleTimeString()}`;
+    } else {
+      G('lu').textContent = 'Last update: —';
     }
   }
 
@@ -1094,13 +1139,23 @@
   /* ── Refresh btn ── */
   G('refreshBtn').addEventListener('click', () => {
     S.loading = false; // reset any stuck state
+    S.connectionStatus = 'connecting';
+    updateConnectionUI();
     load().then(startCD);
   });
 
   /* ── Visibility ── */
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) load().then(startCD); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      S.connectionStatus = 'connecting';
+      updateConnectionUI();
+      load().then(startCD);
+    }
+  });
 
   /* ── Init ── */
+  S.connectionStatus = 'connecting';
+  updateConnectionUI();
   load().then(startCD);
 </script>
 </body>

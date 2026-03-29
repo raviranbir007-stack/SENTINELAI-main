@@ -74,6 +74,16 @@ class SentinelClient:
         self.client_id = str(uuid.uuid4())  # Generate unique client ID
         self.running = False
         self._scanned_ips = set()
+        # Registration master password
+        self.master_password = self.config.get("registration", {}).get("master_password", "changeme-please")
+
+    def __init__(self, config_path: Path = CONFIG_FILE):
+        self.config = self._load_config(config_path)
+        self.server_url = self.config.get("server", {}).get("url", "http://localhost:5000")
+        self.api_key = self.config.get("server", {}).get("api_key", "")
+        self.client_id = str(uuid.uuid4())  # Generate unique client ID
+        self.running = False
+        self._scanned_ips = set()
 
         # Defense configuration
         self.auto_defense = self.config.get("client", {}).get("enable_auto_defense", True)
@@ -368,6 +378,7 @@ class SentinelClient:
                 "dns_servers": self._get_dns_servers(),
                 "version": "2.0.0",
                 "client_id": self.client_id,
+                "master_password": self.master_password,
             }
 
             response = requests.post(

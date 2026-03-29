@@ -1944,7 +1944,6 @@
                 </div>
                 <nav class="nav">
                     <button class="nav-btn active" data-page="dashboard">Dashboard</button>
-                    <button class="nav-btn" data-page="clients">Clients</button>
                     <button class="nav-btn" data-page="scans">Scans</button>
                     <button class="nav-btn" data-page="threats">Threats</button>
                     <button class="nav-btn" data-page="reports">Reports</button>
@@ -2515,48 +2514,7 @@
         </section>
     </div>
 
-    <!-- Clients Page -->
-    <div class="page" id="clients">
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <div>
-                        <h2>👥 Client Operations Dashboard</h2>
-                        <p>Track online/offline clients, client IDs, active users, heartbeat state, and endpoint activity</p>
-                    </div>
-                    <button id="refreshClientsPageBtn" class="btn btn-outline btn-sm" onclick="refreshClientsPage()" title="Refresh clients dashboard">↺ Refresh</button>
-                </div>
 
-                <div id="clientsPageCard" class="card card-glass" style="padding: 1.1rem; margin-bottom: 1rem;">
-                    <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading clients dashboard...</div>
-                </div>
-
-                <div class="card card-glass" style="padding:0; margin-bottom: 1rem;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem;border-bottom:1px solid var(--border);">
-                        <h3 style="margin:0;font-size:0.95rem;">Recent Endpoint Activity (Client Perspective)</h3>
-                        <span id="clientsActivityCount" style="font-size:0.75rem;color:var(--muted-foreground);">0 events</span>
-                    </div>
-                    <div class="clients-table-wrap">
-                        <table class="clients-table">
-                            <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Type</th>
-                                    <th>Target</th>
-                                    <th>Verdict</th>
-                                    <th>Confidence</th>
-                                    <th>Source</th>
-                                </tr>
-                            </thead>
-                            <tbody id="clientsActivityTableBody">
-                                <tr><td colspan="6" style="text-align:center; padding:1rem; color:var(--muted-foreground);">Loading activity...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </div>
 
     <!-- Scans Page -->
     <div class="page" id="scans">

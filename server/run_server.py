@@ -729,10 +729,8 @@ def run_kali_optimized():
         logger.info("\n" + "="*70)
         logger.info("✅ SENTINEL-AI PROTECTION ACTIVE")
         logger.info("="*70)
-        import getpass
-        if getpass.getuser() == "admin":
-            logger.info(f"🌐 Dashboard: http://localhost:{settings.API_PORT}")
-            logger.info(f"👥 Clients dashboard: http://localhost:{settings.API_PORT}/static/clients.html")
+        logger.info(f"👥 Clients dashboard: http://localhost:{settings.API_PORT}/static/clients.html")
+        logger.info(f"📝 For full client details, use the above link.")
         logger.info(f"📊 Status: Server | IDS | IPS | Monitor | Traffic | Defense → RUNNING")
         logger.info(f"🚨 Alerts: 3 warnings before auto-quarantine (60s intervals)")
         logger.info(f"📝 Logs: logs/ | Press Ctrl+C to stop")
