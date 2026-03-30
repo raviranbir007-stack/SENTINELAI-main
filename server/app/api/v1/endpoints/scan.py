@@ -1,3 +1,22 @@
+# Endpoint to mark a scan as read (acknowledged)
+from fastapi import Body
+
+@router.post("/mark-read/{scan_id}")
+async def mark_scan_as_read(scan_id: str, db: AsyncSession = Depends(get_db)):
+    """Mark a scan as read/acknowledged by scan_id (for dashboard health restoration)."""
+    # Update in-memory cache
+    for scan in _scan_history:
+        if scan.get("scan_id") == scan_id:
+            scan["is_read"] = True
+    # Update DB
+    from ....models import ScanHistory
+    result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == scan_id))
+    scan_obj = result.scalar_one_or_none()
+    if scan_obj:
+        scan_obj.is_read = True
+        await db.commit()
+        return {"status": "ok", "scan_id": scan_id, "is_read": True}
+    return {"status": "not_found", "scan_id": scan_id}
 """
 Threat Scanning Endpoints
 Handles threat analysis for IPs, URLs, domains, and file hashes
@@ -677,6 +696,7 @@ async def scan_file(
             "target_name":      file.filename,
             "client_id":        client_id,
             "scan_source":      _normalize_scan_source(scan_source),
+            "is_read":          False,
             # Local analysis breakdown
             "local_analysis": {
                 "risk_level":     local["risk_level"],
@@ -763,6 +783,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "target_name": url,
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
+            "is_read": False,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -836,6 +857,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "target_name": ip,
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
+            "is_read": False,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -908,6 +930,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "target_name": file_hash,
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
+            "is_read": False,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
@@ -981,6 +1004,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "target_name": target,
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
+            "is_read": False,
             # Include forensic metadata
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
             # Include AI analysis if available

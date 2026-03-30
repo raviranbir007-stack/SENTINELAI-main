@@ -172,7 +172,10 @@ class ScanHistory(Base):
     corroboration_count = Column(Integer, default=0)
     analyst_notes = Column(Text)  # Optional analyst comments
     analyst_verified = Column(Boolean, default=False)
-    
+
+    # Mark if the scan/threat has been read/acknowledged by the user
+    is_read = Column(Boolean, default=False)
+
     # Scan source: 'manual' = user/API triggered, 'background' = auto-monitor, 'scheduled' = cron
     scan_source = Column(String(20), default='manual', index=True)
 
@@ -180,11 +183,11 @@ class ScanHistory(Base):
     scan_timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     client_id = Column(Integer, ForeignKey("client_installations.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    
+
     # Report reference
     report_generated = Column(Boolean, default=False)
     report_path = Column(String(500))
-    
+
     # Relationships
     client = relationship("ClientInstallation", back_populates="scans")
     user = relationship("User", back_populates="scan_history")

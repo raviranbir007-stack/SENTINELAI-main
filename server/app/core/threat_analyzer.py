@@ -654,11 +654,11 @@ class ThreatAnalyzer:
             return None
 
     def _prepare_api_tracking(self, result: Dict, input_type: str) -> None:
-        """Initialize API tracking metadata for a scan. Force all APIs to be tracked as expected and attempted."""
+        """Initialize API tracking metadata for a scan. Force all APIs to be tracked as expected and attempted. Always show all five APIs."""
         api_results = result.setdefault("api_results", {})
         api_status = api_results.setdefault("api_status", {})
 
-        # All APIs are now always expected and attempted
+        # All APIs are always expected and attempted
         api_results["apis_expected"] = [api["name"] for api in ALL_EXTERNAL_APIS]
         api_results["apis_attempted"] = [api["name"] for api in ALL_EXTERNAL_APIS]
         api_results["apis_called"] = []
@@ -668,8 +668,13 @@ class ThreatAnalyzer:
         for api in ALL_EXTERNAL_APIS:
             configured = bool(getattr(settings, api["config_attr"], ""))
             applicable = normalized_input in api["supported_inputs"]
-            # All APIs are now always marked as pending unless not configured
-            initial_status = "pending" if configured else "not_configured"
+            # If not configured, status is not_configured; if not applicable, status is not_applicable; else pending
+            if not configured:
+                initial_status = "not_configured"
+            elif not applicable:
+                initial_status = "not_applicable"
+            else:
+                initial_status = "pending"
 
             api_status[api["key"]] = {
                 "name": api["name"],
