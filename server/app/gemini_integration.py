@@ -28,7 +28,7 @@ except ImportError:
     legacy_genai = None
     LEGACY_GENAI_AVAILABLE = False
 
-from app.config import settings
+from server.app.config import settings
 
 logger = logging.getLogger(__name__)
 

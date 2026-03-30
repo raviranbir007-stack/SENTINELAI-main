@@ -99,7 +99,9 @@ class GeminiConfig:
             'config': config.copy()
         })
         
-        logger.info(f"Configuration loaded: {self._mask_sensitive_data(config)}")
+        # Short, one-line config summary
+        masked = self._mask_sensitive_data(config)
+        logger.info(f"Gemini: loaded {masked.get('model','?')} | temp={masked.get('temperature','?')} | enabled={masked.get('enabled','?')}")
         return config
     
     def _load_from_env(self) -> Dict[str, Any]:
@@ -226,7 +228,7 @@ class GeminiConfig:
         if not validation_result['valid']:
             logger.error(f"Configuration validation failed: {self.validation_errors}")
         else:
-            logger.info("Configuration validation passed")
+            logger.info("Gemini: config valid")
         
         return validation_result
     

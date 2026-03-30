@@ -1,4 +1,4 @@
-from app.api.v1.endpoints.auth import admin_required
+from server.app.api.v1.endpoints.auth import admin_required
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Request, APIRouter, BackgroundTasks, Depends, HTTPException
@@ -8,8 +8,8 @@ import smtplib
 from email.mime.text import MIMEText
 import logging
 
-from app.config import settings
-from app.database import get_db
+from server.app.config import settings
+from server.app.database import get_db
 
 # Dependency to enforce only approved clients can access features
 async def approved_client_required(request: Request, db: AsyncSession = Depends(get_db)):

@@ -24,9 +24,10 @@ class HybridAnalysisService:
             Dict with Hybrid Analysis results
         """
         logger.debug(f"HybridAnalysis.search_hash called for {file_hash}")
-        if not settings.HYBRIDANALYSIS_API_KEY:
-            logger.warning("Hybrid Analysis API key not configured")
-            return {"error": "Hybrid Analysis API key not configured"}
+        api_key = settings.HYBRIDANALYSIS_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("Hybrid Analysis API key is missing, empty, or not set properly.")
+            return {"error": "Hybrid Analysis API key is missing, empty, or not set properly."}
 
         cache_key = f"hybrid:hash:{file_hash}"
         cached = get_cached(cache_key)
@@ -37,7 +38,7 @@ class HybridAnalysisService:
             return {"error": "Hybrid Analysis rate limit reached"}
 
         headers = {
-            "api-key": settings.HYBRIDANALYSIS_API_KEY,
+            "api-key": api_key,
             "user-agent": "Hybrid Analysis",
             "Accept": "application/json",
         }

@@ -23,9 +23,10 @@ class AbuseIPDBService:
             Dict with AbuseIPDB results
         """
         logger.debug(f"AbuseIPDB.check_ip called for {ip_address}")
-        if not settings.ABUSEIPDB_API_KEY:
-            logger.warning("AbuseIPDB API key not configured")
-            return {"error": "AbuseIPDB API key not configured"}
+        api_key = settings.ABUSEIPDB_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("AbuseIPDB API key is missing, empty, or not set properly.")
+            return {"error": "AbuseIPDB API key is missing, empty, or not set properly."}
 
         cache_key = f"abuseipdb:ip:{ip_address}"
         cached = get_cached(cache_key)
@@ -36,7 +37,7 @@ class AbuseIPDBService:
             return {"error": "AbuseIPDB rate limit reached"}
 
         try:
-            headers = {"Key": settings.ABUSEIPDB_API_KEY, "Accept": "application/json"}
+            headers = {"Key": api_key, "Accept": "application/json"}
             params = {"ipAddress": ip_address, "maxAgeInDays": 90}
 
             async with httpx.AsyncClient(timeout=30.0) as client:

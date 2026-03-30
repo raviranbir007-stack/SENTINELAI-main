@@ -594,7 +594,7 @@ def _scan_to_dict(scan: ScanHistory) -> dict:
 
     if target_type == "unknown" and scan.target:
         try:
-            from app.core.input_detector import InputDetector
+            from server.app.core.input_detector import InputDetector
             detected, _meta = InputDetector.detect(scan.target)
             target_type = detected.value
             if target_type == "file_hash":

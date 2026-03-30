@@ -21,6 +21,38 @@ logger = logging.getLogger("DefenseCoordinator")
 
 
 class DefenseCoordinator:
+        def _show_action_dialog(self, attack_id: str, attack: Dict):
+            """Show a dialog for user to choose response to attack (block, ignore, quarantine)"""
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                from threading import Thread
+
+                def on_response(response):
+                    self.respond_to_attack(attack_id, response)
+                    root.quit()
+                    root.destroy()
+
+                def run_dialog():
+                    nonlocal attack
+                    root = tk.Tk()
+                    root.title("SentinelAI Threat Response")
+                    root.geometry("420x220")
+                    root.resizable(False, False)
+                    msg = f"Threat Detected:\nType: {attack.get('type', 'unknown')}\nSeverity: {attack.get('severity', 'UNKNOWN')}\nSource: {attack.get('source_ip', 'UNKNOWN')}\n\nChoose an action:" 
+                    label = tk.Label(root, text=msg, justify="left", font=("Arial", 11))
+                    label.pack(padx=16, pady=16)
+                    btn_frame = tk.Frame(root)
+                    btn_frame.pack(pady=8)
+                    tk.Button(btn_frame, text="Block", width=12, command=lambda: on_response('BLOCK')).pack(side=tk.LEFT, padx=8)
+                    tk.Button(btn_frame, text="Ignore", width=12, command=lambda: on_response('IGNORE')).pack(side=tk.LEFT, padx=8)
+                    tk.Button(btn_frame, text="Quarantine", width=12, command=lambda: on_response('QUARANTINE')).pack(side=tk.LEFT, padx=8)
+                    root.mainloop()
+
+                # Run dialog in a separate thread so it doesn't block alerts
+                Thread(target=run_dialog, daemon=True).start()
+            except Exception as e:
+                logger.error(f"Failed to show action dialog: {e}")
     """
     Coordinates defense responses to attacks
     - Sends alerts up to 5 times
@@ -286,10 +318,14 @@ class DefenseCoordinator:
                 notify_method(message, attack, alert_num)
             except Exception as e:
                 logger.error(f"Failed to send alert via {notify_method.__name__}: {e}")
-        
+
+        # Show actionable dialog for user response (if not a quarantine notice)
+        if not self._is_quarantine_notice(attack, alert_num):
+            self._show_action_dialog(attack_id, attack)
+
         # Log the alert
         logger.warning(f"Alert #{alert_num}/{self.MAX_ALERTS} sent for attack: {attack_id}")
-        
+
         # Callback to server
         if self.callback:
             try:

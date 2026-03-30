@@ -37,9 +37,10 @@ class VirusTotalService:
             Dict with VirusTotal domain results
         """
         logger.debug(f"VirusTotal.scan_domain called for {domain}")
-        if not settings.VIRUSTOTAL_API_KEY:
-            logger.warning("VirusTotal API key not configured")
-            return {"error": "VirusTotal API key not configured"}
+        api_key = settings.VIRUSTOTAL_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("VirusTotal API key is missing, empty, or not set properly.")
+            return {"error": "VirusTotal API key is missing, empty, or not set properly."}
 
         cache_key = f"virustotal:domain:{domain}"
         cached = get_cached(cache_key)
@@ -53,7 +54,7 @@ class VirusTotalService:
             return {"error": "VirusTotal rate limit reached"}
 
         try:
-            headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
+            headers = {"x-apikey": api_key}
             async with httpx.AsyncClient(timeout=25.0) as client:
                 response = await client.get(
                     f"{VirusTotalService.BASE_URL}/domains/{domain}",

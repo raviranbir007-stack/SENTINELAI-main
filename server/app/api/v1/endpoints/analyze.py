@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import logging
 
 from .auth import get_current_user
-from app.gemini_integration import get_gemini_client
+from server.app.gemini_integration import get_gemini_client
 
 logger = logging.getLogger(__name__)
 

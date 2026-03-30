@@ -1,10 +1,29 @@
+
 from datetime import datetime, timedelta
 from typing import Optional
-
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 router = APIRouter()
+
+# Endpoint to mark all threats as read (acknowledged)
+@router.post("/mark-all-read")
+async def mark_all_threats_as_read():
+    """Mark all threats as read/acknowledged and restore system health to normal."""
+    from .scan import _scan_history
+    # Mark all threats in scan history as read
+    for scan in _scan_history:
+        scan["is_read"] = True
+    # If you have a DB model for threats, update those as well here
+    # System health logic: if all are read, health is normal
+    health = "normal" if all(s.get("is_read", False) for s in _scan_history) else "degraded"
+    # Set global/system health if available
+    try:
+        from .scan import _system_health
+        _system_health["status"] = health
+    except Exception:
+        pass
+    return {"status": "ok", "all_threats_marked_read": True, "system_health": health}
 
 
 class IPScanRequest(BaseModel):

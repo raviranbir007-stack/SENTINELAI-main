@@ -1874,8 +1874,15 @@ class ThreatAnalyzer:
             threats.extend(heuristic_threats)
             logger.debug(f"Domain heuristic analysis found {len(heuristic_threats)} indicator(s)")
 
+        # If domain is reserved/non-routable, mark all APIs as not applicable for test/demo purposes
         if str(domain).lower().endswith((".test", ".example", ".invalid", ".localhost")):
-            self._mark_expected_apis_not_applicable(result, "Reserved test/non-routable domain input")
+            self._mark_expected_apis_not_applicable(result, "Reserved test/non-routable domain input: APIs not called for test/demo domains.")
+            # Add explicit API coverage explanation for the report
+            result["api_coverage_explanation"] = (
+                "API coverage: All 5 APIs are marked as 'not applicable' because the domain is reserved/non-routable (e.g., .test, .example). "
+                "External threat intelligence APIs cannot provide meaningful results for such domains. This is intentional to avoid false positives and wasted quota. "
+                "For real-world scans, API coverage will show checked/not_applicable/exceed_quota as appropriate."
+            )
             result["threat_indicators"] = threats
             return self._calculate_verdict(result)
 

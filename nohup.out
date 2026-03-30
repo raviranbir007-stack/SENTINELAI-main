@@ -1,0 +1,196 @@
+[2026-03-30 15:29:13,913] [INFO] Logging to file: /home/kali/Documents/SENTINELAI-main/logs/protection.log
+[2026-03-30 15:29:14,540] [INFO] 
+======================================================================
+[2026-03-30 15:29:14,545] [INFO] 🛡️  SENTINEL-AI PROTECTION SYSTEM v2.0
+[2026-03-30 15:29:14,546] [INFO] ======================================================================
+[2026-03-30 15:29:14,546] [INFO] 🌐 Server: http://localhost:8000
+[2026-03-30 15:29:14,546] [INFO] 📊 Components: IDS | IPS | Monitor | Traffic | Defense
+[2026-03-30 15:29:14,547] [INFO] 🔍 Detection: Port Scans, DDoS, Brute Force, Malicious IPs
+[2026-03-30 15:29:14,547] [INFO] 🚫 Prevention: Auto-blocking, Quarantine, Firewall Rules
+[2026-03-30 15:29:14,547] [INFO] ======================================================================
+[2026-03-30 15:29:14,554] [INFO] ✅ Server process started (PID: 61522)
+[2026-03-30 15:29:14,555] [INFO] ⏳ Waiting for server to initialize...
+[2026-03-30 15:29:14,560] [INFO] 🚀 Starting SENTINEL-AI Server...
+[2026-03-30 15:29:29,790] [INFO] ✅ Gemini AI initialized. Available models: ['models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash']
+[2026-03-30 15:29:30,133] [ERROR] ❌ Server failed: name 'router' is not defined
+Traceback (most recent call last):
+  File "/home/kali/Documents/SENTINELAI-main/server/run_server.py", line 603, in run_server
+    uvicorn.run(
+    ~~~~~~~~~~~^
+        "app.main:app",
+        ^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        access_log=False,  # Disable access logs (they're noise)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/lib/python3/dist-packages/uvicorn/main.py", line 593, in run
+    server.run()
+    ~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+  File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/config.py", line 439, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/usr/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/kali/Documents/SENTINELAI-main/server/app/main.py", line 387, in <module>
+    from .api.v1.api import api_router
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/api.py", line 3, in <module>
+    from .endpoints import advanced_reports, ai_threat_prediction, analyze, auth, dashboard, defense, monitoring, network_defense, reports, scan, threats, client_admin
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/scan.py", line 16, in <module>
+    @router.post("/mark-read/{scan_id}")
+     ^^^^^^
+NameError: name 'router' is not defined
+[2026-03-30 15:29:30,528] [ERROR] ❌ Server process exited before becoming ready (exit_code=1).
+[2026-03-30 15:29:40,692] [INFO] Logging to file: /home/kali/Documents/SENTINELAI-main/logs/protection.log
+[2026-03-30 15:29:41,615] [INFO] 
+======================================================================
+[2026-03-30 15:29:41,615] [INFO] 🛡️  SENTINEL-AI PROTECTION SYSTEM v2.0
+[2026-03-30 15:29:41,616] [INFO] ======================================================================
+[2026-03-30 15:29:41,616] [INFO] 🌐 Server: http://localhost:8000
+[2026-03-30 15:29:41,616] [INFO] 📊 Components: IDS | IPS | Monitor | Traffic | Defense
+[2026-03-30 15:29:41,616] [INFO] 🔍 Detection: Port Scans, DDoS, Brute Force, Malicious IPs
+[2026-03-30 15:29:41,616] [INFO] 🚫 Prevention: Auto-blocking, Quarantine, Firewall Rules
+[2026-03-30 15:29:41,616] [INFO] ======================================================================
+[2026-03-30 15:29:41,628] [INFO] ✅ Server process started (PID: 61923)
+[2026-03-30 15:29:41,630] [INFO] ⏳ Waiting for server to initialize...
+[2026-03-30 15:29:41,631] [INFO] 🚀 Starting SENTINEL-AI Server...
+[2026-03-30 15:29:56,464] [INFO] ✅ Gemini AI initialized. Available models: ['models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash']
+[2026-03-30 15:29:56,724] [ERROR] ❌ Server failed: name 'router' is not defined
+Traceback (most recent call last):
+  File "/home/kali/Documents/SENTINELAI-main/server/run_server.py", line 603, in run_server
+    uvicorn.run(
+    ~~~~~~~~~~~^
+        "app.main:app",
+        ^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        access_log=False,  # Disable access logs (they're noise)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/lib/python3/dist-packages/uvicorn/main.py", line 593, in run
+    server.run()
+    ~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+  File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/config.py", line 439, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/usr/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/kali/Documents/SENTINELAI-main/server/app/main.py", line 387, in <module>
+    from .api.v1.api import api_router
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/api.py", line 3, in <module>
+    from .endpoints import advanced_reports, ai_threat_prediction, analyze, auth, dashboard, defense, monitoring, network_defense, reports, scan, threats, client_admin
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/scan.py", line 16, in <module>
+    @router.post("/mark-read/{scan_id}")
+     ^^^^^^
+NameError: name 'router' is not defined
+[2026-03-30 15:29:57,011] [ERROR] ❌ Server process exited before becoming ready (exit_code=1).
+2026-03-30 15:30:27,235 INFO app.core.report_generator: Gemini API available via google.genai client
+2026-03-30 15:30:32,194 WARNING root: Gemini integration not available
+2026-03-30 15:30:32,195 INFO app.ai_engine.analyzer: Threat Analyzer initialized. Gemini AI: Not available
+2026-03-30 15:30:32,197 INFO app.ml_models: AnomalyDetectionModel initialized (NumPy: True)
+2026-03-30 15:30:32,197 INFO app.ml_models: ThreatPredictionModel initialized (NumPy: True)
+2026-03-30 15:30:32,197 INFO app.core.threat_analyzer: ML models initialized successfully and are required for all scans.
+2026-03-30 15:30:32,197 INFO app.ai_engine.analyzer: Threat Analyzer initialized. Gemini AI: Not available
+Traceback (most recent call last):
+  File "/home/kali/Documents/SENTINELAI-main/server/run_app.py", line 21, in <module>
+    uvicorn.run(
+    ~~~~~~~~~~~^
+        "app.main:app",
+        ^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        access_log=True,
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/lib/python3/dist-packages/uvicorn/main.py", line 593, in run
+    server.run()
+    ~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+  File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/usr/lib/python3/dist-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/uvicorn/config.py", line 439, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/uvicorn/importer.py", line 22, in import_from_string
+    raise exc from None
+  File "/usr/lib/python3/dist-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/usr/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/kali/Documents/SENTINELAI-main/server/app/main.py", line 387, in <module>
+    from .api.v1.api import api_router
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/api.py", line 3, in <module>
+    from .endpoints import advanced_reports, ai_threat_prediction, analyze, auth, dashboard, defense, monitoring, network_defense, reports, scan, threats, client_admin
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/advanced_reports.py", line 31, in <module>
+    from .report_generators import generate_executive_summary_pdf, generate_technical_analysis_pdf
+  File "/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/report_generators.py", line 11, in <module>
+    from server.app.gemini_integration import get_gemini_client
+ModuleNotFoundError: No module named 'server.app'
+[*] Starting SENTINEL-AI server...
+[*] Platform: linux
+[*] Event loop policy: <asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0x7ff684b9e900>
+[ERROR] Server crashed: No module named 'server.app'

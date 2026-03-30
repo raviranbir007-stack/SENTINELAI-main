@@ -23,9 +23,10 @@ class ShodanService:
             Dict with Shodan results or error
         """
         logger.debug(f"Shodan.search_ip called for {ip_address}")
-        if not settings.SHODAN_API_KEY:
-            logger.warning("Shodan API key not configured")
-            return {"error": "Shodan API key not configured"}
+        api_key = settings.SHODAN_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("Shodan API key is missing, empty, or not set properly.")
+            return {"error": "Shodan API key is missing, empty, or not set properly."}
 
         cache_key = f"shodan:ip:{ip_address}"
         cached = get_cached(cache_key)
@@ -36,7 +37,7 @@ class ShodanService:
             return {"error": "Shodan rate limit reached"}
 
         try:
-            params = {"key": settings.SHODAN_API_KEY}
+            params = {"key": api_key}
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
                     f"{ShodanService.BASE_URL}/shodan/host/{ip_address}",

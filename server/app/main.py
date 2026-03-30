@@ -51,7 +51,7 @@ GEMINI_API_KEY = (
 # Gemini Configuration Initialization
 def initialize_gemini_configuration():
     """Initialize Gemini configuration and validate settings"""
-    from app.gemini_config import get_gemini_config, validate_gemini_config
+    from server.app.gemini_config import get_gemini_config, validate_gemini_config
     
     try:
         # Get configuration
@@ -281,6 +281,20 @@ async def lifespan(app: FastAPI):
                         and 'single source' in summary_blob
                     )
 
+                    # Build API coverage summary for visibility
+                    api_results = result.get('api_results', {}) or {}
+                    api_status = api_results.get('api_status', {}) or {}
+                    api_coverage = [
+                        {
+                            'name': meta.get('name', key),
+                            'status': meta.get('status', 'unknown'),
+                            'configured': meta.get('configured', False),
+                            'applicable': meta.get('applicable', None),
+                            'error': meta.get('error', None)
+                        }
+                        for key, meta in api_status.items() if isinstance(meta, dict)
+                    ]
+
                     activity_db.log_threat_scan({
                         'artifact_type': artifact_type,
                         'artifact_value': value,
@@ -292,6 +306,7 @@ async def lifespan(app: FastAPI):
                         'source_count': corroboration.get('corroboration', {}).get('source_count', 0),
                         'sources': corroboration.get('corroboration', {}).get('sources', []),
                         'api_results': result.get('api_results'),
+                        'api_coverage': api_coverage,
                         'threat_indicators': result.get('threat_indicators', []),
                         'recommendations': result.get('recommendations', []),
                         'flags': result.get('flags', {}),
@@ -327,6 +342,8 @@ async def lifespan(app: FastAPI):
                     if not low_signal_suspicious_ip:
                         terminal_monitor.log_scan_activity(artifact_type, value, result.get('verdict', 'unknown'))
                     
+                    # Also add api_coverage to the returned result for UI/terminal visibility
+                    result['api_coverage'] = api_coverage
                     return result
                 except asyncio.TimeoutError:
                     logger.warning(f"Scan timeout for {artifact_type} {value}")
@@ -960,3 +977,5 @@ if __name__ == "__main__":
         reload=settings.DEBUG,
         log_level="info"
     )
+
+ # ...existing code... (removed route printing)

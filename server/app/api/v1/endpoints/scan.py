@@ -1,4 +1,8 @@
+
 from fastapi import Body
+from fastapi import APIRouter
+
+router = APIRouter()
 
 import logging
 from fastapi import APIRouter, Depends
@@ -7,10 +11,11 @@ from sqlalchemy.future import select
 from ....database import get_db
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+
 
 # In-memory scan history (in production, use database)
 _scan_history = []
+
 
 # Endpoint to mark a scan as read (acknowledged)
 @router.post("/mark-read/{scan_id}")
@@ -27,8 +32,41 @@ async def mark_scan_as_read(scan_id: str, db: AsyncSession = Depends(get_db)):
     if scan_obj:
         scan_obj.is_read = True
         await db.commit()
-        return {"status": "ok", "scan_id": scan_id, "is_read": True}
-    return {"status": "not_found", "scan_id": scan_id}
+        return {"status": "ok", "scan_id": scan_id, "is_read": True, "system_health": _get_system_health_status(db)}
+    return {"status": "not_found", "scan_id": scan_id, "system_health": _get_system_health_status(db)}
+
+# Endpoint to mark all scans as read (acknowledged)
+@router.post("/mark-all-read")
+async def mark_all_scans_as_read(db: AsyncSession = Depends(get_db)):
+    """Mark all scans as read/acknowledged and restore system health to normal."""
+    # Update in-memory cache
+    for scan in _scan_history:
+        scan["is_read"] = True
+    # Update DB
+    from ....models import ScanHistory
+    result = await db.execute(select(ScanHistory))
+    scan_objs = result.scalars().all()
+    for scan_obj in scan_objs:
+        scan_obj.is_read = True
+    await db.commit()
+    return {"status": "ok", "all_marked_read": True, "system_health": "normal"}
+
+# Helper to compute system health status
+def _get_system_health_status(db):
+    # If any scan is not read, health is 'degraded', else 'normal'
+    try:
+        from ....models import ScanHistory
+        # Check in-memory first
+        if any(not s.get("is_read", False) for s in _scan_history):
+            return "degraded"
+        # Check DB
+        result = asyncio.get_event_loop().run_until_complete(db.execute(select(ScanHistory)))
+        scan_objs = result.scalars().all()
+        if any(not s.is_read for s in scan_objs):
+            return "degraded"
+        return "normal"
+    except Exception:
+        return "unknown"
 
 
 import hashlib
@@ -56,7 +94,6 @@ from ....database import execute_sqlite_write, get_db
 from ....models import ClientInstallation, ScanHistory, SystemLog
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
 
 # In-memory scan history (in production, use database)
 _scan_history = []
@@ -792,7 +829,8 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
             "is_read": False,
-            # Include forensic metadata
+            # Top-level API coverage for dashboard
+            "api_results": analysis_result.get("api_results", {}),
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
@@ -862,7 +900,8 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
             "is_read": False,
-            # Include forensic metadata
+            # Top-level API coverage for dashboard
+            "api_results": analysis_result.get("api_results", {}),
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
@@ -931,7 +970,8 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
             "is_read": False,
-            # Include forensic metadata
+            # Top-level API coverage for dashboard
+            "api_results": analysis_result.get("api_results", {}),
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
         }
         
@@ -1001,7 +1041,8 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "client_id": request.client_id,
             "scan_source": _normalize_scan_source(request.scan_source),
             "is_read": False,
-            # Include forensic metadata
+            # Top-level API coverage for dashboard
+            "api_results": analysis_result.get("api_results", {}),
             "forensic_metadata": analysis_result.get("forensic_metadata", {}),
             # Include AI analysis if available
             "ai_analysis": analysis_result.get("ai_analysis", {}),
@@ -1030,10 +1071,46 @@ async def universal_scan_root(request: ThreatScanRequest, db: AsyncSession = Dep
 async def get_scan_results(scan_id: str):
     # Get results of a specific scan
     # Note: In production, scan results would be stored in a database
+    # Try to find scan in in-memory cache
+    scan = next((s for s in _scan_history if s.get("scan_id") == scan_id), None)
+    api_coverage_section = None
+    if scan:
+        # Use the same logic as report_generator for API coverage
+        analysis = scan.get("analysis", {})
+        from ....core.threat_analyzer import ALL_EXTERNAL_APIS
+        api_results = analysis.get("api_results", {})
+        api_status = api_results.get("api_status", {})
+        apis_called = api_results.get("apis_called", [])
+        apis_expected = api_results.get("apis_expected", [api["name"] for api in ALL_EXTERNAL_APIS])
+        explanation = analysis.get("api_coverage_explanation")
+        lines = [f"APIs Expected: {', '.join(apis_expected)}"]
+        lines.append(f"APIs Called: {', '.join(apis_called)}")
+        lines.append("")
+        if explanation:
+            lines.append(f"API Coverage Note: {explanation}")
+        for api in ALL_EXTERNAL_APIS:
+            key = api["key"]
+            name = api["name"]
+            meta = api_status.get(key, {})
+            status = meta.get("status", "unknown")
+            configured = meta.get("configured", False)
+            applicable = meta.get("applicable", False)
+            error = meta.get("error")
+            if explanation and status == "not_applicable":
+                status_str = "not_applicable (test/demo domain)"
+            elif status == "not_configured":
+                status_str = "not_configured (API key missing)"
+            elif status == "rate_limited":
+                status_str = "exceed_quota (rate limited)"
+            else:
+                status_str = status
+            lines.append(f"- {name}: status={status_str}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
+        api_coverage_section = "\n".join(lines)
     return {
         "scan_id": scan_id,
         "status": "complete",
         "timestamp": datetime.utcnow().isoformat(),
         "message": "For real-time results, use the /scan endpoint directly",
         "note": "Database integration recommended for production use",
+        "api_coverage": api_coverage_section,
     }

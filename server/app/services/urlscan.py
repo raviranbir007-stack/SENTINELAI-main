@@ -23,9 +23,10 @@ class URLScanService:
             Dict with URLScan search results
         """
         logger.debug(f"URLScan.search_domain called for {domain}")
-        if not settings.URLSCAN_API_KEY:
-            logger.warning("URLScan API key not configured")
-            return {"error": "URLScan API key not configured"}
+        api_key = settings.URLSCAN_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("URLScan API key is missing, empty, or not set properly.")
+            return {"error": "URLScan API key is missing, empty, or not set properly."}
 
         cache_key = f"urlscan:domain:{domain}"
         cached = get_cached(cache_key)
@@ -36,7 +37,7 @@ class URLScanService:
             return {"error": "URLScan rate limit reached"}
 
         try:
-            headers = {"API-Key": settings.URLSCAN_API_KEY}
+            headers = {"API-Key": api_key}
 
             async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.get(
@@ -76,9 +77,10 @@ class URLScanService:
             Dict with URLScan results
         """
         logger.debug(f"URLScan.scan_url called for {url}")
-        if not settings.URLSCAN_API_KEY:
-            logger.warning("URLScan API key not configured")
-            return {"error": "URLScan API key not configured"}
+        api_key = settings.URLSCAN_API_KEY
+        if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
+            logger.error("URLScan API key is missing, empty, or not set properly.")
+            return {"error": "URLScan API key is missing, empty, or not set properly."}
 
         cache_key = f"urlscan:url:{url}"
         cached = get_cached(cache_key)
@@ -90,7 +92,7 @@ class URLScanService:
 
         try:
             headers = {
-                "API-Key": settings.URLSCAN_API_KEY,
+                "API-Key": api_key,
                 "Content-Type": "application/json",
             }
             data = {"url": url, "visibility": "public"}

@@ -130,20 +130,37 @@ class ReportGenerator:
 
     def _format_scan_results_section(self, threat_analysis: Dict[str, Any]) -> str:
         """Format a clear, detailed scan results section for the report."""
+        from .threat_analyzer import ALL_EXTERNAL_APIS
         api_results = threat_analysis.get("api_results", {})
         api_status = api_results.get("api_status", {})
         apis_called = api_results.get("apis_called", [])
-        apis_expected = api_results.get("apis_expected", [])
+        apis_expected = api_results.get("apis_expected", [api["name"] for api in ALL_EXTERNAL_APIS])
         lines = [f"APIs Expected: {', '.join(apis_expected)}"]
         lines.append(f"APIs Called: {', '.join(apis_called)}")
         lines.append("")
-        for api_key, meta in api_status.items():
-            name = meta.get("name", api_key)
+        # Add explicit API coverage explanation if present (for test/demo domains)
+        explanation = threat_analysis.get("api_coverage_explanation")
+        if explanation:
+            lines.append(f"API Coverage Note: {explanation}")
+        # Always show all 5 APIs, with suitability/applicability and status
+        for api in ALL_EXTERNAL_APIS:
+            key = api["key"]
+            name = api["name"]
+            meta = api_status.get(key, {})
             status = meta.get("status", "unknown")
             configured = meta.get("configured", False)
             applicable = meta.get("applicable", False)
             error = meta.get("error")
-            lines.append(f"- {name}: status={status}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
+            # For test/demo domains, override status string for clarity
+            if explanation and status == "not_applicable":
+                status_str = "not_applicable (test/demo domain)"
+            elif status == "not_configured":
+                status_str = "not_configured (API key missing)"
+            elif status == "rate_limited":
+                status_str = "exceed_quota (rate limited)"
+            else:
+                status_str = status
+            lines.append(f"- {name}: status={status_str}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
         lines.append("")
         threats = threat_analysis.get("threat_indicators", [])
         if threats:
