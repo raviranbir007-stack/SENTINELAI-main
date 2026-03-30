@@ -733,10 +733,13 @@ class ThreatAnalyzer:
 
         previous_status = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
 
+        # Patch: If API is not configured or not applicable, do not mark as error
         if error_message:
             error_lower = error_message.lower()
-            if "not configured" in error_lower:
+            if "not configured" in error_lower or "api key missing" in error_lower:
                 status = "not_configured"
+            elif "not applicable" in error_lower or "not supported" in error_lower:
+                status = "not_applicable"
             elif "authorization failed" in error_lower or "unauthorized" in error_lower or "forbidden" in error_lower:
                 status = "not_authorized"
             elif "rate limit" in error_lower:
@@ -759,13 +762,15 @@ class ThreatAnalyzer:
             "error": error_message or None,
         }
 
-        if warnings is not None and status in {"not_configured", "rate_limited", "error"}:
+        # Patch: Add more specific warning messages for not_configured and not_applicable
+        if warnings is not None and status in {"not_configured", "rate_limited", "error", "not_applicable"}:
             warning_map = {
                 "not_configured": f"{display_name} API key not configured",
                 "rate_limited": f"{display_name} rate limit reached",
                 "error": f"{display_name} request failed",
+                "not_applicable": f"{display_name} not applicable for this input type",
             }
-            warning_text = warning_map[status] if status != "error" else f"{display_name} request failed: {error_message}"
+            warning_text = warning_map.get(status, f"{display_name} request failed: {error_message}")
             if warning_text not in warnings:
                 warnings.append(warning_text)
 

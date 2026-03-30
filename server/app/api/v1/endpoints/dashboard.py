@@ -225,6 +225,14 @@ async def get_dashboard_summary(
         except Exception as exc:
             logger.debug("background stats unavailable: %s", exc)
 
+    # Patch: Restore health to 'normal' if all threats are marked as read/resolved
+    # Assume a scan is 'read' if it has a field 'read' True, or if not present, treat as unread
+    unread_threats = [s for s in manual_scans if (s.threat_level or '').lower() in ("malicious", "suspicious", "critical", "high") and not getattr(s, 'read', False)]
+    if not unread_threats:
+        system_status = "normal"
+    else:
+        system_status = "degraded"
+
     return {
         "time_range": _label(time_range),
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -243,7 +251,7 @@ async def get_dashboard_summary(
             "network_connections_observed": bg_stats.get("network_connections_observed", 0),
             "threat_detection_rate_pct": bg_stats.get("threat_detection_rate", 0.0),
         },
-        "system_status": "active",
+        "system_status": system_status,
         "external_apis_enabled": settings.EXTERNAL_APIS_ENABLED,
     }
 
