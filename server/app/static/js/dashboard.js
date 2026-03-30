@@ -139,7 +139,7 @@ class Dashboard {
     });
 
     /**
-     * Show security posture warning banner/button
+     * Show security posture warning banner/button and always notify
      */
     showSecurityPostureWarning(posture) {
       // Remove any existing banner
@@ -158,12 +158,14 @@ class Dashboard {
         `;
         const dashboardSection = document.getElementById('dashboard-section');
         if (dashboardSection) dashboardSection.prepend(banner);
+        // Always show toast notification
+        this.showToast(`Security Posture Warning: ${critical_findings} Critical, ${high_findings} High findings. Click 'View & Fix' for details.`, 'warning');
         document.getElementById('view-posture-details').onclick = () => this.showPostureDetails(posture);
       }
     }
 
     /**
-     * Show posture details and remediation modal
+     * Show posture details and remediation modal with walkthrough
      */
     showPostureDetails(posture) {
       // Remove any existing modal
@@ -182,7 +184,7 @@ class Dashboard {
       }
       if (!findingsList) findingsList = '<div style="color:var(--muted-foreground);">No detailed findings available.</div>';
 
-      // Modal HTML
+      // Modal HTML with walkthrough and fix button
       const modal = document.createElement('div');
       modal.id = 'posture-modal';
       modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
@@ -190,6 +192,7 @@ class Dashboard {
         <div style="background:white;max-width:700px;width:100%;border-radius:8px;padding:2rem;box-shadow:0 8px 32px rgba(0,0,0,0.25);position:relative;">
           <button onclick="document.getElementById('posture-modal').remove()" style="position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:2rem;cursor:pointer;">&times;</button>
           <h2 style="margin-top:0;">Security Posture Details</h2>
+          <div style="margin-bottom:1rem;color:var(--warning);font-weight:600;">Walkthrough: Review each finding below and click 'Fix All Automatically' to attempt remediation. For manual steps, follow the instructions provided.</div>
           <div>${findingsList}</div>
           <div style="margin-top:2rem;text-align:right;">
             <button id="fix-all-posture-btn" style="background:var(--success);color:white;border:none;padding:0.75rem 1.5rem;border-radius:4px;cursor:pointer;font-size:1rem;">Fix All Automatically</button>

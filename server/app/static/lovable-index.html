@@ -432,6 +432,100 @@
                     <div class="stat-label">System Health</div>
                     <div class="stat-value" id="systemHealth">--</div>
                 </div>
+                <div class="stat-card" id="securityPostureCard">
+                    <div class="stat-label">Security Posture</div>
+                    <div class="stat-value" id="securityPostureStatus">--</div>
+                </div>
+                <div id="securityPostureModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;">
+                    <div style="background:white;max-width:700px;width:100%;border-radius:8px;padding:2rem;box-shadow:0 8px 32px rgba(0,0,0,0.25);position:relative;">
+                        <button onclick="document.getElementById('securityPostureModal').style.display='none'" style="position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:2rem;cursor:pointer;">&times;</button>
+                        <h2 style="margin-top:0;">Security Posture Details</h2>
+                        <div id="securityPostureFindings">Loading...</div>
+                        <div style="margin-top:2rem;text-align:right;">
+                            <button id="fixAllPostureBtn" style="background:var(--success);color:white;border:none;padding:0.75rem 1.5rem;border-radius:4px;cursor:pointer;font-size:1rem;">Fix All Automatically</button>
+                        </div>
+                    </div>
+                </div>
+                    // Security Posture Logic
+                    let lastPostureResp = null;
+                    async function fetchSecurityPosture() {
+                        try {
+                            const resp = await apiRequest('/dashboard/security-posture');
+                            lastPostureResp = resp;
+                            const statusDiv = document.getElementById('securityPostureStatus');
+                            if (!resp || !resp.summary) {
+                                statusDiv.textContent = '--';
+                                statusDiv.onclick = null;
+                                statusDiv.style.textDecoration = 'none';
+                                statusDiv.style.color = '';
+                                statusDiv.style.fontWeight = '';
+                                statusDiv.title = '';
+                                return;
+                            }
+                            const { critical_findings, high_findings, total_findings } = resp.summary;
+                            if (critical_findings > 0 || high_findings > 0) {
+                                statusDiv.innerHTML = '🛡️ <button id="securityPostureWarningBtn" aria-label="Review and fix security posture warnings" style="background:none;border:none;color:#ff4444;font-weight:bold;text-decoration:underline;cursor:pointer;font-size:inherit;padding:0;">Warning</button>';
+                                statusDiv.title = 'Click to review and fix findings';
+                                statusDiv.style.cursor = 'pointer';
+                                const btn = document.getElementById('securityPostureWarningBtn');
+                                if (btn) {
+                                    btn.onclick = function() { showSecurityPostureModal(lastPostureResp); };
+                                }
+                                statusDiv.onclick = null;
+                            } else {
+                                statusDiv.innerHTML = '🛡️ <span style="color:#00ff88;font-weight:bold;">Normal</span>';
+                                statusDiv.title = '';
+                                statusDiv.style.cursor = 'default';
+                                statusDiv.onclick = null;
+                            }
+                        } catch (e) {
+                            const statusDiv = document.getElementById('securityPostureStatus');
+                            statusDiv.textContent = '--';
+                            statusDiv.onclick = null;
+                            statusDiv.style.textDecoration = 'none';
+                            statusDiv.style.color = '';
+                            statusDiv.style.fontWeight = '';
+                            statusDiv.title = '';
+                        }
+                    }
+
+                    function showSecurityPostureModal(posture) {
+                        const modal = document.getElementById('securityPostureModal');
+                        const findingsDiv = document.getElementById('securityPostureFindings');
+                        const findings = posture.report?.findings || {};
+                        let findingsList = '';
+                        for (const [cat, items] of Object.entries(findings)) {
+                            if (!Array.isArray(items) || items.length === 0) continue;
+                            findingsList += `<h4 style="margin-top:1.5rem;">${cat.charAt(0).toUpperCase() + cat.slice(1)}</h4><ul style="margin-bottom:1rem;">`;
+                            for (const item of items) {
+                                findingsList += `<li style="margin-bottom:0.5rem;"><strong>${item.title || item.name}</strong>: ${item.description || ''} <br><em>Severity: ${item.severity || ''}</em>${item.remediation ? `<br><span style='color:var(--primary);'>Fix: ${item.remediation}</span>` : ''}</li>`;
+                            }
+                            findingsList += '</ul>';
+                        }
+                        if (!findingsList) findingsList = '<div style="color:var(--muted-foreground);">No detailed findings available.</div>';
+                        findingsDiv.innerHTML = findingsList;
+                        modal.style.display = 'flex';
+                    }
+
+                    document.getElementById('fixAllPostureBtn').onclick = async function() {
+                        this.disabled = true;
+                        this.textContent = 'Fixing...';
+                        try {
+                            const resp = await apiRequest('/dashboard/fix-security-posture', { method: 'POST' });
+                            showToast(resp?.message || 'Remediation attempted. Please re-scan to verify.', resp?.success ? 'success' : 'warning');
+                            document.getElementById('securityPostureModal').style.display = 'none';
+                            fetchSecurityPosture();
+                        } catch (e) {
+                            showToast('Failed to fix posture issues: ' + (e.message || e), 'error');
+                        } finally {
+                            this.disabled = false;
+                            this.textContent = 'Fix All Automatically';
+                        }
+                    };
+
+                    // Call on load and every 30s
+                    fetchSecurityPosture();
+                    setInterval(fetchSecurityPosture, 30000);
             </div>
 
             <div class="scanner-section">
