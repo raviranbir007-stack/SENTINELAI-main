@@ -375,42 +375,56 @@ class Dashboard {
    */
   updateThreatsDisplay(threats) {
     const threatsList = document.getElementById('threats-list');
-    
-    const mockThreats = [
-      {
-        id: 1,
-        name: 'Suspicious Process Activity',
-        details: 'Process_monitor.exe attempting network connection',
-        severity: 'critical',
-        timestamp: new Date(Date.now() - 3600000).toLocaleString(),
-      },
-      {
-        id: 2,
-        name: 'Malware Signature Detected',
-        details: 'file_download.exe matches known malware pattern',
-        severity: 'critical',
-        timestamp: new Date(Date.now() - 7200000).toLocaleString(),
-      },
-      {
-        id: 3,
-        name: 'Suspicious URL Access',
-        details: 'Attempted access to known phishing domain',
-        severity: 'medium',
-        timestamp: new Date(Date.now() - 10800000).toLocaleString(),
-      },
-    ];
-
-    const threatsData = threats && threats.length > 0 ? threats : mockThreats;
-
-    threatsList.innerHTML = threatsData.map(threat => `
-      <div class="threat-item severity-${threat.severity}">
-        <div class="threat-info">
-          <div class="threat-name">${threat.name}</div>
-          <div class="threat-details">${threat.details}</div>
+    const threatsData = threats && threats.length > 0 ? threats : [];
+    threatsList.innerHTML = threatsData.map(threat => {
+      // API Coverage block
+      let apiCoverageHTML = '';
+      if (threat.api_status || (threat.analysis && threat.analysis.api_results && threat.analysis.api_results.api_status)) {
+        const apiStatus = threat.api_status || (threat.analysis && threat.analysis.api_results && threat.analysis.api_results.api_status) || {};
+        apiCoverageHTML = `<div style="margin-top:0.5rem;font-size:0.95em;">
+          <strong>API Coverage:</strong> ` + Object.entries(apiStatus).map(([api, meta]) => {
+            let icon = '❔';
+            let color = '#aaa';
+            if (meta.status === 'checked' || meta.status === 'clean' || meta.status === 'no_threat') { icon = '✅'; color = 'green'; }
+            else if (meta.status === 'error') { icon = '❌'; color = 'red'; }
+            else if (meta.status === 'not_configured') { icon = '⚠️'; color = 'orange'; }
+            else if (meta.status === 'not_applicable') { icon = '⏭️'; color = '#888'; }
+            else if (meta.status === 'pending') { icon = '⏳'; color = '#888'; }
+            else if (meta.status === 'rate_limited') { icon = '🚫'; color = 'orange'; }
+            return `<span style="margin-right:0.5em;color:${color}">${icon} ${meta.name || api}</span>`;
+          }).join('') + `</div>`;
+      }
+      // Mark as Read button
+      let markReadBtn = '';
+      if (!threat.is_read && threat.scan_id) {
+        markReadBtn = `<button style="margin-top:0.5rem;background:var(--success);color:white;border:none;padding:0.4rem 1rem;border-radius:4px;cursor:pointer;font-size:0.95em;" onclick="window.dashboard.markThreatAsRead('${threat.scan_id}')">Mark as Read</button>`;
+      }
+      return `
+        <div class="threat-item severity-${threat.severity}">
+          <div class="threat-info">
+            <div class="threat-name">${threat.name || threat.target || threat.scan_id}</div>
+            <div class="threat-details">${threat.details || threat.summary || ''}</div>
+            ${apiCoverageHTML}
+            ${markReadBtn}
+          </div>
+          <div class="threat-severity ${threat.severity}">${threat.severity}</div>
         </div>
-        <div class="threat-severity ${threat.severity}">${threat.severity}</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
+  }
+
+  /**
+   * Mark a threat as read (acknowledged)
+   */
+  async markThreatAsRead(scanId) {
+    try {
+      await fetch(`/api/v1/scan/mark-read/${scanId}`, { method: 'POST' });
+      this.showToast('Threat marked as read.', 'success');
+      this.loadDashboardData();
+    } catch (e) {
+      this.showToast('Failed to mark as read: ' + (e.message || e), 'error');
+    }
+  }
   }
 
   /**

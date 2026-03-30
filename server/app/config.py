@@ -11,9 +11,10 @@ except Exception:
         from pydantic import BaseModel
         BaseSettings = BaseModel
         ConfigDict = lambda **kwargs: {"env_file": ".env", "extra": "ignore"}
-from dotenv import load_dotenv
 
-load_dotenv()
+# Always load .env from project root (not .env.example)
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv('.env', raise_error_if_not_found=False))
 
 
 class Settings(BaseSettings):

@@ -777,6 +777,10 @@ class ThreatAnalyzer:
             warning_text = warning_map.get(status, f"{display_name} request failed: {error_message}")
             if warning_text not in warnings:
                 warnings.append(warning_text)
+        # Defensive: If API returned a dict with an 'error' key but error_message is empty, treat as error
+        if isinstance(response, dict) and "error" in response and response["error"] and not error_message:
+            status = "error"
+            error_message = str(response["error"])
 
     async def analyze(self, value: str, use_external_apis: bool | None = None) -> Dict[str, Any]:
         """
