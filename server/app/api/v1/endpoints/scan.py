@@ -1,6 +1,18 @@
-# Endpoint to mark a scan as read (acknowledged)
 from fastapi import Body
 
+import logging
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from ....database import get_db
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# In-memory scan history (in production, use database)
+_scan_history = []
+
+# Endpoint to mark a scan as read (acknowledged)
 @router.post("/mark-read/{scan_id}")
 async def mark_scan_as_read(scan_id: str, db: AsyncSession = Depends(get_db)):
     """Mark a scan as read/acknowledged by scan_id (for dashboard health restoration)."""
@@ -17,10 +29,7 @@ async def mark_scan_as_read(scan_id: str, db: AsyncSession = Depends(get_db)):
         await db.commit()
         return {"status": "ok", "scan_id": scan_id, "is_read": True}
     return {"status": "not_found", "scan_id": scan_id}
-"""
-Threat Scanning Endpoints
-Handles threat analysis for IPs, URLs, domains, and file hashes
-"""
+
 
 import hashlib
 import asyncio
@@ -61,13 +70,13 @@ _RE_DOMAIN = re.compile(r'^[a-zA-Z0-9\-\.]{1,253}$')
 _ALLOWED_SCAN_SOURCES = {"manual", "client_protection", "background", "scheduled"}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Local file analysis (mirrors compat.py helpers — no external API keys needed)
+# Local file analysis (mirrors compat.py helpers - no external API keys needed)
 # ─────────────────────────────────────────────────────────────────────────────
 _BYTE_SIGS_V1 = [
     ("EICAR",             b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
                           "EICAR AV test file",          "critical"),
     ("SHELLCODE_NOP",     b"\x90\x90\x90\x90\x90\x90\x90\x90",
-                          "NOP sled – shellcode",        "high"),
+                          "NOP sled - shellcode",        "high"),
     ("REVERSE_SHELL",     b"/bin/sh\x00-i",
                           "Reverse-shell string",        "critical"),
     ("MSFVENOM",          b"msfvenom",
@@ -217,11 +226,11 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
 
     if entropy >= _HIGH_ENT:
         indicators.append({"source": "Local Analysis", "severity": "high",
-                           "indicator": f"Very high entropy ({entropy:.2f}) — likely packed/encrypted",
+                           "indicator": f"Very high entropy ({entropy:.2f}) - likely packed/encrypted",
                            "type": "HIGH_ENTROPY", "confidence": 0.78})
     elif entropy >= _MED_ENT:
         indicators.append({"source": "Local Analysis", "severity": "medium",
-                           "indicator": f"Elevated entropy ({entropy:.2f}) — possible obfuscation",
+                           "indicator": f"Elevated entropy ({entropy:.2f}) - possible obfuscation",
                            "type": "MED_ENTROPY", "confidence": 0.55})
 
     if ext in _DANGEROUS_EXTS_V1:
@@ -231,7 +240,7 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
 
     if pe_info and pe_info.get("suspicious"):
         indicators.append({"source": "Local Analysis", "severity": "high",
-                           "indicator": "PE header anomaly — no relocation, not a DLL",
+                           "indicator": "PE header anomaly - no relocation, not a DLL",
                            "type": "PE_ANOMALY", "confidence": 0.80})
 
     _SEV_SCORE = {"critical": 5, "high": 3, "medium": 2, "low": 1}
@@ -566,12 +575,11 @@ async def get_scan_history(
     source: Optional[str] = None,
     limit: int = 100,
 ):
-    """
-    Get recent scan history from in-memory cache.
-    source=manual (default) | all
-    Background auto-monitor scans are NOT stored here — they live in activity_monitoring.db.
-    Use GET /api/v1/monitoring/activity for background scan records.
-    """
+    # ...existing code...
+    # Get recent scan history from in-memory cache.
+    # source=manual (default) | all
+    # Background auto-monitor scans are NOT stored here - they live in activity_monitoring.db.
+    # Use GET /api/v1/monitoring/activity for background scan records.
     items = _scan_history
     if source != "all":
         items = [s for s in items if s.get("scan_source", "manual") == "manual"]
@@ -801,15 +809,11 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
 
 @router.post("/ip")
 async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Scan an IP address for threats using AbuseIPDB and Shodan
-
-    Args:
-        request: Scan request with target IP
-
-    Returns:
-        Threat analysis results
-    """
+    # Scan an IP address for threats using AbuseIPDB and Shodan
+    # Args:
+    #     request: Scan request with target IP
+    # Returns:
+    #     Threat analysis results
     try:
         ip = _validate_target(request.target, max_len=45)
         # Basic IP format check
@@ -875,20 +879,16 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
 
 @router.post("/hash")
 async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Scan a file hash for threats using VirusTotal and Hybrid Analysis
-
-    Args:
-        request: Scan request with target hash (MD5, SHA1, or SHA256)
-
-    Returns:
-        Threat analysis results
-    """
+    # Scan a file hash for threats using VirusTotal and Hybrid Analysis
+    # Args:
+    #     request: Scan request with target hash (MD5, SHA1, or SHA256)
+    # Returns:
+    #     Threat analysis results
     try:
         file_hash = _validate_target(request.target, max_len=128)
         # Accept MD5 (32), SHA1 (40), SHA256 (64) hex strings
         if not _RE_HASH.match(file_hash):
-            raise HTTPException(status_code=400, detail="Invalid hash format — expected MD5 (32), SHA1 (40), or SHA256 (64) hex string")
+            raise HTTPException(status_code=400, detail="Invalid hash format - expected MD5 (32), SHA1 (40), or SHA256 (64) hex string")
         include_report = request.include_report
 
         logger.debug(f"SCAN HASH started | target={file_hash[:16]}...")
@@ -948,15 +948,11 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
 
 @router.post("/scan")
 async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Universal scan endpoint - auto-detects input type and routes to appropriate analyzer
-
-    Args:
-        request: Scan request with target (IP, URL, domain, or hash)
-
-    Returns:
-        Threat analysis results
-    """
+    # Universal scan endpoint - auto-detects input type and routes to appropriate analyzer
+    # Args:
+    #     request: Scan request with target (IP, URL, domain, or hash)
+    # Returns:
+    #     Threat analysis results
     try:
         target = request.target.strip()
         include_report = request.include_report
@@ -1026,17 +1022,14 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
 @router.post("")
 @router.post("/")
 async def universal_scan_root(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)):
-    """Compatibility alias for cleaner route usage: /api/v1/scan"""
+    # Compatibility alias for cleaner route usage: /api/v1/scan
     return await universal_scan(request, db)
 
 
 @router.get("/results/{scan_id}")
 async def get_scan_results(scan_id: str):
-    """
-    Get results of a specific scan
-
-    Note: In production, scan results would be stored in a database
-    """
+    # Get results of a specific scan
+    # Note: In production, scan results would be stored in a database
     return {
         "scan_id": scan_id,
         "status": "complete",

@@ -99,19 +99,18 @@ class ThreatAnalyzer:
         self.urlscan = URLScanService()
         self.hybrid_analysis = HybridAnalysisService()
         
-        # Initialize ML models if available
+        # Initialize ML models if available, else raise error (ML required)
         if ML_MODELS_AVAILABLE:
             try:
                 self.anomaly_model = get_anomaly_model()
                 self.threat_model = get_threat_model()
-                logger.debug("ML models initialized successfully")
+                logger.info("ML models initialized successfully and are required for all scans.")
             except Exception as e:
-                logger.warning(f"Failed to initialize ML models: {e}")
-                self.anomaly_model = None
-                self.threat_model = None
+                logger.error(f"Failed to initialize ML models: {e}")
+                raise RuntimeError("ML models are required but could not be initialized.")
         else:
-            self.anomaly_model = None
-            self.threat_model = None
+            logger.error("ML models are required but not available. Aborting startup.")
+            raise RuntimeError("ML models are required but not available.")
         
         # Initialize AI analyzer if available
         if AI_ANALYZER_AVAILABLE:
@@ -872,11 +871,26 @@ class ThreatAnalyzer:
                 analysis_result["summary"] = (
                     "Input type could not be determined. Please provide a valid IP, URL, domain, or file hash."
                 )
-            
-            # Apply AI-enhanced analysis if primary analysis completed
-            if analysis_result.get("verdict") and not analysis_result.get("ai_analysis"):
-                logger.debug("Applying AI-enhanced analysis to results")
+
+            # Always apply AI/ML analysis after all API results are collected
+            if analysis_result.get("verdict"):
+                logger.debug("Applying AI/ML analysis to results and correlating with API results")
                 analysis_result = await self._apply_ai_analysis(analysis_result)
+
+            # Explicitly correlate ML/AI and API contributions in the result
+            api_results = analysis_result.get("api_results", {})
+            ai_analysis = analysis_result.get("ai_analysis", {})
+            analysis_result["correlation"] = {
+                "apis_called": api_results.get("apis_called", []),
+                "apis_status": api_results.get("api_status", {}),
+                "ml_ai": {
+                    "anomaly_detection": ai_analysis.get("anomaly_detection", {}),
+                    "threat_prediction": ai_analysis.get("threat_prediction", {}),
+                    "advanced_ai": ai_analysis.get("advanced_ai", {}),
+                },
+                "final_verdict": analysis_result.get("verdict"),
+                "confidence": analysis_result.get("confidence"),
+            }
 
         except Exception as e:
             logger.error(f"Error analyzing {value}: {str(e)}")
@@ -2083,10 +2097,10 @@ class ThreatAnalyzer:
         Apply AI and ML models to enhance threat analysis with predictions
         """
         try:
-            if not self.anomaly_model and not self.threat_model and not self.ai_analyzer:
-                # No AI/ML available, skip enhancement
-                return result
-            
+            if not self.anomaly_model or not self.threat_model:
+                logger.error("ML/AI models are required for all scans but are missing.")
+                raise RuntimeError("ML/AI models are required for all scans.")
+
             # Prepare features for ML models
             features = {
                 'threat_indicators': result.get('threat_indicators', []),
@@ -2096,45 +2110,41 @@ class ThreatAnalyzer:
                 'api_results': result.get('api_results', {}),
                 'malicious_score': result.get('confidence', 0) if result.get('verdict') == ThreatLevel.MALICIOUS else 0
             }
-            
+
             ai_analysis = {}
-            
+
             # Anomaly Detection
-            if self.anomaly_model:
-                try:
-                    anomaly_result = self.anomaly_model.predict(features)
-                    ai_analysis['anomaly_detection'] = {
-                        'is_anomaly': anomaly_result.get('is_anomaly', False),
-                        'score': anomaly_result.get('score', 0),
-                        'confidence': anomaly_result.get('confidence', 0),
-                        'factors': anomaly_result.get('factors', [])
-                    }
-                    logger.debug(f"Anomaly detection: {anomaly_result.get('is_anomaly')} (score: {anomaly_result.get('score')})")
-                except Exception as e:
-                    logger.warning(f"Anomaly detection failed: {e}")
-            
+            try:
+                anomaly_result = self.anomaly_model.predict(features)
+                ai_analysis['anomaly_detection'] = {
+                    'is_anomaly': anomaly_result.get('is_anomaly', False),
+                    'score': anomaly_result.get('score', 0),
+                    'confidence': anomaly_result.get('confidence', 0),
+                    'factors': anomaly_result.get('factors', [])
+                }
+                logger.info(f"[ML] Anomaly detection used: is_anomaly={anomaly_result.get('is_anomaly')}, score={anomaly_result.get('score')}, factors={anomaly_result.get('factors')}")
+            except Exception as e:
+                logger.error(f"Anomaly detection failed: {e}")
+
             # Threat Prediction
-            if self.threat_model:
-                try:
-                    threat_prediction = self.threat_model.predict(features)
-                    ai_analysis['threat_prediction'] = {
-                        'is_threat': threat_prediction.get('is_threat', False),
-                        'probability': threat_prediction.get('probability', 0),
-                        'threat_level': threat_prediction.get('threat_level', 'unknown'),
-                        'confidence': threat_prediction.get('confidence', 0),
-                        'factors': threat_prediction.get('factors', [])
-                    }
-                    logger.debug(f"Threat prediction: {threat_prediction.get('threat_level')} (probability: {threat_prediction.get('probability')})")
-                    
-                    # Enhance verdict if AI predicts high threat
-                    if threat_prediction.get('probability', 0) > 0.8 and result.get('verdict') != ThreatLevel.MALICIOUS:
-                        logger.debug("AI prediction suggests escalating to MALICIOUS")
-                        result['ai_escalation'] = True
-                        result['ai_escalation_reason'] = f"AI model predicted {threat_prediction.get('probability'):.0%} threat probability"
-                        
-                except Exception as e:
-                    logger.warning(f"Threat prediction failed: {e}")
-            
+            try:
+                threat_prediction = self.threat_model.predict(features)
+                ai_analysis['threat_prediction'] = {
+                    'is_threat': threat_prediction.get('is_threat', False),
+                    'probability': threat_prediction.get('probability', 0),
+                    'threat_level': threat_prediction.get('threat_level', 'unknown'),
+                    'confidence': threat_prediction.get('confidence', 0),
+                    'factors': threat_prediction.get('factors', [])
+                }
+                logger.info(f"[ML] Threat prediction used: threat_level={threat_prediction.get('threat_level')}, probability={threat_prediction.get('probability')}, factors={threat_prediction.get('factors')}")
+                # Enhance verdict if AI predicts high threat
+                if threat_prediction.get('probability', 0) > 0.8 and result.get('verdict') != ThreatLevel.MALICIOUS:
+                    logger.info("[ML] AI prediction suggests escalating to MALICIOUS")
+                    result['ai_escalation'] = True
+                    result['ai_escalation_reason'] = f"AI model predicted {threat_prediction.get('probability'):.0%} threat probability"
+            except Exception as e:
+                logger.error(f"Threat prediction failed: {e}")
+
             # Advanced AI Analysis (Gemini if available)
             if self.ai_analyzer:
                 try:
@@ -2146,7 +2156,6 @@ class ThreatAnalyzer:
                         'verdict': result.get('verdict'),
                         'confidence': result.get('confidence', 0)
                     }
-                    
                     ai_result = await self.ai_analyzer.analyze_threat(threat_data)
                     ai_analysis['advanced_ai'] = {
                         'risk_level': ai_result.get('risk_level', 'unknown'),
@@ -2154,28 +2163,27 @@ class ThreatAnalyzer:
                         'threat_types': ai_result.get('threat_types', []),
                         'recommendations': ai_result.get('recommendations', [])
                     }
-                    logger.debug(f"Advanced AI analysis: {ai_result.get('risk_level')}")
-                    
+                    logger.info(f"[AI] Advanced AI analysis used: risk_level={ai_result.get('risk_level')}, confidence={ai_result.get('confidence')}")
                 except Exception as e:
-                    logger.warning(f"Advanced AI analysis failed: {e}")
-            
+                    logger.error(f"Advanced AI analysis failed: {e}")
+
             # Add behavioral analysis
             behavioral_analysis = self._generate_behavioral_analysis(result)
             ai_analysis['behavioral_analysis'] = behavioral_analysis
-            
+
             # Calculate reputation score
             reputation_score = self._calculate_reputation_score(result, ai_analysis)
             ai_analysis['reputation_score'] = reputation_score
-            
+
             # Store AI analysis results
             result['ai_analysis'] = ai_analysis
-            
+
             # Refine verdict based on AI insights
             result = self._refine_verdict_with_ai(result, ai_analysis)
-            
+
         except Exception as e:
             logger.error(f"AI analysis failed: {e}", exc_info=True)
-        
+
         return result
     
     def _generate_behavioral_analysis(self, result: Dict) -> Dict:

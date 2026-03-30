@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     URLSCAN_API_KEY: str = os.getenv("URLSCAN_API_KEY", "")
 
     # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+    DATABASE_URL: str = "sqlite:///./server/test.db"
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
     # Security

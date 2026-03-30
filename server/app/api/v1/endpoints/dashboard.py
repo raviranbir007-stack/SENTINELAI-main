@@ -225,9 +225,13 @@ async def get_dashboard_summary(
         except Exception as exc:
             logger.debug("background stats unavailable: %s", exc)
 
+
     # Patch: Restore health to 'normal' if all threats are marked as read/resolved
-    # Assume a scan is 'read' if it has a field 'read' True, or if not present, treat as unread
-    unread_threats = [s for s in manual_scans if (s.threat_level or '').lower() in ("malicious", "suspicious", "critical", "high") and not getattr(s, 'read', False)]
+    # Use the correct 'is_read' field from ScanHistory
+    unread_threats = [
+        s for s in manual_scans
+        if (s.threat_level or '').lower() in ("malicious", "suspicious", "critical", "high") and not getattr(s, 'is_read', False)
+    ]
     if not unread_threats:
         system_status = "normal"
     else:

@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 
 # Database path
-DB_PATH = Path(__file__).parent / "sentinel.db"
+DB_PATH = Path(__file__).parent / "test.db"
 
 
 def migrate_forensic_features():
@@ -67,6 +67,8 @@ def migrate_forensic_features():
         migrations.append(("scan_history", "analyst_notes", "TEXT"))
     if 'analyst_verified' not in scan_columns:
         migrations.append(("scan_history", "analyst_verified", "BOOLEAN DEFAULT 0"))
+    if 'is_read' not in scan_columns:
+        migrations.append(("scan_history", "is_read", "BOOLEAN DEFAULT 0"))
     
     # Check and add columns to attack_events table
     print("Checking attack_events table...")
