@@ -20,12 +20,106 @@ class Dashboard {
     this.setupEventListeners();
     this.checkAPIHealth();
     this.loadDashboardData();
+
+    // Add Deep Manual Scan and Harden Now buttons if not present
+    setTimeout(() => {
+      this.addSecurityControls();
+    }, 500);
+  }
+
+  /**
+   * Add Deep Manual Scan and Harden Now buttons to dashboard
+   */
+  addSecurityControls() {
+    const dashboardSection = document.getElementById('dashboard-section');
+    if (!dashboardSection) return;
+    if (document.getElementById('deep-manual-scan-btn')) return; // Already added
+
+    const controlsDiv = document.createElement('div');
+    controlsDiv.style.cssText = 'display:flex;gap:1.5rem;margin-bottom:1.5rem;';
+    controlsDiv.innerHTML = `
+      <button id="deep-manual-scan-btn" style="background:var(--primary);color:white;padding:0.75rem 1.5rem;border:none;border-radius:4px;font-size:1rem;cursor:pointer;">Deep Manual Scan</button>
+      <button id="harden-now-btn" style="background:var(--success);color:white;padding:0.75rem 1.5rem;border:none;border-radius:4px;font-size:1rem;cursor:pointer;">Harden Now</button>
+    `;
+    dashboardSection.prepend(controlsDiv);
+
+    document.getElementById('deep-manual-scan-btn').onclick = () => this.showDeepScanModal();
+    document.getElementById('harden-now-btn').onclick = () => this.hardenNow();
+  }
+
+  /**
+   * Show modal for deep manual scan input and results
+   */
+  showDeepScanModal() {
+    // Remove any existing modal
+    document.getElementById('deep-scan-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'deep-scan-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    modal.innerHTML = `
+      <div style="background:white;max-width:500px;width:100%;border-radius:8px;padding:2rem;box-shadow:0 8px 32px rgba(0,0,0,0.25);position:relative;">
+        <button onclick="document.getElementById('deep-scan-modal').remove()" style="position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:2rem;cursor:pointer;">&times;</button>
+        <h2 style="margin-top:0;">Deep Manual Scan</h2>
+        <input id="deep-scan-input" type="text" placeholder="Enter IP, URL, domain, or file hash" style="width:100%;padding:0.75rem;margin-bottom:1rem;font-size:1rem;border-radius:4px;border:1px solid var(--border);">
+        <button id="deep-scan-submit" style="background:var(--primary);color:white;padding:0.75rem 1.5rem;border:none;border-radius:4px;font-size:1rem;cursor:pointer;width:100%;">Start Deep Scan</button>
+        <div id="deep-scan-result" style="margin-top:1.5rem;"></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('deep-scan-submit').onclick = () => this.runDeepManualScan();
+  }
+
+  /**
+   * Run deep manual scan and show results
+   */
+  async runDeepManualScan() {
+    const input = document.getElementById('deep-scan-input').value.trim();
+    const resultDiv = document.getElementById('deep-scan-result');
+    if (!input) {
+      resultDiv.innerHTML = '<span style="color:var(--destructive);">Please enter a valid target.</span>';
+      return;
+    }
+    resultDiv.innerHTML = 'Scanning... <span class="spinner"></span>';
+    try {
+      // Use universal scan endpoint with external APIs forced
+      const resp = await fetch('/api/v1/scan/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: input, include_external_apis: true, scan_source: 'manual' })
+      });
+      const data = await resp.json();
+      if (data && data.verdict) {
+        resultDiv.innerHTML = `<strong>Result:</strong> ${data.verdict}<br><pre style="white-space:pre-wrap;font-size:0.95rem;">${JSON.stringify(data, null, 2)}</pre>`;
+      } else {
+        resultDiv.innerHTML = '<span style="color:var(--destructive);">No result or scan failed.</span>';
+      }
+    } catch (e) {
+      resultDiv.innerHTML = `<span style="color:var(--destructive);">Scan error: ${e.message || e}</span>`;
+    }
+  }
+
+  /**
+   * Harden system now (calls backend endpoint)
+   */
+  async hardenNow() {
+    this.showLoading(true, 'Applying security hardening...');
+    try {
+      const resp = await fetch('/api/v1/dashboard/harden-now', { method: 'POST' });
+      const data = await resp.json();
+      this.showLoading(false);
+      this.showToast(data?.message || 'Hardening attempted. Please re-scan to verify.', data?.success ? 'success' : 'warning');
+      this.loadDashboardData();
+    } catch (e) {
+      this.showLoading(false);
+      this.showToast('Failed to harden system: ' + (e.message || e), 'error');
+    }
   }
 
   /**
    * Setup all event listeners
    */
   setupEventListeners() {
+          this.api.getSecurityPosture ? this.api.getSecurityPosture() : fetch('/api/v1/dashboard/security-posture').then(r => r.json()),
     // Navigation
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', (e) => this.switchSection(e.target.dataset.section));
@@ -33,6 +127,9 @@ class Dashboard {
 
     // File upload
     const fileUploadArea = document.getElementById('file-upload-area');
+
+        // Show posture warning if needed
+        this.showSecurityPostureWarning(posture);
     const fileInput = document.getElementById('file-input');
     
     fileUploadArea.addEventListener('click', () => fileInput.click());
@@ -40,6 +137,86 @@ class Dashboard {
       e.preventDefault();
       fileUploadArea.style.borderColor = 'var(--accent-color)';
     });
+
+    /**
+     * Show security posture warning banner/button
+     */
+    showSecurityPostureWarning(posture) {
+      // Remove any existing banner
+      const oldBanner = document.getElementById('security-posture-warning');
+      if (oldBanner) oldBanner.remove();
+
+      if (!posture || !posture.summary) return;
+      const { critical_findings, high_findings } = posture.summary;
+      if (critical_findings > 0 || high_findings > 0) {
+        // Insert banner at top of dashboard
+        const banner = document.createElement('div');
+        banner.id = 'security-posture-warning';
+        banner.style.cssText = 'background:var(--warning);color:black;padding:1rem 2rem;margin-bottom:1rem;border-radius:6px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,0.08);font-weight:500;';
+        banner.innerHTML = `
+          <span>⚠️ Security Posture Warning: ${critical_findings} Critical, ${high_findings} High findings detected. <button id="view-posture-details" style="margin-left:1.5rem;background:var(--destructive);color:white;border:none;padding:0.5rem 1rem;border-radius:4px;cursor:pointer;">View & Fix</button></span>
+        `;
+        const dashboardSection = document.getElementById('dashboard-section');
+        if (dashboardSection) dashboardSection.prepend(banner);
+        document.getElementById('view-posture-details').onclick = () => this.showPostureDetails(posture);
+      }
+    }
+
+    /**
+     * Show posture details and remediation modal
+     */
+    showPostureDetails(posture) {
+      // Remove any existing modal
+      const oldModal = document.getElementById('posture-modal');
+      if (oldModal) oldModal.remove();
+
+      const findings = posture.report?.findings || {};
+      let findingsList = '';
+      for (const [cat, items] of Object.entries(findings)) {
+        if (!Array.isArray(items) || items.length === 0) continue;
+        findingsList += `<h4 style="margin-top:1.5rem;">${cat.charAt(0).toUpperCase() + cat.slice(1)}</h4><ul style="margin-bottom:1rem;">`;
+        for (const item of items) {
+          findingsList += `<li style="margin-bottom:0.5rem;"><strong>${item.title || item.name}</strong>: ${item.description || ''} <br><em>Severity: ${item.severity || ''}</em>${item.remediation ? `<br><span style='color:var(--primary);'>Fix: ${item.remediation}</span>` : ''}</li>`;
+        }
+        findingsList += '</ul>';
+      }
+      if (!findingsList) findingsList = '<div style="color:var(--muted-foreground);">No detailed findings available.</div>';
+
+      // Modal HTML
+      const modal = document.createElement('div');
+      modal.id = 'posture-modal';
+      modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+      modal.innerHTML = `
+        <div style="background:white;max-width:700px;width:100%;border-radius:8px;padding:2rem;box-shadow:0 8px 32px rgba(0,0,0,0.25);position:relative;">
+          <button onclick="document.getElementById('posture-modal').remove()" style="position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:2rem;cursor:pointer;">&times;</button>
+          <h2 style="margin-top:0;">Security Posture Details</h2>
+          <div>${findingsList}</div>
+          <div style="margin-top:2rem;text-align:right;">
+            <button id="fix-all-posture-btn" style="background:var(--success);color:white;border:none;padding:0.75rem 1.5rem;border-radius:4px;cursor:pointer;font-size:1rem;">Fix All Automatically</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      document.getElementById('fix-all-posture-btn').onclick = () => this.fixAllPostureFindings();
+    }
+
+    /**
+     * Attempt to fix all posture findings (calls backend or shows instructions)
+     */
+    async fixAllPostureFindings() {
+      try {
+        this.showLoading(true, 'Attempting to fix all posture issues...');
+        // Try to call backend endpoint for auto-remediation if available
+        const resp = await (this.api.fixSecurityPosture ? this.api.fixSecurityPosture() : fetch('/api/v1/dashboard/fix-security-posture', {method:'POST'}).then(r => r.json()));
+        this.showLoading(false);
+        this.showToast(resp?.message || 'Remediation attempted. Please re-scan to verify.', resp?.success ? 'success' : 'warning');
+        document.getElementById('posture-modal')?.remove();
+        this.loadDashboardData();
+      } catch (e) {
+        this.showLoading(false);
+        this.showToast('Failed to fix posture issues: ' + (e.message || e), 'error');
+      }
+    }
     fileUploadArea.addEventListener('dragleave', () => {
       fileUploadArea.style.borderColor = 'var(--border-color)';
     });
