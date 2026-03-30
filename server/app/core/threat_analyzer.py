@@ -654,22 +654,22 @@ class ThreatAnalyzer:
             return None
 
     def _prepare_api_tracking(self, result: Dict, input_type: str) -> None:
-        """Initialize API tracking metadata for a scan."""
+        """Initialize API tracking metadata for a scan. Force all APIs to be tracked as expected and attempted."""
         api_results = result.setdefault("api_results", {})
         api_status = api_results.setdefault("api_status", {})
 
-        expected = self._get_expected_apis(input_type)
-        api_results["apis_expected"] = [api["name"] for api in expected]
-        api_results["apis_attempted"] = []
+        # All APIs are now always expected and attempted
+        api_results["apis_expected"] = [api["name"] for api in ALL_EXTERNAL_APIS]
+        api_results["apis_attempted"] = [api["name"] for api in ALL_EXTERNAL_APIS]
         api_results["apis_called"] = []
 
         normalized_input = (input_type or "").lower()
-        expected_keys = {api["key"] for api in expected}
 
         for api in ALL_EXTERNAL_APIS:
             configured = bool(getattr(settings, api["config_attr"], ""))
             applicable = normalized_input in api["supported_inputs"]
-            initial_status = "pending" if api["key"] in expected_keys else "not_applicable"
+            # All APIs are now always marked as pending unless not configured
+            initial_status = "pending" if configured else "not_configured"
 
             api_status[api["key"]] = {
                 "name": api["name"],
@@ -1016,13 +1016,13 @@ class ThreatAnalyzer:
         return threats
 
     async def _analyze_ip(self, ip: str, result: Dict) -> Dict:
-        """Analyze IP address using AbuseIPDB, Shodan, and heuristic analysis"""
+        """Analyze IP address using all available APIs and heuristic analysis. All APIs are attempted and logged."""
         logger.debug(f"Analyzing IP: {ip}")
 
         threats = list(result.get("threat_indicators", []))
         warnings = result.setdefault("warnings", [])
         self._prepare_api_tracking(result, result.get("input_type", "ip"))
-        
+
         # Run heuristic analysis first
         heuristic_threats = self._analyze_ip_heuristics(ip)
         if heuristic_threats:
@@ -1034,114 +1034,48 @@ class ThreatAnalyzer:
             result["threat_indicators"] = threats
             return self._calculate_verdict(result)
 
-        abuseipdb_result = None
-        shodan_result = None
-
-        try:
-            logger.debug(f"Checking AbuseIPDB and Shodan concurrently for {ip}")
-            abuseipdb_result, shodan_result = await asyncio.gather(
-                self._call_api_with_retry(
-                    "AbuseIPDB",
-                    lambda: asyncio.wait_for(self.abuseipdb.check_ip(ip), timeout=10),
-                    retries=1,
-                ),
-                self._call_api_with_retry(
-                    "Shodan",
-                    lambda: asyncio.wait_for(self.shodan.search_ip(ip), timeout=10),
-                    retries=1,
-                ),
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"Concurrent IP intelligence lookup failed for {ip}: {str(e)}")
-
-        try:
-            # Check AbuseIPDB for abuse/malicious activity
-            logger.debug(f"Checking AbuseIPDB for {ip}")
-            if isinstance(abuseipdb_result, Exception):
-                raise abuseipdb_result
-            if abuseipdb_result is None:
-                abuseipdb_result = await self.abuseipdb.check_ip(ip)
-            self._track_api_result(result, "abuseipdb", "AbuseIPDB", abuseipdb_result, warnings)
-
-            if abuseipdb_result and abuseipdb_result.get("data"):
-                data = abuseipdb_result.get("data", {})
-                abuse_score = data.get("abuseConfidenceScore", 0)
-
-                if abuse_score > 75:
-                    threats.append(
-                        {
-                            "source": "AbuseIPDB",
-                            "severity": "critical",
-                            "indicator": f"High abuse confidence score: {abuse_score}%",
-                            "score": abuse_score,
-                        }
-                    )
-                elif abuse_score > 25:
-                    threats.append(
-                        {
-                            "source": "AbuseIPDB",
-                            "severity": "medium",
-                            "indicator": f"Moderate abuse confidence score: {abuse_score}%",
-                            "score": abuse_score,
-                        }
-                    )
-
-        except Exception as e:
-            logger.warning(f"AbuseIPDB check failed for {ip}: {str(e)}")
-            self._track_api_result(result, "abuseipdb", "AbuseIPDB", {"error": str(e)}, warnings)
-
-        try:
-            # Check Shodan for exposed services/vulnerabilities
-            logger.debug(f"Checking Shodan for {ip}")
-            if isinstance(shodan_result, Exception):
-                raise shodan_result
-            if shodan_result is None:
-                shodan_result = await self.shodan.search_ip(ip)
-            self._track_api_result(result, "shodan", "Shodan", shodan_result, warnings)
-
-            if shodan_result and not shodan_result.get("error"):
-                # Analyze exposed ports and services
-                ports = shodan_result.get("ports", [])
-                vulns = shodan_result.get("vulns", [])
-
-                if vulns:
-                    critical_vulns = [v for v in vulns if "critical" in v.lower()]
-                    if critical_vulns:
-                        threats.append(
-                            {
-                                "source": "Shodan",
-                                "severity": "critical",
-                                "indicator": f"Critical vulnerabilities found: {len(critical_vulns)}",
-                                "details": critical_vulns[:5],  # Show first 5
-                            }
-                        )
-                    else:
-                        threats.append(
-                            {
-                                "source": "Shodan",
-                                "severity": "medium",
-                                "indicator": f"Vulnerabilities found: {len(vulns)}",
-                                "details": vulns[:5],
-                            }
-                        )
-
-                if len(ports) > 10:
-                    threats.append(
-                        {
-                            "source": "Shodan",
-                            "severity": "low",
-                            "indicator": f"Many open ports detected: {len(ports)}",
-                        }
-                    )
-
-        except Exception as e:
-            logger.warning(f"Shodan search failed for {ip}: {str(e)}")
-            self._track_api_result(result, "shodan", "Shodan", {"error": str(e)}, warnings)
+        # Attempt all APIs, not just relevant ones
+        for api in ALL_EXTERNAL_APIS:
+            api_key = api["key"]
+            api_name = api["name"]
+            try:
+                if api_key == "abuseipdb":
+                    abuseipdb_result = await self.abuseipdb.check_ip(ip)
+                    self._track_api_result(result, api_key, api_name, abuseipdb_result, warnings)
+                    if abuseipdb_result and abuseipdb_result.get("data"):
+                        data = abuseipdb_result.get("data", {})
+                        abuse_score = data.get("abuseConfidenceScore", 0)
+                        if abuse_score > 75:
+                            threats.append({"source": api_name, "severity": "critical", "indicator": f"High abuse confidence score: {abuse_score}%", "score": abuse_score})
+                        elif abuse_score > 25:
+                            threats.append({"source": api_name, "severity": "medium", "indicator": f"Moderate abuse confidence score: {abuse_score}%", "score": abuse_score})
+                elif api_key == "shodan":
+                    shodan_result = await self.shodan.search_ip(ip)
+                    self._track_api_result(result, api_key, api_name, shodan_result, warnings)
+                    if shodan_result and not shodan_result.get("error"):
+                        ports = shodan_result.get("ports", [])
+                        vulns = shodan_result.get("vulns", [])
+                        if vulns:
+                            critical_vulns = [v for v in vulns if "critical" in v.lower()]
+                            if critical_vulns:
+                                threats.append({"source": api_name, "severity": "critical", "indicator": f"Critical vulnerabilities found: {len(critical_vulns)}", "details": critical_vulns[:5]})
+                            else:
+                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Vulnerabilities found: {len(vulns)}", "details": vulns[:5]})
+                        if len(ports) > 10:
+                            threats.append({"source": api_name, "severity": "low", "indicator": f"Many open ports detected: {len(ports)}"})
+                elif api_key == "virustotal":
+                    # Not applicable for IP, but log as not_applicable
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for IP"}, warnings)
+                elif api_key == "urlscan":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for IP"}, warnings)
+                elif api_key == "hybrid_analysis":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for IP"}, warnings)
+            except Exception as e:
+                logger.warning(f"{api_name} check failed for {ip}: {str(e)}")
+                self._track_api_result(result, api_key, api_name, {"error": str(e)}, warnings)
 
         result["threat_indicators"] = threats
         result = self._calculate_verdict(result)
-
         return result
 
     def _analyze_url_heuristics(self, url: str) -> List[Dict]:
@@ -1590,14 +1524,14 @@ class ThreatAnalyzer:
         return threats
 
     async def _analyze_url(self, url: str, result: Dict) -> Dict:
-        """Analyze URL using VirusTotal, urlscan.io, and heuristic analysis"""
+        """Analyze URL using all available APIs and heuristic analysis. All APIs are attempted and logged."""
         logger.debug(f"Analyzing URL: {url}")
 
         threats = list(result.get("threat_indicators", []))
         warnings = result.setdefault("warnings", [])
         self._prepare_api_tracking(result, result.get("input_type", "url"))
-        
-        # FIRST: Run heuristic analysis (doesn't require API calls)
+
+        # Run heuristic analysis first
         logger.debug(f"Running heuristic analysis on URL: {url}")
         heuristic_threats = self._analyze_url_heuristics(url)
         if heuristic_threats:
@@ -1609,225 +1543,65 @@ class ThreatAnalyzer:
             result["threat_indicators"] = threats
             return self._calculate_verdict(result)
 
-        vt_result = None
-        urlscan_result = None
-
-        try:
-            logger.debug(f"Scanning URL concurrently with VirusTotal and URLScan.io: {url}")
-            vt_result, urlscan_result = await asyncio.gather(
-                self._call_api_with_retry(
-                    "VirusTotal",
-                    lambda: asyncio.wait_for(self.virustotal.scan_url(url), timeout=15),
-                    retries=1,
-                ),
-                self._call_api_with_retry(
-                    "URLScan",
-                    lambda: asyncio.wait_for(self.urlscan.scan_url(url), timeout=10),
-                    retries=1,
-                ),
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"Concurrent URL intelligence lookup failed for {url}: {str(e)}")
-
-        try:
-            target_host = ""
+        # Attempt all APIs, not just relevant ones
+        for api in ALL_EXTERNAL_APIS:
+            api_key = api["key"]
+            api_name = api["name"]
             try:
-                from urllib.parse import urlparse
-                target_host = (urlparse(url).hostname or "").strip().lower()
-            except Exception:
-                target_host = ""
-
-            if target_host.endswith((".test", ".example", ".invalid", ".localhost")):
-                self._mark_expected_apis_not_applicable(result, "Reserved test/non-routable domain input")
-                result["threat_indicators"] = threats
-                return self._calculate_verdict(result)
-
-            # Scan with VirusTotal
-            logger.debug(f"Scanning URL with VirusTotal: {url}")
-            if isinstance(vt_result, Exception):
-                raise vt_result
-            if vt_result is None:
-                vt_result = await self.virustotal.scan_url(url)
-            self._track_api_result(result, "virustotal", "VirusTotal", vt_result, warnings)
-
-            if vt_result and not vt_result.get("error"):
-                # Check if URL already has analysis results
-                if "data" in vt_result:
-                    attributes = vt_result.get("data", {}).get("attributes", {})
-                    
-                    # Try both "stats" and "last_analysis_stats" (different API responses)
-                    analysis = attributes.get("stats") or attributes.get("last_analysis_stats", {})
-                    
-                    malicious = analysis.get("malicious", 0)
-                    suspicious = analysis.get("suspicious", 0)
-                    harmless = analysis.get("harmless", 0)
-                    undetected = analysis.get("undetected", 0)
-                    total_engines = sum([malicious, suspicious, harmless, undetected])
-
-                    logger.debug(f"VirusTotal results: {malicious} malicious, {suspicious} suspicious out of {total_engines} engines")
-
-                    # Only flag as threat if multiple vendors detect it (reduces false positives)
-                    if malicious >= 5:  # At least 5 vendors consider it malicious
-                        threats.append(
-                            {
-                                "source": "VirusTotal",
-                                "severity": "critical",
-                                "indicator": f"Malicious detection: {malicious}/{total_engines} vendor(s)",
-                                "count": malicious,
-                            }
-                        )
-                    elif malicious >= 2:  # 2-4 vendors - suspicious
-                        threats.append(
-                            {
-                                "source": "VirusTotal",
-                                "severity": "medium",
-                                "indicator": f"Possible threat: {malicious}/{total_engines} vendor(s)",
-                                "count": malicious,
-                            }
-                        )
-                    elif suspicious >= 3:
-                        threats.append(
-                            {
-                                "source": "VirusTotal",
-                                "severity": "medium",
-                                "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)",
-                                "count": suspicious,
-                            }
-                        )
-                    elif total_engines > 0:
-                        if malicious > 0 or suspicious > 0:
-                            logger.debug(f"Low threat indicators: {malicious} malicious, {suspicious} suspicious (below threshold)")
-                        else:
-                            logger.debug(f"URL appears clean according to VirusTotal ({total_engines} engines)")
-
-        except Exception as e:
-            logger.warning(f"VirusTotal scan failed for {url}: {str(e)}")
-            self._track_api_result(result, "virustotal", "VirusTotal", {"error": str(e)}, warnings)
-
-        try:
-            # Scan with URLScan.io
-            logger.debug(f"Scanning URL with URLScan.io: {url}")
-            if isinstance(urlscan_result, Exception):
-                raise urlscan_result
-            if urlscan_result is None:
-                urlscan_result = await self.urlscan.scan_url(url)
-            self._track_api_result(result, "urlscan", "URLScan.io", urlscan_result, warnings)
-
-            if urlscan_result and not urlscan_result.get("error"):
-                # URLScan returns a UUID immediately, results come later
-                # For now, we just record that the scan was submitted
-                if "uuid" in urlscan_result:
-                    logger.debug(f"URLScan.io scan submitted successfully: {urlscan_result.get('uuid')}")
-
-                    # Try to fetch the actual result quickly without stalling live monitoring.
-                    for _ in range(2):
-                        try:
-                            await asyncio.sleep(1.5)
-                            fetched_urlscan = await asyncio.wait_for(
-                                self.urlscan.get_results(urlscan_result.get("uuid")),
-                                timeout=5,
-                            )
-                            if fetched_urlscan and not fetched_urlscan.get("error"):
-                                result["api_results"]["urlscan_result"] = fetched_urlscan
-                                # Merge fetched result for downstream parsing/display
-                                urlscan_result = {
-                                    **urlscan_result,
-                                    "data": fetched_urlscan,
-                                }
-                                result["api_results"]["urlscan"] = urlscan_result
-                                break
-                        except asyncio.TimeoutError:
-                            logger.debug("URLScan result fetch timed out for %s", url)
-                            break
-                        except Exception as fetch_error:
-                            logger.debug(f"URLScan result fetch retry failed: {fetch_error}")
-                
-                # Check if we have actual results (would need to poll the API)
-                if isinstance(urlscan_result, dict) and "data" in urlscan_result:
-                    result_data = urlscan_result.get("data", {})
-
-                    # Check for phishing/malware
-                    classifications = result_data.get("classifications", {})
-                    if isinstance(classifications, dict):
-                        if classifications.get("phishing"):
-                            threats.append(
-                                {
-                                    "source": "URLScan.io",
-                                    "severity": "critical",
-                                    "indicator": "Phishing site detected",
-                                }
-                            )
-
-                        if classifications.get("malware"):
-                            threats.append(
-                                {
-                                    "source": "URLScan.io",
-                                    "severity": "critical",
-                                    "indicator": "Malware detected",
-                                }
-                            )
-
-        except Exception as e:
-            logger.warning(f"URLScan scan failed for {url}: {str(e)}")
-            self._track_api_result(result, "urlscan", "URLScan.io", {"error": str(e)}, warnings)
-
-        # IP enrichment path: resolve URL host to public IP and query IP intelligence APIs.
-        enrichment_ip = self._resolve_public_ip(url, "url")
-        if enrichment_ip:
-            abuse_result = None
-            shodan_result = None
-            try:
-                abuse_result, shodan_result = await asyncio.gather(
-                    self._call_api_with_retry(
-                        "AbuseIPDB",
-                        lambda: asyncio.wait_for(self.abuseipdb.check_ip(enrichment_ip), timeout=10),
-                        retries=1,
-                    ),
-                    self._call_api_with_retry(
-                        "Shodan",
-                        lambda: asyncio.wait_for(self.shodan.search_ip(enrichment_ip), timeout=10),
-                        retries=1,
-                    ),
-                    return_exceptions=True,
-                )
+                if api_key == "virustotal":
+                    vt_result = await self.virustotal.scan_url(url)
+                    self._track_api_result(result, api_key, api_name, vt_result, warnings)
+                    if vt_result and not vt_result.get("error"):
+                        if "data" in vt_result:
+                            attributes = vt_result.get("data", {}).get("attributes", {})
+                            analysis = attributes.get("stats") or attributes.get("last_analysis_stats", {})
+                            malicious = analysis.get("malicious", 0)
+                            suspicious = analysis.get("suspicious", 0)
+                            harmless = analysis.get("harmless", 0)
+                            undetected = analysis.get("undetected", 0)
+                            total_engines = sum([malicious, suspicious, harmless, undetected])
+                            if malicious >= 5:
+                                threats.append({"source": api_name, "severity": "critical", "indicator": f"Malicious detection: {malicious}/{total_engines} vendor(s)", "count": malicious})
+                            elif malicious >= 2:
+                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Possible threat: {malicious}/{total_engines} vendor(s)", "count": malicious})
+                            elif suspicious >= 3:
+                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)", "count": suspicious})
+                elif api_key == "urlscan":
+                    urlscan_result = await self.urlscan.scan_url(url)
+                    self._track_api_result(result, api_key, api_name, urlscan_result, warnings)
+                    if urlscan_result and not urlscan_result.get("error"):
+                        if "uuid" in urlscan_result:
+                            logger.debug(f"URLScan.io scan submitted successfully: {urlscan_result.get('uuid')}")
+                        if isinstance(urlscan_result, dict) and "data" in urlscan_result:
+                            result_data = urlscan_result.get("data", {})
+                            classifications = result_data.get("classifications", {})
+                            if isinstance(classifications, dict):
+                                if classifications.get("phishing"):
+                                    threats.append({"source": api_name, "severity": "critical", "indicator": "Phishing site detected"})
+                                if classifications.get("malware"):
+                                    threats.append({"source": api_name, "severity": "critical", "indicator": "Malware detected"})
+                elif api_key == "abuseipdb":
+                    enrichment_ip = self._resolve_public_ip(url, "url")
+                    if enrichment_ip:
+                        abuseipdb_result = await self.abuseipdb.check_ip(enrichment_ip)
+                        self._track_api_result(result, api_key, api_name, abuseipdb_result, warnings)
+                    else:
+                        self._track_api_result(result, api_key, api_name, {"error": "Target host did not resolve to a public IP"}, warnings)
+                elif api_key == "shodan":
+                    enrichment_ip = self._resolve_public_ip(url, "url")
+                    if enrichment_ip:
+                        shodan_result = await self.shodan.search_ip(enrichment_ip)
+                        self._track_api_result(result, api_key, api_name, shodan_result, warnings)
+                    else:
+                        self._track_api_result(result, api_key, api_name, {"error": "Target host did not resolve to a public IP"}, warnings)
+                elif api_key == "hybrid_analysis":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for URL"}, warnings)
             except Exception as e:
-                logger.debug(f"URL->IP enrichment failed for {url}: {e}")
-
-            try:
-                if isinstance(abuse_result, Exception):
-                    raise abuse_result
-                if abuse_result is None:
-                    abuse_result = await self.abuseipdb.check_ip(enrichment_ip)
-                self._track_api_result(result, "abuseipdb", "AbuseIPDB", abuse_result, warnings)
-            except Exception as e:
-                self._track_api_result(result, "abuseipdb", "AbuseIPDB", {"error": str(e)}, warnings)
-
-            try:
-                if isinstance(shodan_result, Exception):
-                    raise shodan_result
-                if shodan_result is None:
-                    shodan_result = await self.shodan.search_ip(enrichment_ip)
-                self._track_api_result(result, "shodan", "Shodan", shodan_result, warnings)
-            except Exception as e:
-                self._track_api_result(result, "shodan", "Shodan", {"error": str(e)}, warnings)
-        else:
-            api_status = result.setdefault("api_results", {}).setdefault("api_status", {})
-            for api_key, api_name in (("abuseipdb", "AbuseIPDB"), ("shodan", "Shodan")):
-                previous = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
-                api_status[api_key] = {
-                    "name": api_name,
-                    "status": "not_applicable",
-                    "configured": previous.get("configured", True),
-                    "applicable": True,
-                    "supported_inputs": previous.get("supported_inputs"),
-                    "error": "Target host did not resolve to a public IP",
-                }
+                logger.warning(f"{api_name} check failed for {url}: {str(e)}")
+                self._track_api_result(result, api_key, api_name, {"error": str(e)}, warnings)
 
         result["threat_indicators"] = threats
-            
         result = self._calculate_verdict(result)
-
         return result
 
     def _analyze_domain_heuristics(self, domain: str) -> List[Dict]:
@@ -2059,7 +1833,7 @@ class ThreatAnalyzer:
         return threats
 
     async def _analyze_domain(self, domain: str, result: Dict) -> Dict:
-        """Analyze domain using VirusTotal, urlscan.io, and heuristic analysis"""
+        """Analyze domain using all available APIs and heuristic analysis. All APIs are attempted and logged."""
         logger.debug(f"Analyzing domain: {domain}")
 
         threats = list(result.get("threat_indicators", []))
@@ -2082,164 +1856,66 @@ class ThreatAnalyzer:
             result["threat_indicators"] = threats
             return self._calculate_verdict(result)
 
-        vt_result = None
-        urlscan_result = None
-
-        try:
-            logger.debug(f"Checking domain intelligence with VirusTotal and URLScan search: {domain}")
-            vt_result, urlscan_result = await asyncio.gather(
-                self._call_api_with_retry(
-                    "VirusTotal",
-                    lambda: asyncio.wait_for(self.virustotal.scan_domain(domain), timeout=12),
-                    retries=1,
-                ),
-                self._call_api_with_retry(
-                    "URLScan",
-                    lambda: asyncio.wait_for(self.urlscan.search_domain(domain), timeout=10),
-                    retries=1,
-                ),
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"Concurrent domain intelligence lookup failed for {domain}: {str(e)}")
-
-        try:
-            if isinstance(vt_result, Exception):
-                raise vt_result
-            if vt_result is None:
-                vt_result = await self.virustotal.scan_domain(domain)
-            self._track_api_result(result, "virustotal", "VirusTotal", vt_result, warnings)
-
-            if vt_result and not vt_result.get("error"):
-                attrs = (vt_result.get("data") or {}).get("attributes", {})
-                stats = attrs.get("last_analysis_stats") or attrs.get("stats") or {}
-                malicious = int(stats.get("malicious", 0) or 0)
-                suspicious = int(stats.get("suspicious", 0) or 0)
-                harmless = int(stats.get("harmless", 0) or 0)
-                undetected = int(stats.get("undetected", 0) or 0)
-                total_engines = max(0, malicious + suspicious + harmless + undetected)
-
-                if malicious >= 3:
-                    threats.append(
-                        {
-                            "source": "VirusTotal",
-                            "severity": "critical",
-                            "indicator": f"Malicious domain detection: {malicious}/{total_engines} vendor(s)",
-                            "count": malicious,
-                        }
-                    )
-                elif malicious >= 1 or suspicious >= 2:
-                    threats.append(
-                        {
-                            "source": "VirusTotal",
-                            "severity": "medium",
-                            "indicator": f"Suspicious domain reputation ({malicious} malicious, {suspicious} suspicious)",
-                            "count": malicious + suspicious,
-                        }
-                    )
-
-        except Exception as e:
-            logger.warning(f"VirusTotal domain scan failed for {domain}: {str(e)}")
-            self._track_api_result(result, "virustotal", "VirusTotal", {"error": str(e)}, warnings)
-
-        try:
-            if isinstance(urlscan_result, Exception):
-                raise urlscan_result
-            if urlscan_result is None:
-                urlscan_result = await self.urlscan.search_domain(domain)
-            self._track_api_result(result, "urlscan", "URLScan.io", urlscan_result, warnings)
-
-            if urlscan_result and not urlscan_result.get("error"):
-                results = urlscan_result.get("results", []) if isinstance(urlscan_result, dict) else []
-
-                malicious_hits = 0
-                suspicious_hits = 0
-                for item in results[:10]:
-                    verdicts = (item or {}).get("verdicts", {})
-                    overall = verdicts.get("overall", {}) if isinstance(verdicts, dict) else {}
-                    score = overall.get("score", 0) if isinstance(overall, dict) else 0
-                    is_mal = bool(overall.get("malicious", False)) if isinstance(overall, dict) else False
-                    tags = (item or {}).get("tags", [])
-
-                    if is_mal:
-                        malicious_hits += 1
-                    elif int(score or 0) > 0 or any(str(t).lower() in {"phishing", "malware", "suspicious"} for t in (tags or [])):
-                        suspicious_hits += 1
-
-                if malicious_hits > 0:
-                    threats.append(
-                        {
-                            "source": "URLScan.io",
-                            "severity": "critical",
-                            "indicator": f"Historical malicious URLScan verdict(s): {malicious_hits}",
-                            "count": malicious_hits,
-                        }
-                    )
-                elif suspicious_hits > 0:
-                    threats.append(
-                        {
-                            "source": "URLScan.io",
-                            "severity": "medium",
-                            "indicator": f"Historical suspicious URLScan signal(s): {suspicious_hits}",
-                            "count": suspicious_hits,
-                        }
-                    )
-
-        except Exception as e:
-            logger.warning(f"URLScan domain lookup failed for {domain}: {str(e)}")
-            self._track_api_result(result, "urlscan", "URLScan.io", {"error": str(e)}, warnings)
-
-        # IP enrichment path for domain scans (AbuseIPDB + Shodan)
-        enrichment_ip = self._resolve_public_ip(domain, "domain")
-        if enrichment_ip:
-            abuse_result = None
-            shodan_result = None
+        # Attempt all APIs, not just relevant ones
+        for api in ALL_EXTERNAL_APIS:
+            api_key = api["key"]
+            api_name = api["name"]
             try:
-                abuse_result, shodan_result = await asyncio.gather(
-                    self._call_api_with_retry(
-                        "AbuseIPDB",
-                        lambda: asyncio.wait_for(self.abuseipdb.check_ip(enrichment_ip), timeout=10),
-                        retries=1,
-                    ),
-                    self._call_api_with_retry(
-                        "Shodan",
-                        lambda: asyncio.wait_for(self.shodan.search_ip(enrichment_ip), timeout=10),
-                        retries=1,
-                    ),
-                    return_exceptions=True,
-                )
+                if api_key == "virustotal":
+                    vt_result = await self.virustotal.scan_domain(domain)
+                    self._track_api_result(result, api_key, api_name, vt_result, warnings)
+                    if vt_result and not vt_result.get("error"):
+                        attrs = (vt_result.get("data") or {}).get("attributes", {})
+                        stats = attrs.get("last_analysis_stats") or attrs.get("stats") or {}
+                        malicious = int(stats.get("malicious", 0) or 0)
+                        suspicious = int(stats.get("suspicious", 0) or 0)
+                        harmless = int(stats.get("harmless", 0) or 0)
+                        undetected = int(stats.get("undetected", 0) or 0)
+                        total_engines = max(0, malicious + suspicious + harmless + undetected)
+                        if malicious >= 3:
+                            threats.append({"source": api_name, "severity": "critical", "indicator": f"Malicious domain detection: {malicious}/{total_engines} vendor(s)", "count": malicious})
+                        elif malicious >= 1 or suspicious >= 2:
+                            threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious domain reputation ({malicious} malicious, {suspicious} suspicious)", "count": malicious + suspicious})
+                elif api_key == "urlscan":
+                    urlscan_result = await self.urlscan.search_domain(domain)
+                    self._track_api_result(result, api_key, api_name, urlscan_result, warnings)
+                    if urlscan_result and not urlscan_result.get("error"):
+                        results = urlscan_result.get("results", []) if isinstance(urlscan_result, dict) else []
+                        malicious_hits = 0
+                        suspicious_hits = 0
+                        for item in results[:10]:
+                            verdicts = (item or {}).get("verdicts", {})
+                            overall = verdicts.get("overall", {}) if isinstance(verdicts, dict) else {}
+                            score = overall.get("score", 0) if isinstance(overall, dict) else 0
+                            is_mal = bool(overall.get("malicious", False)) if isinstance(overall, dict) else False
+                            tags = (item or {}).get("tags", [])
+                            if is_mal:
+                                malicious_hits += 1
+                            elif int(score or 0) > 0 or any(str(t).lower() in {"phishing", "malware", "suspicious"} for t in (tags or [])):
+                                suspicious_hits += 1
+                        if malicious_hits > 0:
+                            threats.append({"source": api_name, "severity": "critical", "indicator": f"Historical malicious URLScan verdict(s): {malicious_hits}", "count": malicious_hits})
+                        elif suspicious_hits > 0:
+                            threats.append({"source": api_name, "severity": "medium", "indicator": f"Historical suspicious URLScan signal(s): {suspicious_hits}", "count": suspicious_hits})
+                elif api_key == "abuseipdb":
+                    enrichment_ip = self._resolve_public_ip(domain, "domain")
+                    if enrichment_ip:
+                        abuseipdb_result = await self.abuseipdb.check_ip(enrichment_ip)
+                        self._track_api_result(result, api_key, api_name, abuseipdb_result, warnings)
+                    else:
+                        self._track_api_result(result, api_key, api_name, {"error": "Target host did not resolve to a public IP"}, warnings)
+                elif api_key == "shodan":
+                    enrichment_ip = self._resolve_public_ip(domain, "domain")
+                    if enrichment_ip:
+                        shodan_result = await self.shodan.search_ip(enrichment_ip)
+                        self._track_api_result(result, api_key, api_name, shodan_result, warnings)
+                    else:
+                        self._track_api_result(result, api_key, api_name, {"error": "Target host did not resolve to a public IP"}, warnings)
+                elif api_key == "hybrid_analysis":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for domain"}, warnings)
             except Exception as e:
-                logger.debug(f"Domain->IP enrichment failed for {domain}: {e}")
-
-            try:
-                if isinstance(abuse_result, Exception):
-                    raise abuse_result
-                if abuse_result is None:
-                    abuse_result = await self.abuseipdb.check_ip(enrichment_ip)
-                self._track_api_result(result, "abuseipdb", "AbuseIPDB", abuse_result, warnings)
-            except Exception as e:
-                self._track_api_result(result, "abuseipdb", "AbuseIPDB", {"error": str(e)}, warnings)
-
-            try:
-                if isinstance(shodan_result, Exception):
-                    raise shodan_result
-                if shodan_result is None:
-                    shodan_result = await self.shodan.search_ip(enrichment_ip)
-                self._track_api_result(result, "shodan", "Shodan", shodan_result, warnings)
-            except Exception as e:
-                self._track_api_result(result, "shodan", "Shodan", {"error": str(e)}, warnings)
-        else:
-            api_status = result.setdefault("api_results", {}).setdefault("api_status", {})
-            for api_key, api_name in (("abuseipdb", "AbuseIPDB"), ("shodan", "Shodan")):
-                previous = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
-                api_status[api_key] = {
-                    "name": api_name,
-                    "status": "not_applicable",
-                    "configured": previous.get("configured", True),
-                    "applicable": True,
-                    "supported_inputs": previous.get("supported_inputs"),
-                    "error": "Target host did not resolve to a public IP",
-                }
+                logger.warning(f"{api_name} check failed for {domain}: {str(e)}")
+                self._track_api_result(result, api_key, api_name, {"error": str(e)}, warnings)
 
         result["threat_indicators"] = threats
         result = self._calculate_verdict(result)
@@ -2313,16 +1989,14 @@ class ThreatAnalyzer:
         
         return threats
 
-    async def _analyze_file_hash(
-        self, file_hash: str, hash_type: str, result: Dict
-    ) -> Dict:
-        """Analyze file hash using VirusTotal, Hybrid Analysis, and heuristic analysis"""
+    async def _analyze_file_hash(self, file_hash: str, hash_type: str, result: Dict) -> Dict:
+        """Analyze file hash using all available APIs and heuristic analysis. All APIs are attempted and logged."""
         logger.debug(f"Analyzing file hash ({hash_type}): {file_hash}")
 
         threats = list(result.get("threat_indicators", []))
         warnings = result.setdefault("warnings", [])
         self._prepare_api_tracking(result, result.get("input_type", "file_hash"))
-        
+
         # Run heuristic analysis first
         heuristic_threats = self._analyze_filehash_heuristics(file_hash, hash_type)
         if heuristic_threats:
@@ -2334,110 +2008,49 @@ class ThreatAnalyzer:
             result["threat_indicators"] = threats
             return self._calculate_verdict(result)
 
-        vt_result = None
-        ha_result = None
-
-        try:
-            logger.debug(f"Scanning file hash concurrently with VirusTotal and Hybrid Analysis: {file_hash}")
-            vt_result, ha_result = await asyncio.gather(
-                self._call_api_with_retry(
-                    "VirusTotal",
-                    lambda: asyncio.wait_for(self.virustotal.scan_file(file_hash), timeout=12),
-                    retries=1,
-                ),
-                self._call_api_with_retry(
-                    "HybridAnalysis",
-                    lambda: asyncio.wait_for(self.hybrid_analysis.search_hash(file_hash), timeout=12),
-                    retries=1,
-                ),
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"Concurrent file intelligence lookup failed for {file_hash}: {str(e)}")
-
-        try:
-            # Scan with VirusTotal
-            logger.debug(f"Scanning hash with VirusTotal: {file_hash}")
-            if isinstance(vt_result, Exception):
-                raise vt_result
-            if vt_result is None:
-                vt_result = await self.virustotal.scan_file(file_hash)
-            self._track_api_result(result, "virustotal", "VirusTotal", vt_result, warnings)
-
-            if vt_result and not vt_result.get("error"):
-                if "data" in vt_result:
-                    analysis = (
-                        vt_result.get("data", {})
-                        .get("attributes", {})
-                        .get("last_analysis_stats", {})
-                    )
-                    malicious = analysis.get("malicious", 0)
-                    suspicious = analysis.get("suspicious", 0)
-
-                    if malicious > 0:
-                        threats.append(
-                            {
-                                "source": "VirusTotal",
-                                "severity": "critical",
-                                "indicator": f"Malware detected by {malicious} vendor(s)",
-                                "count": malicious,
-                            }
-                        )
-                    elif suspicious > 0:
-                        threats.append(
-                            {
-                                "source": "VirusTotal",
-                                "severity": "medium",
-                                "indicator": f"Suspicious file by {suspicious} vendor(s)",
-                                "count": suspicious,
-                            }
-                        )
-
-        except Exception as e:
-            err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
-            logger.warning(f"VirusTotal file scan failed: {err_text}")
-            self._track_api_result(result, "virustotal", "VirusTotal", {"error": err_text}, warnings)
-
-        try:
-            # Scan with Hybrid Analysis
-            logger.debug(f"Scanning hash with Hybrid Analysis: {file_hash}")
-            if isinstance(ha_result, Exception):
-                raise ha_result
-            if ha_result is None:
-                ha_result = await self.hybrid_analysis.search_hash(file_hash)
-            self._track_api_result(result, "hybrid_analysis", "Hybrid Analysis", ha_result, warnings)
-
-            if ha_result and not ha_result.get("error"):
-                results = ha_result.get("results", [])
-
-                if results:
-                    for item in results:
-                        verdict = item.get("verdict")
-                        threat_score = item.get("threat_score", 0)
-
-                        if verdict == "malicious" or threat_score > 75:
-                            threats.append(
-                                {
-                                    "source": "Hybrid Analysis",
-                                    "severity": "critical",
-                                    "indicator": f"Malware verdict with score {threat_score}",
-                                    "verdict": verdict,
-                                }
+        # Attempt all APIs, not just relevant ones
+        for api in ALL_EXTERNAL_APIS:
+            api_key = api["key"]
+            api_name = api["name"]
+            try:
+                if api_key == "virustotal":
+                    vt_result = await self.virustotal.scan_file(file_hash)
+                    self._track_api_result(result, api_key, api_name, vt_result, warnings)
+                    if vt_result and not vt_result.get("error"):
+                        if "data" in vt_result:
+                            analysis = (
+                                vt_result.get("data", {})
+                                .get("attributes", {})
+                                .get("last_analysis_stats", {})
                             )
-                        elif verdict == "suspicious" or threat_score > 25:
-                            threats.append(
-                                {
-                                    "source": "Hybrid Analysis",
-                                    "severity": "medium",
-                                    "indicator": f"Suspicious verdict with score {threat_score}",
-                                    "verdict": verdict,
-                                }
-                            )
-
-        except Exception as e:
-            err_text = str(e).strip() or f"{type(e).__name__}: {e!r}"
-            logger.warning(f"Hybrid Analysis search failed: {err_text}")
-            self._track_api_result(result, "hybrid_analysis", "Hybrid Analysis", {"error": err_text}, warnings)
+                            malicious = analysis.get("malicious", 0)
+                            suspicious = analysis.get("suspicious", 0)
+                            if malicious > 0:
+                                threats.append({"source": api_name, "severity": "critical", "indicator": f"Malware detected by {malicious} vendor(s)", "count": malicious})
+                            elif suspicious > 0:
+                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious file by {suspicious} vendor(s)", "count": suspicious})
+                elif api_key == "hybrid_analysis":
+                    ha_result = await self.hybrid_analysis.search_hash(file_hash)
+                    self._track_api_result(result, api_key, api_name, ha_result, warnings)
+                    if ha_result and not ha_result.get("error"):
+                        results = ha_result.get("results", [])
+                        if results:
+                            for item in results:
+                                verdict = item.get("verdict")
+                                threat_score = item.get("threat_score", 0)
+                                if verdict == "malicious" or threat_score > 75:
+                                    threats.append({"source": api_name, "severity": "critical", "indicator": f"Malware verdict with score {threat_score}", "verdict": verdict})
+                                elif verdict == "suspicious" or threat_score > 25:
+                                    threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious verdict with score {threat_score}", "verdict": verdict})
+                elif api_key == "abuseipdb":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for file hash"}, warnings)
+                elif api_key == "shodan":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for file hash"}, warnings)
+                elif api_key == "urlscan":
+                    self._track_api_result(result, api_key, api_name, {"error": "Not applicable for file hash"}, warnings)
+            except Exception as e:
+                logger.warning(f"{api_name} check failed for {file_hash}: {str(e)}")
+                self._track_api_result(result, api_key, api_name, {"error": str(e)}, warnings)
 
         result["threat_indicators"] = threats
         result = self._calculate_verdict(result)

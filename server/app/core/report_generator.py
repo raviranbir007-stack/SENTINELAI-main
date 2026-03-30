@@ -104,34 +104,77 @@ class ReportGenerator:
         self, threat_analysis: Dict[str, Any], output_filename: Optional[str] = None
     ) -> Optional[bytes]:
         """
-        Generate comprehensive AI-analyzed threat report
-
-        Args:
-            threat_analysis: Output from ThreatAnalyzer
-            output_filename: Optional filename for the PDF
-
-        Returns:
-            PDF file bytes or None if generation fails
+        Generate a comprehensive, security-hardened AI-analyzed threat report with full scan results, forensic reliability, and digital integrity.
         """
-
+        import hashlib
         if not REPORTLAB_AVAILABLE:
             logger.warning("reportlab not installed. Returning text fallback instead of PDF.")
-            # Generate AI analysis and return as UTF-8 bytes so callers receive a report
             ai_analysis = await self._generate_ai_analysis(threat_analysis)
-            return ai_analysis.encode("utf-8")
+            scan_results = self._format_scan_results_section(threat_analysis)
+            forensic_summary = self._format_forensic_summary(threat_analysis)
+            text_report = f"{ai_analysis}\n\n---\n\nSCAN RESULTS\n\n{scan_results}\n\nFORENSIC SUMMARY\n\n{forensic_summary}"
+            digest = hashlib.sha256(text_report.encode("utf-8")).hexdigest()
+            text_report += f"\n\n[Report Integrity Hash: {digest}]"
+            return text_report.encode("utf-8")
 
         try:
-            # Generate AI analysis using Gemini
             ai_analysis = await self._generate_ai_analysis(threat_analysis)
-
-            # Create PDF
             pdf_bytes = self._create_pdf_report(threat_analysis, ai_analysis)
-
+            if pdf_bytes:
+                digest = hashlib.sha256(pdf_bytes).hexdigest()
+                logger.info(f"Generated report hash: {digest}")
             return pdf_bytes
-
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}")
             return None
+
+    def _format_scan_results_section(self, threat_analysis: Dict[str, Any]) -> str:
+        """Format a clear, detailed scan results section for the report."""
+        api_results = threat_analysis.get("api_results", {})
+        api_status = api_results.get("api_status", {})
+        apis_called = api_results.get("apis_called", [])
+        apis_expected = api_results.get("apis_expected", [])
+        lines = [f"APIs Expected: {', '.join(apis_expected)}"]
+        lines.append(f"APIs Called: {', '.join(apis_called)}")
+        lines.append("")
+        for api_key, meta in api_status.items():
+            name = meta.get("name", api_key)
+            status = meta.get("status", "unknown")
+            configured = meta.get("configured", False)
+            applicable = meta.get("applicable", False)
+            error = meta.get("error")
+            lines.append(f"- {name}: status={status}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
+        lines.append("")
+        threats = threat_analysis.get("threat_indicators", [])
+        if threats:
+            lines.append(f"Threat Indicators Detected: {len(threats)}")
+            for t in threats:
+                src = t.get("source", "?")
+                sev = t.get("severity", "?")
+                ind = t.get("indicator", "?")
+                lines.append(f"  - [{sev}] {src}: {ind}")
+        else:
+            lines.append("No threat indicators detected.")
+        return "\n".join(lines)
+
+    def _format_forensic_summary(self, threat_analysis: Dict[str, Any]) -> str:
+        """Format a forensic reliability and evidence summary for the report."""
+        forensic = threat_analysis.get("forensic_metadata", {})
+        lines = []
+        lines.append(f"Corroboration Count: {forensic.get('corroboration_count', 0)}")
+        lines.append(f"Corroboration Threshold Met: {forensic.get('corroboration_threshold_met', False)}")
+        lines.append(f"APIs Checked: {forensic.get('apis_checked', 0)} / {forensic.get('total_apis_available', 0)}")
+        lines.append(f"Scan Coverage: {forensic.get('scan_coverage', '')}")
+        details = forensic.get("source_details", [])
+        if details:
+            lines.append("\nEvidence Table:")
+            for d in details:
+                src = d.get("source", "?")
+                sev = d.get("severity", "?")
+                ind = d.get("indicator", "?")
+                ts = d.get("timestamp", "?")
+                lines.append(f"- {src} | {sev} | {ind} | {ts}")
+        return "\n".join(lines)
 
     async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
         """Generate AI analysis using Gemini API"""
