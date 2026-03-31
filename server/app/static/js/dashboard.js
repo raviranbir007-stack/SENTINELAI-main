@@ -4,6 +4,35 @@
  */
 
 class Dashboard {
+    /**
+     * Setup summary card click handlers and active state
+     */
+    setupSummaryCardActions() {
+      const cardMap = {
+        'stat-critical': { filter: 'critical', section: 'threats-section' },
+        'stat-medium': { filter: 'high', section: 'threats-section' },
+        'stat-low': { filter: 'clean', section: 'threats-section' },
+        'stat-files': { filter: 'assets', section: 'assets-section' }
+      };
+      Object.entries(cardMap).forEach(([id, { filter, section }]) => {
+        const card = document.getElementById(id)?.closest('.summary-card');
+        if (card) {
+          card.style.cursor = 'pointer';
+          card.onclick = () => {
+            // Remove active from all
+            document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+            card.classList.add('active');
+            // Scroll to section
+            const sectionEl = document.getElementById(section);
+            if (sectionEl) sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Apply filter if threats-section
+            if (section === 'threats-section') {
+              this.filterThreats(filter);
+            }
+          };
+        }
+      });
+    }
   constructor() {
     this.api = api;
     this.currentSection = 'dashboard';
@@ -20,6 +49,108 @@ class Dashboard {
     this.setupEventListeners();
     this.checkAPIHealth();
     this.loadDashboardData();
+
+    // Setup summary card actions
+    setTimeout(() => this.setupSummaryCardActions(), 500);
+  /**
+   * Update or create the dynamic health panel actions
+   */
+  updateHealthPanel(systemState, unresolvedThreats) {
+    const panel = document.getElementById('security-health-panel');
+    if (!panel) return;
+    // Remove old actions
+    panel.querySelectorAll('.dynamic-action-btn, .restore-health-btn, .health-recommendation').forEach(e => e.remove());
+
+    // Determine state and actions
+    let state = systemState || 'healthy';
+    let btnLabel = 'Open Security Overview';
+    let btnClass = 'dynamic-action-btn';
+    let recommendation = '';
+    if (state === 'critical') {
+      btnLabel = 'Take Immediate Action';
+      recommendation = `${unresolvedThreats} critical threats require immediate review and containment.`;
+    } else if (state === 'degraded') {
+      btnLabel = 'Review and Mitigate';
+      recommendation = 'System degraded due to high alert pressure and unresolved suspicious activity.';
+    } else if (state === 'elevated') {
+      btnLabel = 'Investigate Active Threats';
+      recommendation = 'Elevated threat activity detected. Investigate and respond promptly.';
+    } else if (state === 'warning') {
+      btnLabel = 'Review Alerts';
+      recommendation = 'Warning: Review recent alerts to maintain system health.';
+    } else {
+      btnLabel = 'Open Security Overview';
+      recommendation = 'No immediate threats; preventive review recommended.';
+    }
+
+    // Main action button
+    const actionBtn = document.createElement('button');
+    actionBtn.className = btnClass;
+    actionBtn.textContent = btnLabel;
+    actionBtn.style = 'margin-bottom:0.5rem;background:var(--primary);color:white;padding:0.75rem 1.5rem;border:none;border-radius:4px;font-size:1rem;cursor:pointer;display:block;width:100%';
+    actionBtn.onclick = () => {
+      // Scroll to threats/incidents section and highlight unresolved
+      const section = document.getElementById('threats-section');
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      this.filterThreats(state === 'critical' ? 'critical' : (state === 'degraded' ? 'high' : 'all'));
+    };
+    panel.appendChild(actionBtn);
+
+    // Recommendation text
+    const recDiv = document.createElement('div');
+    recDiv.className = 'health-recommendation';
+    recDiv.style = 'margin-bottom:0.5rem;color:var(--muted-foreground);font-size:1rem;';
+    recDiv.textContent = recommendation;
+    panel.appendChild(recDiv);
+
+    // Restore System Health button (only if not healthy)
+    if (['critical','degraded','elevated','warning'].includes(state) || unresolvedThreats > 0) {
+      const restoreBtn = document.createElement('button');
+      restoreBtn.className = 'restore-health-btn';
+      restoreBtn.textContent = 'Restore System Health';
+      restoreBtn.style = 'background:var(--success);color:white;padding:0.65rem 1.2rem;border:none;border-radius:4px;font-size:1rem;cursor:pointer;display:block;width:100%;margin-top:0.5rem;';
+      restoreBtn.onclick = () => this.restoreSystemHealth(restoreBtn);
+      panel.appendChild(restoreBtn);
+    }
+  }
+
+  /**
+   * Restore system health workflow
+   */
+  async restoreSystemHealth(btn) {
+    if (btn) btn.disabled = true;
+    this.showLoading(true, 'Restoring system health...');
+    let resultMsg = '';
+    try {
+      // Call backend endpoint for recovery workflow
+      const resp = await fetch('/api/v1/dashboard/restore-health', { method: 'POST' });
+      const data = await resp.json();
+      resultMsg = data?.message || 'Recovery attempted.';
+      this.showToast(resultMsg, data?.success ? 'success' : 'warning');
+      // Reload dashboard data and logs
+      await this.loadDashboardData();
+      // Log activity
+      this.appendActivityLog('System health recovery initiated. ' + resultMsg);
+    } catch (e) {
+      resultMsg = 'Recovery failed: ' + (e.message || e);
+      this.showToast(resultMsg, 'error');
+    }
+    this.showLoading(false);
+    if (btn) btn.disabled = false;
+  }
+
+  /**
+   * Append entry to activity log
+   */
+  appendActivityLog(msg) {
+    const log = document.getElementById('activity-log');
+    if (log) {
+      const entry = document.createElement('div');
+      entry.className = 'activity-log-entry';
+      entry.textContent = `[${new Date().toLocaleString()}] ${msg}`;
+      log.prepend(entry);
+    }
+  }
 
     // Add Deep Manual Scan and Harden Now buttons if not present
     setTimeout(() => {
@@ -325,17 +456,23 @@ class Dashboard {
     try {
       this.showLoading(true, 'Loading dashboard...');
 
-      const [summary, threats, stats] = await Promise.all([
+      const [summary, threats, stats, health] = await Promise.all([
         this.api.getDashboardSummary(),
         this.api.getDashboardThreats(),
         this.api.getDashboardStats(),
+        this.api.getSecurityPosture ? this.api.getSecurityPosture() : fetch('/api/v1/dashboard/security-posture').then(r => r.json()),
       ]);
 
-      console.log('📊 Dashboard Data:', { summary, threats, stats });
+      console.log('📊 Dashboard Data:', { summary, threats, stats, health });
 
       this.updateDashboardStats(stats);
       this.updateThreatsDisplay(threats);
       this.updateNotificationBadge();
+
+      // Update health panel actions
+      const systemState = health?.state || 'healthy';
+      const unresolved = (health?.summary?.critical_findings || 0) + (health?.summary?.high_findings || 0);
+      this.updateHealthPanel(systemState, unresolved);
 
       this.showLoading(false);
     } catch (error) {

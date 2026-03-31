@@ -70,14 +70,20 @@ class SentinelClientV3:
 
         # Load API keys for threat intelligence
         self.api_keys = {
-            'virustotal': self.config.get("apis", {}).get("virustotal", ""),
-            'abuseipdb': self.config.get("apis", {}).get("abuseipdb", ""),
-            'urlscan': self.config.get("apis", {}).get("urlscan", ""),
-            'otx': self.config.get("apis", {}).get("otx", ""),
-            'ipqualityscore': self.config.get("apis", {}).get("ipqualityscore", ""),
-            'shodan': self.config.get("apis", {}).get("shodan", ""),
-            'hybrid_analysis': self.config.get("apis", {}).get("hybrid_analysis", "")
+            'virustotal': self.config.get("apis", {}).get("virustotal", "").strip(),
+            'abuseipdb': self.config.get("apis", {}).get("abuseipdb", "").strip(),
+            'urlscan': self.config.get("apis", {}).get("urlscan", "").strip(),
+            'otx': self.config.get("apis", {}).get("otx", "").strip(),
+            'ipqualityscore': self.config.get("apis", {}).get("ipqualityscore", "").strip(),
+            'shodan': self.config.get("apis", {}).get("shodan", "").strip(),
+            'hybrid_analysis': self.config.get("apis", {}).get("hybrid_analysis", "").strip()
         }
+        # Debug: Log loaded API keys (masking for safety)
+        for k, v in self.api_keys.items():
+            if v:
+                logger.info(f"API key loaded for {k}: {'*' * (len(v)-4) + v[-4:]}")
+            else:
+                logger.warning(f"API key for {k} NOT SET")
 
         # Configuration
         self.scan_interval = int(self.config.get("client", {}).get("scan_interval", 300))

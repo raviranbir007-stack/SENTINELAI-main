@@ -21,38 +21,52 @@ logger = logging.getLogger("DefenseCoordinator")
 
 
 class DefenseCoordinator:
-        def _show_action_dialog(self, attack_id: str, attack: Dict):
-            """Show a dialog for user to choose response to attack (block, ignore, quarantine)"""
-            try:
-                import tkinter as tk
-                from tkinter import messagebox
-                from threading import Thread
+    def _show_action_dialog(self, attack_id: str, attack: Dict):
+        """Show a dialog for user to choose response to attack (block, ignore, quarantine)"""
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            def run_dialog():
+                root = tk.Tk()
+                root.title("SentinelAI Threat Response")
+                root.geometry("420x220")
+                root.resizable(False, False)
+                msg = f"Threat Detected:\nType: {attack.get('type', 'unknown')}\nSeverity: {attack.get('severity', 'UNKNOWN')}\nSource: {attack.get('source_ip', 'UNKNOWN')}\n\nChoose an action:"
+                label = tk.Label(root, text=msg, justify="left", font=("Arial", 11))
+                label.pack(padx=16, pady=16)
+                btn_frame = tk.Frame(root)
+                btn_frame.pack(pady=8)
 
                 def on_response(response):
                     self.respond_to_attack(attack_id, response)
                     root.quit()
                     root.destroy()
 
-                def run_dialog():
-                    nonlocal attack
-                    root = tk.Tk()
-                    root.title("SentinelAI Threat Response")
-                    root.geometry("420x220")
-                    root.resizable(False, False)
-                    msg = f"Threat Detected:\nType: {attack.get('type', 'unknown')}\nSeverity: {attack.get('severity', 'UNKNOWN')}\nSource: {attack.get('source_ip', 'UNKNOWN')}\n\nChoose an action:" 
-                    label = tk.Label(root, text=msg, justify="left", font=("Arial", 11))
-                    label.pack(padx=16, pady=16)
-                    btn_frame = tk.Frame(root)
-                    btn_frame.pack(pady=8)
-                    tk.Button(btn_frame, text="Block", width=12, command=lambda: on_response('BLOCK')).pack(side=tk.LEFT, padx=8)
-                    tk.Button(btn_frame, text="Ignore", width=12, command=lambda: on_response('IGNORE')).pack(side=tk.LEFT, padx=8)
-                    tk.Button(btn_frame, text="Quarantine", width=12, command=lambda: on_response('QUARANTINE')).pack(side=tk.LEFT, padx=8)
-                    root.mainloop()
+                tk.Button(btn_frame, text="Block", width=12, command=lambda: on_response('BLOCK')).pack(side=tk.LEFT, padx=8)
+                tk.Button(btn_frame, text="Ignore", width=12, command=lambda: on_response('IGNORE')).pack(side=tk.LEFT, padx=8)
+                tk.Button(btn_frame, text="Quarantine", width=12, command=lambda: on_response('QUARANTINE')).pack(side=tk.LEFT, padx=8)
 
-                # Run dialog in a separate thread so it doesn't block alerts
-                Thread(target=run_dialog, daemon=True).start()
-            except Exception as e:
-                logger.error(f"Failed to show action dialog: {e}")
+                # Make the dialog modal
+                root.grab_set()
+                root.mainloop()
+
+            # Run dialog in the main thread if possible, else in a new thread
+            import threading
+            if threading.current_thread() is threading.main_thread():
+                run_dialog()
+            else:
+                # Use an event to block until user responds
+                done_event = threading.Event()
+                def thread_dialog():
+                    run_dialog()
+                    done_event.set()
+                t = threading.Thread(target=thread_dialog)
+                t.start()
+                done_event.wait()
+        except Exception as e:
+            logger.error(f"Failed to show action dialog: {e}")
+
     """
     Coordinates defense responses to attacks
     - Sends alerts up to 5 times
