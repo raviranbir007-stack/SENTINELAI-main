@@ -2091,6 +2091,8 @@
                         </div>
 
                         <div class="heartbeat-panel">
+                            <!-- Static Restore System Health Button (always visible) -->
+                            <button id="staticRestoreHealthBtn" class="btn btn-cyber" style="width:100%;margin-bottom:1rem;font-size:1rem;" onclick="restoreSystemHealthStatic()">🩺 Restore System Health</button>
                             <div class="heartbeat-overview">
                                 <div class="heartbeat-side">
                                     <div class="heartbeat-side-title">Overall Security Health</div>
@@ -8217,5 +8219,23 @@
             });
         });
     </script>
+<script>
+// Static Restore System Health Button handler
+async function restoreSystemHealthStatic() {
+    const btn = document.getElementById('staticRestoreHealthBtn');
+    if (btn) btn.disabled = true;
+    // Show loading state
+    btn.textContent = 'Restoring...';
+    try {
+        const resp = await fetch('/api/v1/dashboard/restore-health', { method: 'POST' });
+        const data = await resp.json();
+        alert(data?.message || 'Recovery attempted.');
+    } catch (e) {
+        alert('Recovery failed: ' + (e.message || e));
+    }
+    btn.textContent = '🩺 Restore System Health';
+    btn.disabled = false;
+}
+</script>
 </body>
 </html>

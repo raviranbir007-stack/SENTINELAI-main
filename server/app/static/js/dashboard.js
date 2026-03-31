@@ -129,6 +129,11 @@ class Dashboard {
       this.showToast(resultMsg, data?.success ? 'success' : 'warning');
       // Reload dashboard data and logs
       await this.loadDashboardData();
+      // Remove posture warning if health is restored
+      if (data?.success) {
+        const oldBanner = document.getElementById('security-posture-warning');
+        if (oldBanner) oldBanner.remove();
+      }
       // Log activity
       this.appendActivityLog('System health recovery initiated. ' + resultMsg);
     } catch (e) {
