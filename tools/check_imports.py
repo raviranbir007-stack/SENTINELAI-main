@@ -1,7 +1,9 @@
-"""Compile all .py files and attempt to import every top-level module under the repo.
-Prints failures to stdout for easy debugging.
+"""Validate Python syntax and imports for server/client modules.
+
+This checker avoids writing bytecode files so it can run in read-only or mixed-ownership
+workspaces without false failures.
 """
-import compileall
+import ast
 import importlib
 import pkgutil
 import sys
@@ -9,23 +11,38 @@ import traceback
 from pathlib import Path
 
 
-def compile_repo_dirs(root: Path, dirs=('server', 'client')) -> None:
-    """Compile only the specified directories under the repo (avoid .venv)."""
+def syntax_check_dir(root: Path, dirs=("server", "client")) -> bool:
+    """Parse all Python files under target dirs without generating .pyc files."""
+    ok = True
     for d in dirs:
         target = root / d
-        if target.exists():
-            print(f"Compiling Python files under {target}...")
-            ok = compileall.compile_dir(str(target), force=True, quiet=1)
-            print(f"compileall {d} result:", ok)
+        if not target.exists():
+            continue
+        print(f"Syntax-checking Python files under {target}...")
+        for py_file in target.rglob("*.py"):
+            # Skip virtual environments and cache folders if present inside the tree.
+            if any(part in {"venv", ".venv", "__pycache__"} for part in py_file.parts):
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                ast.parse(source, filename=str(py_file))
+            except Exception:
+                ok = False
+                print(f"SYNTAX ERROR: {py_file}")
+                print(traceback.format_exc())
+    return ok
 
 
-def iter_modules(package_root: Path):
-    sys.path.insert(0, str(package_root.parent.parent))
-    prefix = f"{package_root.parent.name}.{package_root.name}"
-    # Walk packages under package_root
-    for finder, name, ispkg in pkgutil.walk_packages([str(package_root)]):
-        # Build full module name, e.g. server.app.api -> 'server.app.' + name
-        yield f"{prefix}.{name}"
+def iter_modules(package_root: Path, root_package: str):
+    """Walk importable modules under a package root and yield full import paths."""
+    for _, name, _ in pkgutil.walk_packages([str(package_root)]):
+        yield f"{root_package}.{name}"
+
+
+def iter_client_modules(client_root: Path):
+    """Yield importable modules from the client tree."""
+    for _, name, _ in pkgutil.walk_packages([str(client_root)]):
+        yield name
 
 
 def try_import(name: str):
@@ -65,18 +82,30 @@ def try_import(name: str):
 
 def main():
     repo = Path(__file__).resolve().parents[1]
-    # Compile server and client directories only
-    compile_repo_dirs(repo)
+    syntax_ok = syntax_check_dir(repo)
 
     failures = {}
-    # Check server and client packages (if present)
-    for pkg_dir in (repo / "server" / "app", repo / "client"):
-        if pkg_dir.exists():
-            print(f"Scanning modules under: {pkg_dir}")
-            for mod in iter_modules(pkg_dir):
-                err = try_import(mod)
-                if err:
-                    failures[mod] = err
+
+    # Server imports use the top-level 'app' package when /server is on sys.path.
+    server_root = repo / "server"
+    server_app = server_root / "app"
+    if server_app.exists():
+        sys.path.insert(0, str(server_root))
+        print(f"Scanning server modules under: {server_app}")
+        for mod in iter_modules(server_app, "app"):
+            err = try_import(mod)
+            if err:
+                failures[mod] = err
+
+    # Client imports resolve from /client (e.g., scanner.*, sentinel_client_v3).
+    client_root = repo / "client"
+    if client_root.exists():
+        sys.path.insert(0, str(client_root))
+        print(f"Scanning client modules under: {client_root}")
+        for mod in iter_client_modules(client_root):
+            err = try_import(mod)
+            if err:
+                failures[mod] = err
 
     if failures:
         print("\nIMPORT FAILURES:\n")
@@ -87,6 +116,9 @@ def main():
         sys.exit(2)
     else:
         print("All imports succeeded.")
+
+    if not syntax_ok:
+        sys.exit(3)
 
 
 if __name__ == "__main__":
