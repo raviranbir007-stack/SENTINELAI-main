@@ -25,6 +25,27 @@ Or use provided shell scripts (`START.sh`, `run_complete_system.sh`).
 
 See documentation files for additional configuration notes.
 
+## Email Alerts and Client-Safe API Mode
+
+Set these in `server/.env`:
+
+```env
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-gmail@gmail.com
+SMTP_PASSWORD=your-gmail-app-password
+FROM_EMAIL=alerts@sentinel-ai.com
+ALERT_EMAIL=your-gmail@gmail.com
+CLIENT_REGISTRATION_ALERT_EMAILS=soc@example.com,sec-lead@example.com
+
+SENTINEL_CLIENT_SAFE_DASHBOARD_MODE=true
+SENTINEL_ADMIN_BYPASS_KEY=replace-with-long-random-secret
+```
+
+- `ALERT_EMAIL` receives core security alerts.
+- `CLIENT_REGISTRATION_ALERT_EMAILS` receives "new client registered" notifications (deduplicated automatically).
+- In client-safe mode, admin management routes are blocked unless header `X-Sentinel-Admin-Bypass` matches `SENTINEL_ADMIN_BYPASS_KEY`.
+
 ## Testing and Diagnostics
 
 - **Browser activity**: refer to `BROWSER_MONITORING.md` for tips when running as root.

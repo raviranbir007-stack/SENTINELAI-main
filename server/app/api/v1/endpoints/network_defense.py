@@ -150,7 +150,13 @@ from sqlalchemy.future import select
 async def block_and_shutdown_client(
     client_id: str,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
+    if _client_safe_mode_enabled():
+        expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
+        provided_bypass = str((request.headers.get("X-Sentinel-Admin-Bypass") if request else "") or "").strip()
+        if not (expected_bypass and provided_bypass and hmac.compare_digest(expected_bypass, provided_bypass)):
+            raise HTTPException(status_code=403, detail="Client-safe mode blocks management endpoints")
     logger.info(f"[BLOCK] Attempting to block client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -168,7 +174,13 @@ async def block_and_shutdown_client(
 async def resume_client(
     client_id: str,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
+    if _client_safe_mode_enabled():
+        expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
+        provided_bypass = str((request.headers.get("X-Sentinel-Admin-Bypass") if request else "") or "").strip()
+        if not (expected_bypass and provided_bypass and hmac.compare_digest(expected_bypass, provided_bypass)):
+            raise HTTPException(status_code=403, detail="Client-safe mode blocks management endpoints")
     logger.info(f"[RESUME] Attempting to resume client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -1125,7 +1137,11 @@ async def report_attack(
 
 
 @router.post("/defense/action")
-async def execute_defense_action(request: DefenseActionRequest, db: AsyncSession = Depends(get_db)):
+async def execute_defense_action(
+    request: DefenseActionRequest,
+    db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
+):
     """
     Execute a defense action (block IP, block domain, quarantine file, etc.)
     """
@@ -1830,6 +1846,7 @@ async def list_defense_events(
     limit: int = 200,
     client_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """Return recent defense event timeline for analyst investigation."""
     try:
@@ -1876,6 +1893,7 @@ async def list_attacks(
     client_id: Optional[str] = None,
     blocked_only: bool = False,
     db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """
     List detected attacks
@@ -1933,6 +1951,7 @@ async def list_network_alerts(
     active_only: bool = True,
     severity: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """
     List network-wide security alerts
@@ -2232,7 +2251,11 @@ async def _apply_defense_action(action: DefenseAction, db: AsyncSession) -> bool
 
 
 @router.post("/defense/action/revert/{action_id}")
-async def revert_defense_action(action_id: str, db: AsyncSession = Depends(get_db)):
+async def revert_defense_action(
+    action_id: str,
+    db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
+):
     """Safely revert previously executed block actions (IP/domain) for rollback/unblock workflows."""
     try:
         res = await db.execute(select(DefenseAction).where(DefenseAction.action_id == action_id))
@@ -2301,7 +2324,10 @@ async def revert_defense_action(action_id: str, db: AsyncSession = Depends(get_d
 
 
 @router.post("/defense/action/rollback/sweep")
-async def sweep_expired_rollbacks(db: AsyncSession = Depends(get_db)):
+async def sweep_expired_rollbacks(
+    db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
+):
     """Revert temporary blocks whose rollback windows have expired."""
     try:
         now = datetime.utcnow()

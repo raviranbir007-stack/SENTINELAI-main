@@ -25,6 +25,9 @@ class ThreatAnalyzer:
         self.callback = callback
         self.server_url = server_url.rstrip("/") if server_url else None
         self.request_timeout = request_timeout
+        self._control_plane_host = ''
+        self._control_plane_port = None
+        self._control_plane_ips: set[str] = set()
         
         # Scan queue
         self.scan_queue = deque()
@@ -58,6 +61,62 @@ class ThreatAnalyzer:
             'amazon.com', 'apple.com', 'icloud.com',
             'ip-api.com', 'ipapi.co', 'ipify.org', 'api.ipify.org', 'ifconfig.me'
         }
+
+        self._initialize_control_plane_identity()
+
+    def _initialize_control_plane_identity(self):
+        if not self.server_url:
+            return
+        try:
+            parsed = urlparse(self.server_url)
+            host = (parsed.hostname or '').strip().lower().rstrip('.')
+            self._control_plane_host = host
+            self._control_plane_port = int(parsed.port) if parsed.port else (443 if parsed.scheme == 'https' else 80)
+            if host:
+                try:
+                    for _fam, _stype, _proto, _canon, sockaddr in socket.getaddrinfo(host, None):
+                        if sockaddr:
+                            self._control_plane_ips.add(str(sockaddr[0]))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _is_control_plane_target(self, artifact_type: str, artifact_value: str, metadata: Dict) -> bool:
+        if not self.server_url:
+            return False
+
+        host = self._extract_host(artifact_type, artifact_value)
+        md = metadata or {}
+        md_domain = str(md.get('remote_domain') or md.get('domain') or '').strip().lower().rstrip('.')
+        md_ip = str(md.get('remote_ip') or '').strip()
+        candidates = {h for h in [host, md_domain, md_ip, str(artifact_value).strip()] if h}
+        if self._control_plane_host:
+            candidates.add(self._control_plane_host)
+
+        host_match = False
+        for item in list(candidates):
+            plain = item.split(':', 1)[0].strip().lower().rstrip('.')
+            if not plain:
+                continue
+            if plain == self._control_plane_host:
+                host_match = True
+                break
+            if plain in self._control_plane_ips:
+                host_match = True
+                break
+
+        if not host_match:
+            return False
+
+        try:
+            remote_port = md.get('port')
+            if remote_port is not None and self._control_plane_port is not None:
+                return int(remote_port) == int(self._control_plane_port)
+        except Exception:
+            pass
+
+        return True
 
     def _extract_host(self, artifact_type: str, artifact_value: str) -> str:
         value = str(artifact_value or '').strip()
@@ -136,6 +195,21 @@ class ThreatAnalyzer:
             return
 
         metadata = metadata or {}
+
+        if self._is_control_plane_target(artifact_type, artifact_value, metadata):
+            if self.callback:
+                self.callback({
+                    'type': 'threat_verdict',
+                    'artifact_type': artifact_type,
+                    'artifact': artifact_value,
+                    'verdict': 'SAFE',
+                    'risk': 'LOW',
+                    'cached': False,
+                    'sources': 0,
+                    'sources_list': [],
+                    'reason': 'sentinel_control_plane_traffic'
+                })
+            return
 
         trusted_metadata_host = ''
         for key in ('remote_domain', 'domain', 'host', 'hostname', 'url'):
