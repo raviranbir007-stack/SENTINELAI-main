@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "alerts@sentinel-ai.com")
     ALERT_EMAIL: Optional[str] = os.getenv("ALERT_EMAIL", os.getenv("SMTP_USERNAME"))
     CLIENT_REGISTRATION_ALERT_EMAILS: str = os.getenv("CLIENT_REGISTRATION_ALERT_EMAILS", "")
+    ADMIN_INFRA_HOSTNAMES: str = os.getenv("ADMIN_INFRA_HOSTNAMES", "")
+    ADMIN_INFRA_IPS: str = os.getenv("ADMIN_INFRA_IPS", "")
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -122,6 +124,14 @@ class Settings(BaseSettings):
     SENTINEL_AUTO_BLOCK_MIN_SEVERITY: str = os.getenv("SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high")
     SENTINEL_ENABLE_MANUAL_APPROVAL: bool = os.getenv("SENTINEL_ENABLE_MANUAL_APPROVAL", "True").lower() == "true"
     SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE: float = float(os.getenv("SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", "0.65"))
+
+    @property
+    def admin_infra_hostnames_list(self) -> List[str]:
+        return [h.strip().lower() for h in self.ADMIN_INFRA_HOSTNAMES.replace(";", ",").split(",") if h.strip()]
+
+    @property
+    def admin_infra_ips_list(self) -> List[str]:
+        return [h.strip() for h in self.ADMIN_INFRA_IPS.replace(";", ",").split(",") if h.strip()]
 
 
 

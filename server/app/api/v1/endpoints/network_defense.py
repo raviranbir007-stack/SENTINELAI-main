@@ -105,10 +105,12 @@ Tracks attacks across all client installations and implements defense mechanisms
 
 import asyncio
 import hmac
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -242,6 +244,65 @@ async def _admin_or_blocked_in_safe_mode(request: Request):
         status_code=403,
         detail="Client-safe mode blocks management endpoints. Use an admin backend session or provide X-Sentinel-Admin-Bypass.",
     )
+
+
+def _normalize_hostname(value: str) -> str:
+    host = str(value or "").strip().lower().rstrip(".")
+    return host
+
+
+def _parse_ip(value: str) -> str:
+    try:
+        return str(ipaddress.ip_address(str(value or "").strip()))
+    except Exception:
+        return ""
+
+
+def _local_admin_host_markers() -> tuple[set[str], set[str]]:
+    hosts: set[str] = set()
+    ips: set[str] = set()
+
+    for raw in [socket.gethostname(), socket.getfqdn()]:
+        norm = _normalize_hostname(raw)
+        if norm:
+            hosts.add(norm)
+
+    try:
+        for raw in socket.gethostbyname_ex(socket.gethostname())[2] or []:
+            parsed = _parse_ip(raw)
+            if parsed:
+                ips.add(parsed)
+    except Exception:
+        pass
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        local_ip = _parse_ip(sock.getsockname()[0])
+        sock.close()
+        if local_ip:
+            ips.add(local_ip)
+    except Exception:
+        pass
+
+    ips.update({"127.0.0.1", "::1"})
+    return hosts, ips
+
+
+def _is_admin_infrastructure_host(hostname: str, ip_address: str) -> bool:
+    configured_hosts = {_normalize_hostname(v) for v in settings.admin_infra_hostnames_list}
+    configured_ips = {_parse_ip(v) for v in settings.admin_infra_ips_list}
+    configured_ips = {v for v in configured_ips if v}
+
+    local_hosts, local_ips = _local_admin_host_markers()
+    host = _normalize_hostname(hostname)
+    ip = _parse_ip(ip_address)
+
+    if host and (host in configured_hosts or host in local_hosts):
+        return True
+    if ip and (ip in configured_ips or ip in local_ips):
+        return True
+    return False
 
 
 def _extract_runtime_identity(status_payload: Optional[dict]) -> dict:
@@ -698,6 +759,16 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
     Register a new client installation or update existing one
     """
     try:
+        if _is_admin_infrastructure_host(request.hostname, request.ip_address):
+            return {
+                "status": "admin_infrastructure",
+                "message": "Host is designated as admin infrastructure and excluded from client inventory",
+                "client_scope": {
+                    "role": "admin_infrastructure",
+                    "excluded_from_client_inventory": True,
+                },
+            }
+
         # Check if client already exists (by IP or hostname)
         query = select(ClientInstallation).where(
             or_(
@@ -991,6 +1062,9 @@ async def list_clients(
         identified_users = set()
 
         for c in clients:
+            if _is_admin_infrastructure_host(c.hostname, c.ip_address):
+                continue
+
             runtime_identity = _get_fresh_runtime_identity(c.client_id)
             current_user = runtime_identity.get("current_os_user")
             if current_user:

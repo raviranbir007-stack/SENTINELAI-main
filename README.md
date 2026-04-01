@@ -45,6 +45,7 @@ SENTINEL_ADMIN_BYPASS_KEY=replace-with-long-random-secret
 - `ALERT_EMAIL` receives core security alerts.
 - `CLIENT_REGISTRATION_ALERT_EMAILS` receives "new client registered" notifications (deduplicated automatically).
 - In client-safe mode, admin management routes are blocked unless header `X-Sentinel-Admin-Bypass` matches `SENTINEL_ADMIN_BYPASS_KEY`.
+- To force your current server OS to be treated as admin (not client), set `ADMIN_INFRA_HOSTNAMES` and/or `ADMIN_INFRA_IPS` in `server/.env`.
 
 ## Testing and Diagnostics
 
