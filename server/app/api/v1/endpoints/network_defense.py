@@ -1095,6 +1095,7 @@ async def list_clients(
                     "network_segment": c.network_segment,
                     "version": c.version,
                     "last_seen": c.last_seen.isoformat() if c.last_seen else None,
+                    "is_active": c.is_active,
                     "protection_enabled": c.protection_enabled,
                     "blocked_ips_count": len(c.blocked_ips) if c.blocked_ips else 0,
                     "blocked_domains_count": len(c.blocked_domains) if c.blocked_domains else 0,

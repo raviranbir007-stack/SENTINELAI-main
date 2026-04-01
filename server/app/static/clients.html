@@ -540,6 +540,12 @@
     if (age <= 10 * 60 * 1000) return 'warning';
     return 'offline';
   }
+  function ageMs(ts) {
+    if (!ts) return null;
+    const age = Date.now() - (typeof ts === 'string' ? Date.parse(ts) : ts);
+    return Number.isFinite(age) ? age : null;
+  }
+
   function timeSince(ts) {
     if (!ts) return null;
     const age = Date.now() - (typeof ts === 'string' ? Date.parse(ts) : ts);
