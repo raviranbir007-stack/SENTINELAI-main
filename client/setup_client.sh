@@ -212,9 +212,10 @@ SENTINEL-AI Client Setup Summary
 Date: $(date)
 Hostname: $(hostname)
 IP Address: $(hostname -I | awk '{print $1}')
+Admin Host Profile: Kali Linux VBox (managed centrally)
 
 Server Configuration:
-- Server URL: $SERVER_URL
+- Server URL: [configured]
 - Client ID: ${CLIENT_ID:-"Not registered yet"}
 
 Client Configuration:
@@ -250,10 +251,7 @@ echo ""
 echo "📊 Check Status:"
 echo "   tail -f sentinel_client.log"
 echo ""
-echo "🌐 Server Dashboard:"
-if [ "$(whoami)" = "admin" ]; then
-    echo "   $SERVER_URL/static/index.html"
-fi
+echo "🌐 Dashboard Access: Provided centrally by admin (restricted client view)"
 echo ""
 
 if [ -f ".client_id" ]; then

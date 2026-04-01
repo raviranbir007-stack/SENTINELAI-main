@@ -2438,8 +2438,8 @@
             </div>
         </section>
 
-        <!-- Active Clients Section -->
-        <section class="section section-divider">
+        <!-- Active Clients Section (admin-only, hidden in client-safe dashboard) -->
+        <section class="section section-divider" id="activeClientsSection" style="display:none;">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -3398,6 +3398,7 @@
         let latestMonitoringStats = null;
         let latestActiveClients = null;
         let latestAccuracyMetrics = null;
+        const CLIENT_SAFE_DASHBOARD_MODE = true;
         let knownClientIdsForAlerts = null; // null = first load, Set after first fetch
         let securityTaskHistory = {
             cpu: [],
@@ -3457,6 +3458,16 @@
             monitor: { label: 'Monitoring Stats', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
             clients: { label: 'Active Clients', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
         };
+
+        if (CLIENT_SAFE_DASHBOARD_MODE) {
+            SOURCE_SIGNALS.clients = {
+                label: 'Client Scope Hidden',
+                lastSuccessAt: Date.now(),
+                lastFailureAt: null,
+                dataTimestamp: Date.now(),
+                error: null,
+            };
+        }
 
         const FRESHNESS_THRESHOLDS_MS = {
             live: 45 * 1000,
@@ -8142,6 +8153,11 @@
         }
 
         async function fetchActiveClients() {
+            if (CLIENT_SAFE_DASHBOARD_MODE) {
+                updateSourceSignal('clients', { ok: true, dataTimestamp: Date.now() });
+                latestActiveClients = { total: 0, clients: [] };
+                return;
+            }
             const dashboardContainer = document.getElementById('activeClientsCard');
             const clientsPageContainer = document.getElementById('clientsPageCard');
             if (!dashboardContainer && !clientsPageContainer) return;
@@ -8344,6 +8360,9 @@
         }
 
         function refreshClientsPage() {
+            if (CLIENT_SAFE_DASHBOARD_MODE) {
+                return Promise.resolve();
+            }
             return Promise.allSettled([fetchActiveClients(), fetchMonitoringStats()]).finally(() => {
                 renderClientActivityPanel();
             });
@@ -9275,6 +9294,13 @@
             renderNotifications();
             updateSystemStatusPanel();
             applyPanelState();
+
+            if (CLIENT_SAFE_DASHBOARD_MODE) {
+                const activeClientsSection = document.getElementById('activeClientsSection');
+                if (activeClientsSection) {
+                    activeClientsSection.style.display = 'none';
+                }
+            }
             
             // Fetch live data
             fetchDashboardStats();
@@ -9284,7 +9310,7 @@
             fetchApiStatus();
             fetchSystemHealth();
             fetchMonitoringStats();
-            fetchActiveClients();
+            if (!CLIENT_SAFE_DASHBOARD_MODE) fetchActiveClients();
             fetchSecurityPosture();
             fetchQuarantineInventory();
             fetchAuditTelemetry();
@@ -9340,7 +9366,7 @@
                     fetchApiStatus();
                     fetchSystemHealth();
                     fetchMonitoringStats();
-                    fetchActiveClients();
+                    if (!CLIENT_SAFE_DASHBOARD_MODE) fetchActiveClients();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
                     fetchAuditTelemetry();

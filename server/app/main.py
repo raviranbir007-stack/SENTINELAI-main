@@ -41,6 +41,26 @@ def _legacy_activity_monitor_enabled() -> bool:
     """Enable legacy activity monitor only when explicitly requested."""
     return os.getenv("SENTINEL_ENABLE_LEGACY_ACTIVITY_MONITOR", "false").lower() in {"1", "true", "yes", "on"}
 
+
+def _client_safe_dashboard_mode() -> bool:
+    """Return whether client-safe response redaction is enabled."""
+    return os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def _public_system_status() -> dict:
+    """Return system status with sensitive/internal fields removed for client dashboards."""
+    status = get_system_status()
+    status.pop("api_key_present", None)
+    if isinstance(status.get("gemini"), dict):
+        gemini = status["gemini"]
+        status["gemini"] = {
+            "enabled": bool(gemini.get("enabled", False)),
+            "available": bool(gemini.get("available", False)),
+            "status": gemini.get("status", "unknown"),
+            "model": "managed",
+        }
+    return status
+
 # Gemini API Configuration with multiple fallback options
 GEMINI_API_KEY = (
     os.getenv("GEMINI_API_KEY") or 
@@ -513,6 +533,8 @@ async def health():
 @app.get("/api/v1/system/status")
 async def system_status():
     """Get detailed system status"""
+    if _client_safe_dashboard_mode():
+        return _public_system_status()
     return get_system_status()
 
 @app.post("/api/v1/analyze/gemini")
@@ -659,6 +681,17 @@ async def get_gemini_configuration():
         safe_config = config.get_config()
         if 'api_key' in safe_config and safe_config['api_key']:
             safe_config['api_key'] = "***MASKED***"
+
+        if _client_safe_dashboard_mode():
+            return {
+                "config": {
+                    "enabled": bool(safe_config.get("enabled", False)),
+                    "provider": "gemini",
+                    "model": "managed",
+                },
+                "status": _public_system_status().get("gemini", {}),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         
         return {
             "config": safe_config,
