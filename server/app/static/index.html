@@ -550,6 +550,19 @@
             border-radius: 12px;
             background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+            cursor: pointer;
+            transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        .overview-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(45, 212, 191, 0.35);
+            box-shadow: 0 10px 24px rgba(4, 22, 34, 0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        .overview-card:focus-visible {
+            outline: 2px solid rgba(45, 212, 191, 0.65);
+            outline-offset: 2px;
         }
 
         .overview-label {
@@ -571,6 +584,39 @@
         .overview-value.success { color: var(--success); }
         .overview-value.warning { color: var(--warning); }
         .overview-value.destructive { color: var(--destructive); }
+
+        .overview-actions {
+            display: flex;
+            gap: 0.4rem;
+            margin-top: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .overview-action-btn {
+            border: 1px solid rgba(45, 212, 191, 0.28);
+            background: rgba(10, 24, 40, 0.55);
+            color: #d8fff6;
+            font-size: 0.68rem;
+            line-height: 1;
+            padding: 0.35rem 0.52rem;
+            border-radius: 999px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-family: 'JetBrains Mono', monospace;
+            transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+        }
+
+        .overview-action-btn:hover {
+            border-color: rgba(45, 212, 191, 0.55);
+            background: rgba(20, 70, 70, 0.52);
+            transform: translateY(-1px);
+        }
+
+        .overview-action-btn:focus-visible {
+            outline: 2px solid rgba(45, 212, 191, 0.65);
+            outline-offset: 2px;
+        }
 
         .table-shell {
             width: 100%;
@@ -1397,14 +1443,16 @@
 
         /* API Section */
         .section {
-            padding: 3rem 0;
+            padding: 2.6rem 0;
         }
 
         .section-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
+            align-items: flex-start;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1.35rem;
         }
 
         .section-header h2 {
@@ -1415,6 +1463,114 @@
         .section-header p {
             color: var(--muted-foreground);
             font-size: 0.875rem;
+        }
+
+        .section-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+
+        .section-actions .btn {
+            min-height: 34px;
+        }
+
+        .dashboard-card {
+            border-radius: 14px;
+            border: 1px solid rgba(45, 212, 191, 0.16);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 26px rgba(0, 0, 0, 0.18);
+        }
+
+        .section-divider {
+            border-top: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .posture-layout {
+            display: grid;
+            grid-template-columns: minmax(220px, 1.2fr) minmax(340px, 2fr);
+            gap: 1rem;
+            align-items: stretch;
+        }
+
+        .posture-status-panel {
+            border: 1px solid rgba(45, 212, 191, 0.22);
+            border-radius: 12px;
+            padding: 0.95rem;
+            background: linear-gradient(165deg, rgba(10, 28, 38, 0.58), rgba(6, 15, 28, 0.72));
+        }
+
+        .posture-status-title {
+            font-size: 0.72rem;
+            color: var(--muted-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .posture-status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+        }
+
+        .posture-meta {
+            margin-top: 0.55rem;
+            font-size: 0.75rem;
+            color: var(--muted-foreground);
+        }
+
+        .posture-details {
+            display: grid;
+            gap: 0.75rem;
+            min-width: 0;
+        }
+
+        .posture-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.65rem;
+        }
+
+        .posture-metric {
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px;
+            padding: 0.7rem 0.55rem;
+            text-align: center;
+            background: rgba(255,255,255,0.02);
+        }
+
+        .posture-metric-value {
+            font-size: 1.42rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1.1;
+        }
+
+        .posture-metric-label {
+            margin-top: 0.22rem;
+            font-size: 0.72rem;
+            color: var(--muted-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .posture-category-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .posture-empty {
+            padding: 1rem;
+            color: var(--muted-foreground);
+            border: 1px dashed rgba(255,255,255,0.15);
+            border-radius: 10px;
+            background: rgba(255,255,255,0.02);
         }
 
         .section-header-right {
@@ -1915,6 +2071,10 @@
             .task-mini-grid { grid-template-columns: 1fr 1fr; }
             .task-ops-grid { grid-template-columns: 1fr 1fr; }
             .clients-overview-grid { grid-template-columns: 1fr 1fr; }
+            .section-header { margin-bottom: 1rem; }
+            .section-actions { width: 100%; justify-content: flex-start; }
+            .posture-layout { grid-template-columns: 1fr; }
+            .posture-metrics-grid { grid-template-columns: 1fr 1fr; }
         }
 
         @media (max-width: 480px) {
@@ -1922,6 +2082,7 @@
             .dashboard-overview { grid-template-columns: 1fr; }
             .scan-form .btn { width: 100%; }
             .container, .header-container { padding-left: 1rem; padding-right: 1rem; }
+            .posture-metrics-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -1999,23 +2160,44 @@
                         </div>
 
                         <div class="dashboard-overview">
-                            <div class="overview-card">
+                            <div class="overview-card" role="button" tabindex="0" title="Review critical threats" onclick="handleOverviewAction('critical')" onkeydown="if(event.key==='Enter' || event.key===' '){event.preventDefault();handleOverviewAction('critical');}">
                                 <div class="overview-label">Critical</div>
                                 <div class="overview-value destructive" id="overviewCritical">0</div>
+                                <div class="overview-actions">
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('critical', 'view', event)">View</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('critical', 'mitigate', event)">Mitigate</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('critical', 'export', event)">Export</button>
+                                </div>
                             </div>
-                            <div class="overview-card">
+                            <div class="overview-card" role="button" tabindex="0" title="Review high severity threats" onclick="handleOverviewAction('high')" onkeydown="if(event.key==='Enter' || event.key===' '){event.preventDefault();handleOverviewAction('high');}">
                                 <div class="overview-label">High</div>
                                 <div class="overview-value warning" id="overviewHigh">0</div>
+                                <div class="overview-actions">
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('high', 'view', event)">View</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('high', 'mitigate', event)">Mitigate</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('high', 'export', event)">Export</button>
+                                </div>
                             </div>
-                            <div class="overview-card">
+                            <div class="overview-card" role="button" tabindex="0" title="Review clean scans" onclick="handleOverviewAction('clean')" onkeydown="if(event.key==='Enter' || event.key===' '){event.preventDefault();handleOverviewAction('clean');}">
                                 <div class="overview-label">Clean</div>
                                 <div class="overview-value success" id="overviewClean">0</div>
+                                <div class="overview-actions">
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('clean', 'view', event)">View</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('clean', 'mitigate', event)">Validate</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('clean', 'export', event)">Export</button>
+                                </div>
                             </div>
-                            <div class="overview-card">
+                            <div class="overview-card" role="button" tabindex="0" title="Review assets covered in scan history" onclick="handleOverviewAction('assets')" onkeydown="if(event.key==='Enter' || event.key===' '){event.preventDefault();handleOverviewAction('assets');}">
                                 <div class="overview-label">Assets Covered</div>
                                 <div class="overview-value primary" id="overviewAssets">0</div>
+                                <div class="overview-actions">
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('assets', 'view', event)">View</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('assets', 'mitigate', event)">Rescan</button>
+                                    <button class="overview-action-btn" onclick="handleOverviewQuickAction('assets', 'export', event)">Export</button>
+                                </div>
                             </div>
                         </div>
+                        <div class="scan-helper" style="margin-top:0.35rem;">Use View, Mitigate, and Export on each overview metric for direct response actions.</div>
 
                         <div class="live-signal-strip" id="liveSignalStrip">
                             <div class="live-signal-head">
@@ -2168,7 +2350,7 @@
         </section>
 
         <!-- API Integrations Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2188,19 +2370,19 @@
         </section>
 
         <!-- Recent Threats Section -->
-        <section class="section threats-section">
+        <section class="section threats-section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
                         <h2>Recent Threats Detected</h2>
                         <p>Live feed from all connected intelligence sources</p>
                     </div>
-                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <div class="section-actions">
                         <button id="toggleRecentThreatsBtn" class="btn btn-outline" title="Minimize/Maximize Recent Threats">− Minimize</button>
                         <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
                     </div>
                 </div>
-                <div class="card card-glass" id="recentThreatsCard">
+                <div class="card card-glass dashboard-card" id="recentThreatsCard">
                     <div class="table-shell">
                     <table class="threats-table">
                         <thead>
@@ -2225,7 +2407,7 @@
         </section>
 
         <!-- Recent System Logs Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2234,14 +2416,14 @@
                     </div>
                     <button id="toggleRecentLogsBtn" class="btn btn-outline" title="Minimize/Maximize Recent Logs">− Minimize</button>
                 </div>
-                <div class="card card-glass" id="recentLogsCard" style="padding: 1rem;">
+                <div class="card card-glass dashboard-card" id="recentLogsCard" style="padding: 1rem;">
                     <div id="logsList"></div>
                 </div>
             </div>
         </section>
 
         <!-- System Health Overview Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2250,14 +2432,14 @@
                     </div>
                     <button id="refreshSystemHealthBtn" class="btn btn-outline btn-sm" onclick="fetchSystemHealth()" title="Refresh system health">↺ Refresh</button>
                 </div>
-                <div id="systemHealthCard" class="card card-glass" style="padding: 1.25rem;">
+                <div id="systemHealthCard" class="card card-glass dashboard-card" style="padding: 1.25rem;">
                     <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading system health...</div>
                 </div>
             </div>
         </section>
 
         <!-- Active Clients Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2266,14 +2448,14 @@
                     </div>
                     <button id="refreshActiveClientsBtn" class="btn btn-outline btn-sm" onclick="fetchActiveClients()" title="Refresh active clients">↺ Refresh</button>
                 </div>
-                <div id="activeClientsCard" class="card card-glass" style="padding: 1.1rem;">
+                <div id="activeClientsCard" class="card card-glass dashboard-card" style="padding: 1.1rem;">
                     <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading active clients...</div>
                 </div>
             </div>
         </section>
 
         <!-- Security Task Monitor Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2282,7 +2464,7 @@
                     </div>
                     <button id="refreshTaskMonitorBtn" class="btn btn-outline btn-sm" onclick="refreshSecurityTaskMonitor()" title="Refresh security task monitor">↺ Refresh</button>
                 </div>
-                <div id="securityTaskMonitorCard" class="card card-glass" style="padding: 0.95rem;">
+                <div id="securityTaskMonitorCard" class="card card-glass dashboard-card" style="padding: 0.95rem;">
                     <div class="task-monitor-shell">
                         <div class="task-usage-strip" id="taskUsageStrip"></div>
 
@@ -2339,19 +2521,19 @@
         </section>
 
         <!-- Live Activity Monitor Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
                         <h2>🌐 Live Activity Monitor</h2>
                         <p>Browser history surveillance — websites visited with scan verdicts &amp; recent scan events</p>
                     </div>
-                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                    <div class="section-actions">
                         <button id="toggleLiveActivityBtn" class="btn btn-outline" title="Minimize/Maximize">− Minimize</button>
                         <button id="refreshLiveActivityBtn" class="btn btn-outline btn-sm" onclick="refreshLiveActivity()" title="Refresh">↺ Refresh</button>
                     </div>
                 </div>
-                <div id="liveActivityCard" class="card card-glass" style="padding:0;">
+                <div id="liveActivityCard" class="card card-glass dashboard-card" style="padding:0;">
                     <!-- Tab bar -->
                     <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
                         <button id="liveTabWebsites" class="btn btn-ghost" style="border-radius:0;border-right:1px solid var(--border);padding:0.6rem 1.1rem;font-size:0.82rem;font-weight:600;" onclick="switchLiveTab('websites')">🌐 Websites Visited</button>
@@ -2402,36 +2584,38 @@
         </section>
 
         <!-- Security Posture Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
                         <h2>🔒 Security Posture</h2>
                         <p>Startup threat assessment &amp; system vulnerability baseline</p>
                     </div>
-                    <button id="refreshSecurityPostureBtn" class="btn btn-outline btn-sm" onclick="fetchSecurityPosture()" title="Refresh security posture">↺ Refresh</button>
+                    <div class="section-actions">
+                        <button id="refreshSecurityPostureBtn" class="btn btn-outline btn-sm" onclick="fetchSecurityPosture()" title="Refresh security posture">↺ Refresh</button>
+                    </div>
                 </div>
-                <div id="securityPostureCard" class="card card-glass" style="padding: 1.5rem;">
+                <div id="securityPostureCard" class="card card-glass dashboard-card" style="padding: 1.1rem;">
                     <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading security posture...</div>
                 </div>
             </div>
         </section>
 
         <!-- Quarantine Inventory Section -->
-        <section class="section">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
                         <h2>🗂️ Quarantine Inventory</h2>
                         <p>Files and entities isolated by the intrusion prevention system</p>
                     </div>
-                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <div class="section-actions">
                         <button id="toggleQuarantineBtn" class="btn btn-outline" title="Minimize/Maximize Quarantine Inventory">− Minimize</button>
                         <button id="viewAllQuarantineBtn" class="btn btn-outline">View All →</button>
                         <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
                     </div>
                 </div>
-                <div class="card card-glass" id="quarantineCard">
+                <div class="card card-glass dashboard-card" id="quarantineCard">
                     <div class="table-shell">
                     <table class="threats-table">
                         <thead>
@@ -2448,6 +2632,40 @@
                     </table>
                     </div>
                     <div id="quarantineStats" style="display:flex; gap:2rem; padding:1rem 1.5rem; border-top:1px solid var(--border); font-size:0.875rem; color:var(--muted-foreground);"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Analyst Audit Trail Section -->
+        <section class="section section-divider">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🧾 Analyst Decision Audit Trail</h2>
+                        <p>Why actions were blocked, held, ignored, or escalated</p>
+                    </div>
+                    <div class="section-actions">
+                        <button id="refreshAuditTrailBtn" class="btn btn-outline btn-sm" onclick="fetchAuditTelemetry()" title="Refresh audit trail">↺ Refresh</button>
+                        <button id="toggleAuditTrailBtn" class="btn btn-outline btn-sm" onclick="toggleAuditTrailPanel()" title="Minimize/Maximize audit trail">− Minimize</button>
+                    </div>
+                </div>
+                <div class="card card-glass dashboard-card" id="auditTrailCard">
+                    <div class="table-shell">
+                        <table class="threats-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Event</th>
+                                    <th>Actor</th>
+                                    <th>Target</th>
+                                    <th>Decision Summary</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auditTrailBody">
+                                <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading audit trail...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </section>
@@ -2660,9 +2878,11 @@
                         <h2>All Threats</h2>
                         <p>Complete threat intelligence database</p>
                     </div>
-                    <button class="btn btn-ghost btn-sm" id="toggleThreatsPageBtn" title="Minimize/Maximize threats table">🗕 Minimize</button>
+                    <div class="section-actions">
+                        <button class="btn btn-ghost btn-sm" id="toggleThreatsPageBtn" title="Minimize/Maximize threats table">🗕 Minimize</button>
+                    </div>
                 </div>
-                <div class="card card-glass" id="allThreatsPageCard">
+                <div class="card card-glass dashboard-card" id="allThreatsPageCard">
                     <div class="table-shell">
                     <table class="threats-table">
                         <thead>
@@ -2695,12 +2915,12 @@
                         <h2>Security Reports</h2>
                         <p>AI-generated threat analysis reports</p>
                     </div>
-                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <div class="section-actions">
                         <button class="btn btn-ghost btn-sm" id="toggleReportsPageBtn" title="Minimize/Maximize reports panel">🗕 Minimize</button>
                         <button class="btn btn-cyber" onclick="generateReport()">✨ Generate New Report</button>
                     </div>
                 </div>
-                <div class="card card-glass" id="allReportsPageCard" style="padding: 1.5rem;">
+                <div class="card card-glass dashboard-card" id="allReportsPageCard" style="padding: 1.5rem;">
                     <div id="allReportsPage">
                         <p style="color: var(--muted-foreground); text-align: center; padding: 2rem;">Loading reports...</p>
                     </div>
@@ -2896,6 +3116,11 @@
                     <span style="font-size:0.85rem;">Notify only for suspicious/malicious events</span>
                 </label>
 
+                <label style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="checkbox" id="settingsCompactLayout" />
+                    <span style="font-size:0.85rem;">Use compact dashboard layout</span>
+                </label>
+
                 <label style="display:grid; gap:0.35rem;">
                     <span style="font-size:0.8rem; color:var(--muted-foreground);">Max notifications retained</span>
                     <select id="settingsMaxNotifications" class="search-input" style="max-width:100%;">
@@ -2947,6 +3172,62 @@
         .notification-unread {
             background: rgba(45, 212, 191, 0.05);
             border-left: 3px solid var(--primary);
+        }
+
+        body.compact-layout .card {
+            padding: 0.85rem;
+        }
+
+        body.compact-layout .metric-value {
+            font-size: 1.35rem;
+        }
+
+        body.compact-layout .threats-table th,
+        body.compact-layout .threats-table td,
+        body.compact-layout .table th,
+        body.compact-layout .table td {
+            padding-top: 0.42rem;
+            padding-bottom: 0.42rem;
+        }
+
+        .evidence-graph {
+            display: grid;
+            gap: 0.55rem;
+            margin-top: 0.65rem;
+        }
+
+        .evidence-graph-row {
+            display: grid;
+            grid-template-columns: 180px 1fr 52px;
+            align-items: center;
+            gap: 0.65rem;
+            font-size: 0.78rem;
+        }
+
+        .evidence-graph-track {
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.2);
+            overflow: hidden;
+        }
+
+        .evidence-graph-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(45, 212, 191, 0.75), rgba(16, 185, 129, 0.95));
+        }
+
+        .detail-action-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin-top: 0.55rem;
+        }
+
+        @media (max-width: 760px) {
+            .evidence-graph-row {
+                grid-template-columns: 120px 1fr 42px;
+            }
         }
 
         .clients-panel-shell {
@@ -3091,6 +3372,7 @@
         const DASHBOARD_UI_STATE_KEY = 'sentinel_dashboard_ui_state_v1';
         const DASHBOARD_LOCAL_REPORTS_KEY = 'sentinel_dashboard_local_reports_v1';
         const DASHBOARD_VIEWED_THREATS_KEY = 'sentinel_viewed_threats_v1';
+        const DASHBOARD_WEEKLY_TUNING_KEY = 'sentinel_weekly_threshold_tuning_v1';
 
         const DEFAULT_DASHBOARD_SETTINGS = {
             apiBaseUrl: 'http://localhost:8000',
@@ -3098,6 +3380,7 @@
             desktopNotifications: false,
             threatOnlyNotifications: true,
             maxNotifications: 50,
+            layoutMode: 'expanded',
         };
 
         let dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
@@ -3109,10 +3392,12 @@
         let currentSearchQuery = '';
         let lastScanMeta = { target: 'N/A', time: null };
         let latestDashboardStats = null;
+        let latestAuditEntries = [];
         let latestSecurityPosture = null;
         let latestSystemHealth = null;
         let latestMonitoringStats = null;
         let latestActiveClients = null;
+        let latestAccuracyMetrics = null;
         let knownClientIdsForAlerts = null; // null = first load, Set after first fetch
         let securityTaskHistory = {
             cpu: [],
@@ -3135,8 +3420,32 @@
             recentThreatsCollapsed: false,
             recentLogsCollapsed: false,
             quarantineCollapsed: false,
+            auditTrailCollapsed: false,
         };
         let quarantineData = null;
+        // Backward-compatible shim: older UI code may call mgt.clearMarks().
+        // Keep this no-op safe and map to Mark.js unmark() when available.
+        window.mgt = window.mgt || {};
+        if (typeof window.mgt.clearMarks !== 'function') {
+            window.mgt.clearMarks = function clearMarksCompat() {
+                try {
+                    if (window.mgt.markInstance && typeof window.mgt.markInstance.unmark === 'function') {
+                        window.mgt.markInstance.unmark();
+                        return;
+                    }
+
+                    if (window.Mark && document && document.body) {
+                        const markInstance = new window.Mark(document.body);
+                        if (typeof markInstance.unmark === 'function') {
+                            markInstance.unmark();
+                        }
+                    }
+                } catch (_err) {
+                    // Intentionally swallow errors so UI never breaks on clear call.
+                }
+            };
+        }
+
         const SOURCE_SIGNALS = {
             stats: { label: 'Dashboard Stats', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
             threats: { label: 'Threat Feed', lastSuccessAt: null, lastFailureAt: null, dataTimestamp: null, error: null },
@@ -3163,11 +3472,16 @@
             dashboardLogs: '/api/logs',
             dashboardApiStatus: '/api/dashboard/api-status',
             dashboardSystemHealth: '/api/v1/dashboard/system-health',
+            dashboardRestoreHealth: '/api/v1/dashboard/restore-health',
             dashboardMonitoringStats: '/api/v1/dashboard/monitoring-stats',
             dashboardSecurityPosture: '/api/v1/dashboard/security-posture',
             dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
             dashboardDefenseResponse: '/api/v1/network/event/respond',
             dashboardActiveClients: '/api/v1/network/clients?active_only=false',
+            dashboardAccuracyMetrics: '/api/v1/dashboard/telemetry/accuracy-metrics',
+            dashboardWeeklyThresholdTuning: '/api/v1/dashboard/telemetry/threshold-tuning/run-weekly',
+            dashboardAuditTelemetry: '/api/v1/dashboard/telemetry/audit',
+            scanMarkAllRead: '/api/v1/scan/mark-all-read',
 
             // Monitoring activity feeds
             monitoringWebsites: '/api/v1/monitoring/websites',
@@ -3177,6 +3491,7 @@
             scan: '/api/scan',
             scans: '/api/scans',
             scanResult: (id) => `/api/scans/${id}`,
+            scanFeedback: '/api/scan/feedback',
             
             // Threats
             threats: '/api/threats',
@@ -3207,6 +3522,7 @@
         const recentReports = [];
 
         let recentLogs = [];
+        let latestScanHistory = [];
         let allReports = [];
         let selectedReportType = 'executive_summary';
         let lastToastSignature = null;
@@ -3228,6 +3544,7 @@
         let systemStatusRendering = false;
         let globalQuarantineInProgress = false;
         let promptSuppressedByQuarantine = false;
+        let activeEscalationPrompt = null;
         const THREAT_REVIEW_SUPPRESSION_MS = 10 * 60 * 1000;
         const PROMPT_ESCALATION_UNANSWERED_THRESHOLD = 5;
         const PROMPT_ESCALATION_BLOCK_THRESHOLD = 5;
@@ -4384,6 +4701,24 @@
                         `;
                     }
 
+                    const explainability = scan.explainability || (effectiveForensic && effectiveForensic.explainability) || {};
+                    const matchedRules = Array.isArray(explainability.matched_rules) ? explainability.matched_rules : [];
+                    const evidenceGraphHTML = buildCorrelationEvidenceGraph({
+                        sourceCount: Number((effectiveForensic && effectiveForensic.corroboration_count) || 0),
+                        ruleCount: matchedRules.length,
+                        confidence: toUnitConfidence(scan.confidence),
+                        thresholdMet: !!(effectiveForensic && effectiveForensic.corroboration_threshold_met),
+                    });
+
+                    activeDetailContext = {
+                        target: scan.target,
+                        type: scan.type || scan.input_type || 'scan',
+                        input_type: scan.input_type || scan.type || 'url',
+                        severity: normalizedThreatLevel,
+                        verdict: scan.verdict || normalizedThreatLevel,
+                        scan_id: scan.scan_id,
+                    };
+
                     
                     // Build verdict/confidence section
                     let verdictHTML = '';
@@ -4472,6 +4807,15 @@
                         ${localAnalysisHTML}
                         ${apiResultsHTML}
                         ${forensicHTML}
+                        ${evidenceGraphHTML}
+                        <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(148, 163, 184, 0.12); border-radius: 8px;">
+                            <div style="font-size: 0.82rem; color: var(--muted-foreground); margin-bottom: 0.45rem;">Analyst Feedback</div>
+                            <div class="detail-action-bar">
+                                <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('true_positive')">Correct Threat</button>
+                                <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('false_positive')">False Positive</button>
+                                <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('uncertain')">Uncertain</button>
+                            </div>
+                        </div>
                         ${threatIndicatorsHTML}
                         ${scan.file_size ? `
                             <div style="margin-bottom: 1.5rem;">
@@ -4496,6 +4840,7 @@
             if (modal) {
                 modal.style.display = 'none';
             }
+            activeDetailContext = null;
             // Reset content to prevent memory leaks and state carryover
             if (content) {
                 content.innerHTML = '';
@@ -4547,12 +4892,27 @@
             updateSystemStatusPanel();
         }
 
-        function markAllThreatsRead() {
+        async function syncThreatReviewToBackend() {
+            try {
+                await apiRequest(API_ENDPOINTS.scanMarkAllRead, {
+                    method: 'POST',
+                    timeoutMs: 20000,
+                });
+                return true;
+            } catch (error) {
+                console.warn('Threat review backend sync failed:', error?.message || error);
+                return false;
+            }
+        }
+
+        async function markAllThreatsRead() {
+            const synced = await syncThreatReviewToBackend();
             acknowledgeThreatCenterReview();
             renderThreats();
             renderThreats('allThreatsPageTableBody');
             renderThreats('allThreatsModalTableBody');
-            showToast('All threats marked as reviewed', 'success');
+            await Promise.allSettled([fetchSystemHealth(), fetchThreats(), fetchLogs(), fetchMonitoringStats()]);
+            showToast(synced ? 'All threats marked as reviewed' : 'Threats reviewed locally; backend sync unavailable', synced ? 'success' : 'warning');
         }
 
         function openThreatDetailModal(threat, detail = null) {
@@ -4582,6 +4942,26 @@
             const detailEntries = merged.details && typeof merged.details === 'object'
                 ? Object.entries(merged.details)
                 : [];
+            const explainability = merged.explainability || (merged.forensic_metadata && merged.forensic_metadata.explainability) || {};
+            const matchedRules = Array.isArray(explainability.matched_rules) ? explainability.matched_rules : [];
+            const sourceCount = Number(merged.corroboration_count || (merged.forensic_metadata && merged.forensic_metadata.corroboration_count) || (Array.isArray(explainability.top_signals) ? explainability.top_signals.length : 0) || 0);
+            const confidenceUnit = toUnitConfidence((merged.confidence_score ?? merged.confidence ?? explainability.model_confidence ?? 0));
+            const thresholdMet = sourceCount >= 2;
+            const evidenceGraphHTML = buildCorrelationEvidenceGraph({
+                sourceCount,
+                ruleCount: matchedRules.length,
+                confidence: confidenceUnit,
+                thresholdMet,
+            });
+
+            activeDetailContext = {
+                target: merged.target || merged.target_display || merged.source || merged.name || merged.threat_id || merged.id,
+                type: merged.type || merged.target_type || 'threat',
+                input_type: merged.input_type || merged.target_type || merged.type || 'url',
+                severity: merged.severity,
+                verdict: merged.verdict || merged.severity,
+                threat_id: merged.id || merged.threat_id,
+            };
 
             content.innerHTML = `
                 <div style="margin-bottom: 1.5rem;">
@@ -4663,6 +5043,15 @@
                         </div>
                     </div>
                 ` : ''}
+                ${evidenceGraphHTML}
+                <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(148, 163, 184, 0.12); border-radius: 8px;">
+                    <div style="font-size: 0.82rem; color: var(--muted-foreground); margin-bottom: 0.45rem;">Analyst Feedback</div>
+                    <div class="detail-action-bar">
+                        <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('true_positive')">Correct Threat</button>
+                        <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('false_positive')">False Positive</button>
+                        <button class="btn btn-outline btn-sm" onclick="submitAnalystFeedback('uncertain')">Uncertain</button>
+                    </div>
+                </div>
                 <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
                     <button class="btn btn-outline" onclick="closeScanDetail()">Close</button>
                 </div>
@@ -4889,9 +5278,16 @@
                 return true;
             });
 
-            const criticalThreats = recentThreatsOnly.filter(t => String(t.severity || '').toLowerCase() === 'critical').length;
-            const highThreats = recentThreatsOnly.filter(t => String(t.severity || '').toLowerCase() === 'high').length;
-            const mediumThreats = recentThreatsOnly.filter(t => String(t.severity || '').toLowerCase() === 'medium').length;
+            const actionableRecentThreats = threatReviewSuppressed
+                ? []
+                : recentThreatsOnly.filter((threat) => {
+                    const threatId = threat?.id || threat?.threat_id || threat?.scan_id;
+                    return !threatId || !isThreatViewed(threatId);
+                });
+
+            const criticalThreats = actionableRecentThreats.filter(t => String(t.severity || '').toLowerCase() === 'critical').length;
+            const highThreats = actionableRecentThreats.filter(t => String(t.severity || '').toLowerCase() === 'high').length;
+            const mediumThreats = actionableRecentThreats.filter(t => String(t.severity || '').toLowerCase() === 'medium').length;
             const telemetryTotal = Number(stats.files_scanned || 0)
                 + Number(stats.ips_scanned || 0)
                 + Number(stats.urls_scanned || 0)
@@ -5025,7 +5421,7 @@
             }
 
             // Count only NEW (unviewed) critical threats for ACTION REQUIRED status
-            const unviewedCriticalThreats = recentThreatsOnly.filter(t => {
+            const unviewedCriticalThreats = actionableRecentThreats.filter(t => {
                 const severity = String(t.severity || '').toLowerCase();
                 const threatId = t.id || t.threat_id || t.scan_id;
                 return severity === 'critical' && threatId && !isThreatViewed(threatId);
@@ -5266,6 +5662,7 @@
                 fetchMonitoringStats(),
                 fetchSecurityPosture(),
                 fetchQuarantineInventory(),
+                fetchAuditTelemetry(),
                 refreshLiveActivity(),
             ]).then(() => {
                 showToast('Operational refresh complete', 'success');
@@ -5306,6 +5703,333 @@
                     item.style.display = !q || txt.includes(q) ? '' : 'none';
                 });
             }
+
+            const recentReportsContainer = document.getElementById('recentReports');
+            if (recentReportsContainer) {
+                Array.from(recentReportsContainer.querySelectorAll('.report-item')).forEach(item => {
+                    const txt = item.textContent.toLowerCase();
+                    item.style.display = !q || txt.includes(q) ? '' : 'none';
+                });
+            }
+        }
+
+        function runThreatSeverityDrilldown(severity) {
+            const sev = String(severity || '').toLowerCase();
+            switchPage('threats');
+            viewAllThreats();
+
+            const searchEl = document.getElementById('dashboardSearchInput');
+            if (searchEl) searchEl.value = sev;
+
+            // Ensure modal/table are rendered before filtering rows.
+            setTimeout(() => {
+                applyDashboardSearch(sev);
+            }, 80);
+            showToast(`Showing ${sev.toUpperCase()} threat items`, sev === 'critical' ? 'warning' : 'info');
+        }
+
+        async function handleOverviewAction(metric) {
+            const mode = String(metric || '').toLowerCase();
+
+            if (mode === 'critical' || mode === 'high') {
+                runThreatSeverityDrilldown(mode);
+                return;
+            }
+
+            if (mode === 'clean') {
+                switchPage('scans');
+                await fetchScanHistory();
+                const searchEl = document.getElementById('dashboardSearchInput');
+                if (searchEl) searchEl.value = 'safe';
+                applyDashboardSearch('safe');
+                showToast('Showing clean/safe scan results', 'success');
+                return;
+            }
+
+            if (mode === 'assets') {
+                switchPage('scans');
+                await fetchScanHistory();
+                const searchEl = document.getElementById('dashboardSearchInput');
+                if (searchEl) searchEl.value = '';
+                applyDashboardSearch('');
+                showToast('Opened scanned assets and history', 'info');
+            }
+        }
+
+        async function handleOverviewQuickAction(metric, action, event = null) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            const mode = String(metric || '').toLowerCase();
+            const normalizedAction = String(action || '').toLowerCase();
+
+            if (normalizedAction === 'view') {
+                await handleOverviewAction(mode);
+                return;
+            }
+
+            if (normalizedAction === 'mitigate') {
+                if (mode === 'critical' || mode === 'high') {
+                    openOverviewMitigationPrompt(mode);
+                    return;
+                }
+
+                if (mode === 'clean') {
+                    await Promise.allSettled([fetchSystemHealth(), fetchSecurityPosture(), fetchThreats()]);
+                    showToast('Validation refresh completed for clean posture', 'success');
+                    return;
+                }
+
+                if (mode === 'assets') {
+                    switchPage('scans');
+                    await fetchScanHistory();
+                    showToast('Assets list refreshed for rescan planning', 'info');
+                    return;
+                }
+            }
+
+            if (normalizedAction === 'export') {
+                const exportType = (mode === 'critical' || mode === 'high') ? 'technical_analysis' : 'executive_summary';
+                setReportType(exportType);
+                switchPage('reports');
+                await generateReportForInterval('24h');
+                return;
+            }
+        }
+
+        function closeOverviewMitigationPrompt() {
+            const modal = document.getElementById('overviewMitigationPromptModal');
+            if (modal) modal.remove();
+        }
+
+        async function submitOverviewDefenseAction(mode, action) {
+            const normalizedMode = String(mode || '').toLowerCase();
+            const normalizedAction = String(action || '').toUpperCase();
+
+            if (normalizedAction === 'IGNORE') {
+                showToast(`${normalizedMode.toUpperCase()} mitigation ignored for now`, 'info');
+                addNotification(
+                    'Mitigation deferred',
+                    `${normalizedMode.toUpperCase()} overview response set to IGNORE`,
+                    'info',
+                    `overview_mitigate_ignore:${normalizedMode}`,
+                    10000
+                );
+                await handleOverviewAction(normalizedMode);
+                return;
+            }
+
+            if (normalizedAction === 'BLOCK') {
+                try {
+                    await apiRequest(API_ENDPOINTS.dashboardDefenseResponse, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            action: 'BLOCK',
+                            client_id: null,
+                            attack_id: null,
+                            event_id: null,
+                            target: 'SYSTEM_ALL',
+                            target_type: 'system',
+                            reason: `${normalizedMode.toUpperCase()} mitigation triggered from overview card`,
+                            metadata: {
+                                source: 'overview_metric_card',
+                                severity: normalizedMode,
+                            },
+                        }),
+                    });
+                    showToast(`Block action submitted for ${normalizedMode.toUpperCase()} incidents`, 'warning');
+                    addNotification(
+                        'Block action submitted',
+                        `${normalizedMode.toUpperCase()} overview mitigation sent as BLOCK`,
+                        'warning',
+                        `overview_mitigate_block:${normalizedMode}`,
+                        12000
+                    );
+                    await Promise.allSettled([fetchThreats(), fetchDashboardStats(), fetchLogs(), fetchSecurityPosture()]);
+                    await handleOverviewAction(normalizedMode);
+                } catch (error) {
+                    showToast(`Block action failed: ${error.message || error}`, 'error');
+                    addNotification(
+                        'Block action failed',
+                        String(error?.message || error || 'Unknown error'),
+                        'error',
+                        `overview_mitigate_block_failed:${normalizedMode}`,
+                        12000
+                    );
+                }
+                return;
+            }
+
+            if (normalizedAction === 'QUARANTINE') {
+                await triggerSystemWideQuarantine(
+                    `${normalizedMode.toUpperCase()} risk response confirmed from overview card`,
+                    null,
+                    `overview_${normalizedMode}_mitigate_confirmed`,
+                    { confirmed: true, source: 'overview_mitigation_prompt' }
+                );
+            }
+        }
+
+        function openOverviewMitigationPrompt(mode) {
+            const normalizedMode = String(mode || '').toLowerCase();
+            if (!['critical', 'high'].includes(normalizedMode)) return;
+
+            closeOverviewMitigationPrompt();
+
+            const severityTone = normalizedMode === 'critical' ? 'var(--destructive)' : 'var(--warning)';
+            const modal = document.createElement('div');
+            modal.id = 'overviewMitigationPromptModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.72);backdrop-filter:blur(6px);z-index:1650;display:flex;align-items:center;justify-content:center;padding:1.5rem;';
+            modal.onclick = (e) => {
+                if (e.target === modal) closeOverviewMitigationPrompt();
+            };
+
+            modal.innerHTML = `
+                <div style="width:min(520px,100%);background:var(--card);border:1px solid ${severityTone};border-radius:16px;box-shadow:0 28px 80px rgba(0,0,0,0.45);overflow:hidden;">
+                    <div style="padding:1rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                        <div>
+                            <div style="font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase;color:${severityTone};font-family:'JetBrains Mono', monospace;">Overview Mitigation Prompt</div>
+                            <div style="font-size:1.05rem;font-weight:700;margin-top:0.2rem;">${normalizedMode.toUpperCase()} Threat Response</div>
+                        </div>
+                        <button class="icon-btn" style="border:1px solid var(--border);" onclick="closeOverviewMitigationPrompt()">✖️</button>
+                    </div>
+                    <div style="padding:1.15rem;display:grid;gap:0.9rem;">
+                        <div style="padding:0.9rem;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,0.02);line-height:1.55;">
+                            You selected <strong>${normalizedMode.toUpperCase()} Mitigate</strong>. Choose the response action to apply.
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0.7rem;">
+                            <button class="btn btn-outline" onclick="closeOverviewMitigationPrompt()">Cancel</button>
+                            <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="(async()=>{ closeOverviewMitigationPrompt(); await submitOverviewDefenseAction('${normalizedMode}','IGNORE'); })()">Ignore</button>
+                            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="(async()=>{ closeOverviewMitigationPrompt(); await submitOverviewDefenseAction('${normalizedMode}','BLOCK'); })()">Block</button>
+                            <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="(async()=>{ closeOverviewMitigationPrompt(); await submitOverviewDefenseAction('${normalizedMode}','QUARANTINE'); })()">Quarantine</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+        }
+
+        function collectDashboardSearchMatches(query) {
+            const q = String(query || '').trim().toLowerCase();
+            if (!q) return { reports: [], threats: [], scans: [] };
+
+            const reports = (Array.isArray(allReports) ? allReports : [])
+                .filter(report => {
+                    const haystack = [report?.title, report?.target, report?.type, report?.report_id, report?.created]
+                        .map(v => String(v || '').toLowerCase())
+                        .join(' ');
+                    return haystack.includes(q);
+                })
+                .slice(0, 8);
+
+            const threatMatches = (Array.isArray(threats) ? threats : [])
+                .filter(threat => {
+                    const haystack = [
+                        threat?.id,
+                        threat?.type,
+                        threat?.severity,
+                        threat?.target_display,
+                        threat?.target,
+                        threat?.short_description,
+                        threat?.description,
+                    ].map(v => String(v || '').toLowerCase()).join(' ');
+                    return haystack.includes(q);
+                })
+                .slice(0, 8);
+
+            const scans = (Array.isArray(latestScanHistory) ? latestScanHistory : [])
+                .filter(scan => {
+                    const haystack = [scan?.scan_id, scan?.target, scan?.type, scan?.status, scan?.threat_level, scan?.verdict]
+                        .map(v => String(v || '').toLowerCase())
+                        .join(' ');
+                    return haystack.includes(q);
+                })
+                .slice(0, 8);
+
+            return { reports, threats: threatMatches, scans };
+        }
+
+        function closeSearchNavigator() {
+            const modal = document.getElementById('searchNavigatorModal');
+            if (modal) modal.remove();
+        }
+
+        function openSearchNavigator(query) {
+            const q = String(query || '').trim();
+            if (!q) return;
+
+            const matches = collectDashboardSearchMatches(q);
+            const total = matches.reports.length + matches.threats.length + matches.scans.length;
+            if (total === 0) {
+                showToast(`No direct match found for "${q}"`, 'warning');
+                return;
+            }
+
+            closeSearchNavigator();
+            const modal = document.createElement('div');
+            modal.id = 'searchNavigatorModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.76);z-index:1600;display:flex;align-items:center;justify-content:center;padding:1rem;';
+            modal.onclick = (e) => {
+                if (e.target === modal) closeSearchNavigator();
+            };
+
+            const reportRows = matches.reports.map(report => `
+                <div style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;padding:0.55rem;border:1px solid var(--border);border-radius:10px;">
+                    <div style="min-width:0;">
+                        <div style="font-weight:600;">${escHtml(report.title || 'Report')}</div>
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);word-break:break-word;">${escHtml(report.target || 'all_targets')} · ${escHtml(report.created ? new Date(report.created).toLocaleString() : 'unknown time')}</div>
+                    </div>
+                    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:flex-end;">
+                        <button class="btn btn-outline btn-sm" onclick="switchPage('reports'); renderAllReportsPage(); closeSearchNavigator();">Open</button>
+                        ${report.report_id ? `<button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}'); closeSearchNavigator();">Download</button>` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            const threatRows = matches.threats.map(threat => `
+                <div style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;padding:0.55rem;border:1px solid var(--border);border-radius:10px;">
+                    <div style="min-width:0;">
+                        <div style="font-weight:600;">${escHtml(formatThreatTypeLabel(threat.type || 'Threat'))}</div>
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);word-break:break-word;">${escHtml(threat.target_display || threat.target || 'unknown target')} · ${escHtml(threat.severity || 'unknown')}</div>
+                    </div>
+                    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:flex-end;">
+                        <button class="btn btn-outline btn-sm" onclick="switchPage('threats'); viewThreatDetail('${String(threat.id || threat.threat_id || threat.scan_id)}'); closeSearchNavigator();">Open</button>
+                    </div>
+                </div>
+            `).join('');
+
+            const scanRows = matches.scans.map(scan => `
+                <div style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;padding:0.55rem;border:1px solid var(--border);border-radius:10px;">
+                    <div style="min-width:0;">
+                        <div style="font-weight:600;">${escHtml(scan.scan_id || 'Scan')}</div>
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);word-break:break-word;">${escHtml(scan.target || 'unknown target')} · ${escHtml(scan.type || 'unknown')}</div>
+                    </div>
+                    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:flex-end;">
+                        <button class="btn btn-outline btn-sm" onclick="switchPage('scans'); viewScanDetail('${String(scan.scan_id || '')}'); closeSearchNavigator();">Open</button>
+                    </div>
+                </div>
+            `).join('');
+
+            modal.innerHTML = `
+                <div style="width:min(840px,98vw);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 28px 90px rgba(0,0,0,0.5);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.8rem;padding:1rem 1.2rem;border-bottom:1px solid var(--border);">
+                        <div>
+                            <div style="font-size:1.02rem;font-weight:700;">Search Results</div>
+                            <div style="font-size:0.82rem;color:var(--muted-foreground);">${total} match(es) for "${escHtml(q)}"</div>
+                        </div>
+                        <button class="icon-btn" onclick="closeSearchNavigator()">✖️</button>
+                    </div>
+                    <div style="padding:1rem 1.2rem;display:grid;gap:1rem;">
+                        ${matches.reports.length ? `<div><div style="font-size:0.78rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.45rem;">Reports</div><div style="display:grid;gap:0.5rem;">${reportRows}</div></div>` : ''}
+                        ${matches.threats.length ? `<div><div style="font-size:0.78rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.45rem;">Threats</div><div style="display:grid;gap:0.5rem;">${threatRows}</div></div>` : ''}
+                        ${matches.scans.length ? `<div><div style="font-size:0.78rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.45rem;">Scans</div><div style="display:grid;gap:0.5rem;">${scanRows}</div></div>` : ''}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
         }
 
         function loadSettings() {
@@ -5322,6 +6046,126 @@
 
         function persistSettings() {
             localStorage.setItem(DASHBOARD_SETTINGS_KEY, JSON.stringify(dashboardSettings));
+        }
+
+        function applyLayoutMode(mode = 'expanded') {
+            const normalized = String(mode || 'expanded').toLowerCase() === 'compact' ? 'compact' : 'expanded';
+            dashboardSettings.layoutMode = normalized;
+            document.body.classList.toggle('compact-layout', normalized === 'compact');
+        }
+
+        async function maybeRunWeeklyThresholdTuning(force = false) {
+            try {
+                const now = Date.now();
+                const lastRun = Number(localStorage.getItem(DASHBOARD_WEEKLY_TUNING_KEY) || 0);
+                const weeklyWindowMs = 7 * 24 * 60 * 60 * 1000;
+                if (!force && lastRun > 0 && (now - lastRun) < weeklyWindowMs) {
+                    return;
+                }
+
+                const data = await apiRequest(API_ENDPOINTS.dashboardWeeklyThresholdTuning, { method: 'POST', timeoutMs: 25000 });
+                localStorage.setItem(DASHBOARD_WEEKLY_TUNING_KEY, String(now));
+                const updated = Number(data?.updated_detector_count || 0);
+                if (updated > 0) {
+                    addNotification('Adaptive Tuning Applied', `Updated ${updated} detector profile(s) from analyst feedback.`, 'info', 'weekly_tuning_applied', 60000);
+                }
+            } catch (_error) {
+                // Keep this silent to avoid noisy UX when backend is unavailable.
+            }
+        }
+
+        async function fetchAccuracyMetrics() {
+            try {
+                const payload = await apiRequest(API_ENDPOINTS.dashboardAccuracyMetrics, { timeoutMs: 15000 });
+                latestAccuracyMetrics = payload;
+                return payload;
+            } catch (_error) {
+                return null;
+            }
+        }
+
+        function toUnitConfidence(value) {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) return 0;
+            if (parsed > 1) return Math.max(0, Math.min(1, parsed / 100));
+            return Math.max(0, Math.min(1, parsed));
+        }
+
+        function buildCorrelationEvidenceGraph(payload = {}) {
+            const sourceCount = Math.max(0, Number(payload.sourceCount || 0));
+            const ruleCount = Math.max(0, Number(payload.ruleCount || 0));
+            const confidence = toUnitConfidence(payload.confidence);
+            const thresholdMet = !!payload.thresholdMet;
+            const sourceScore = Math.max(0, Math.min(1, sourceCount / 4));
+            const ruleScore = Math.max(0, Math.min(1, ruleCount / 6));
+            const thresholdScore = thresholdMet ? 1 : 0.35;
+
+            const rows = [
+                { label: 'Source Corroboration', value: sourceScore },
+                { label: 'Matched Rules', value: ruleScore },
+                { label: 'Confidence Path', value: confidence },
+                { label: 'Threshold Gate', value: thresholdScore },
+            ];
+
+            const rowsHtml = rows.map((row) => {
+                const pct = Math.round(row.value * 100);
+                return `
+                    <div class="evidence-graph-row">
+                        <div style="color: var(--muted-foreground);">${row.label}</div>
+                        <div class="evidence-graph-track"><div class="evidence-graph-fill" style="width:${pct}%;"></div></div>
+                        <div style="text-align:right; font-family: 'JetBrains Mono', monospace;">${pct}%</div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px; border-left: 3px solid var(--primary);">
+                    <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--primary);">Correlation Evidence Graph</div>
+                    <div style="font-size: 0.76rem; color: var(--muted-foreground); margin-bottom: 0.55rem;">Escalation evidence and confidence path for this threat.</div>
+                    <div class="evidence-graph">${rowsHtml}</div>
+                </div>
+            `;
+        }
+
+        function detectFeedbackInputType(context = {}) {
+            const value = String(context.input_type || context.type || '').toLowerCase();
+            if (value.includes('ip') || value.includes('network')) return 'ip';
+            if (value.includes('url') || value.includes('domain') || value.includes('browser')) return 'url';
+            if (value.includes('hash') || value.includes('file')) return 'file_hash';
+            if (value.includes('ids') || value.includes('attack')) return 'ids';
+            return 'url';
+        }
+
+        let activeDetailContext = null;
+
+        async function submitAnalystFeedback(label) {
+            if (!activeDetailContext || !activeDetailContext.target) {
+                showToast('Feedback target unavailable', 'warning');
+                return;
+            }
+            const analystLabel = String(label || '').trim().toLowerCase();
+            try {
+                await apiRequest(API_ENDPOINTS.scanFeedback, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        target: String(activeDetailContext.target),
+                        input_type: detectFeedbackInputType(activeDetailContext),
+                        analyst_label: analystLabel,
+                        verdict: String(activeDetailContext.verdict || activeDetailContext.severity || 'unknown').toLowerCase(),
+                        weight: 1.0,
+                    }),
+                });
+                const actionLabel = analystLabel === 'true_positive'
+                    ? 'Correct Threat'
+                    : analystLabel === 'false_positive'
+                        ? 'False Positive'
+                        : 'Uncertain';
+                showToast(`Feedback recorded: ${actionLabel}`, 'success');
+                addNotification('Analyst Feedback Saved', `${actionLabel} submitted for ${activeDetailContext.target}.`, 'info', `feedback_${activeDetailContext.target}_${analystLabel}`, 30000);
+                fetchAccuracyMetrics();
+            } catch (error) {
+                showToast(`Failed to record feedback: ${error.message}`, 'error');
+            }
         }
 
         function isLowSignalThreatNotification(item) {
@@ -5401,9 +6245,11 @@
             const threatsCard = document.getElementById('recentThreatsCard');
             const logsCard = document.getElementById('recentLogsCard');
             const quarantineCard = document.getElementById('quarantineCard');
+            const auditTrailCard = document.getElementById('auditTrailCard');
             const threatsBtn = document.getElementById('toggleRecentThreatsBtn');
             const logsBtn = document.getElementById('toggleRecentLogsBtn');
             const quarantineBtn = document.getElementById('toggleQuarantineBtn');
+            const auditTrailBtn = document.getElementById('toggleAuditTrailBtn');
 
             if (threatsCard && threatsBtn) {
                 threatsCard.style.display = panelState.recentThreatsCollapsed ? 'none' : 'block';
@@ -5419,10 +6265,21 @@
                 quarantineCard.style.display = panelState.quarantineCollapsed ? 'none' : 'block';
                 quarantineBtn.textContent = panelState.quarantineCollapsed ? '+ Maximize' : '− Minimize';
             }
+
+            if (auditTrailCard && auditTrailBtn) {
+                auditTrailCard.style.display = panelState.auditTrailCollapsed ? 'none' : 'block';
+                auditTrailBtn.textContent = panelState.auditTrailCollapsed ? '+ Maximize' : '− Minimize';
+            }
         }
 
         function toggleRecentThreatsPanel() {
             panelState.recentThreatsCollapsed = !panelState.recentThreatsCollapsed;
+            persistPanelState();
+            applyPanelState();
+        }
+
+        function toggleAuditTrailPanel() {
+            panelState.auditTrailCollapsed = !panelState.auditTrailCollapsed;
             persistPanelState();
             applyPanelState();
         }
@@ -5539,6 +6396,7 @@
                     fetchActiveClients();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
+                    fetchAuditTelemetry();
                     refreshLiveActivity();
                 }, interval);
             }
@@ -5557,6 +6415,7 @@
             document.getElementById('settingsRefreshInterval').value = String(dashboardSettings.refreshIntervalMs);
             document.getElementById('settingsDesktopNotifications').checked = !!dashboardSettings.desktopNotifications;
             document.getElementById('settingsThreatOnly').checked = !!dashboardSettings.threatOnlyNotifications;
+            document.getElementById('settingsCompactLayout').checked = String(dashboardSettings.layoutMode || 'expanded') === 'compact';
             document.getElementById('settingsMaxNotifications').value = String(dashboardSettings.maxNotifications);
             dropdown.style.display = 'flex';
         }
@@ -5571,10 +6430,12 @@
             dashboardSettings.refreshIntervalMs = Number(document.getElementById('settingsRefreshInterval').value || 30000);
             dashboardSettings.desktopNotifications = document.getElementById('settingsDesktopNotifications').checked;
             dashboardSettings.threatOnlyNotifications = document.getElementById('settingsThreatOnly').checked;
+            dashboardSettings.layoutMode = document.getElementById('settingsCompactLayout').checked ? 'compact' : 'expanded';
             dashboardSettings.maxNotifications = Number(document.getElementById('settingsMaxNotifications').value || 50);
 
             API_BASE_URL = dashboardSettings.apiBaseUrl;
             persistSettings();
+            applyLayoutMode(dashboardSettings.layoutMode);
             setupRefreshScheduler();
 
             if (dashboardSettings.desktopNotifications && 'Notification' in window && Notification.permission === 'default') {
@@ -5590,6 +6451,7 @@
             dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
             API_BASE_URL = dashboardSettings.apiBaseUrl;
             persistSettings();
+            applyLayoutMode(dashboardSettings.layoutMode);
             setupRefreshScheduler();
             closeSettings();
             showToast('Settings reset to defaults', 'info');
@@ -5762,10 +6624,83 @@
             }
         }
 
-        async function triggerSystemWideQuarantine(reason, prompt = null, trigger = 'manual_escalation') {
+        function closeEscalationPrompt() {
+            const modal = document.getElementById('escalationPromptModal');
+            if (modal) modal.remove();
+            activeEscalationPrompt = null;
+        }
+
+        function openEscalationPrompt(reason, prompt = null, trigger = 'threshold_escalation') {
             const now = Date.now();
+            if ((now - Number(securityEscalationState.lastEscalationAt || 0)) < 10000) return;
+
+            securityEscalationState.lastEscalationAt = now;
+            closeEscalationPrompt();
+            activeEscalationPrompt = { reason, prompt, trigger };
+
+            const modal = document.createElement('div');
+            modal.id = 'escalationPromptModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.74);backdrop-filter:blur(6px);z-index:1700;display:flex;align-items:center;justify-content:center;padding:1.5rem;';
+            modal.onclick = (e) => {
+                if (e.target === modal) closeEscalationPrompt();
+            };
+
+            const severityLabel = String(prompt?.severity || 'high').toUpperCase();
+            modal.innerHTML = `
+                <div style="width:min(560px,100%);background:var(--card);border:1px solid var(--destructive);border-radius:18px;box-shadow:0 28px 80px rgba(0,0,0,0.45);overflow:hidden;">
+                    <div style="padding:1rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                        <div>
+                            <div style="font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--destructive);font-family:'JetBrains Mono', monospace;">Quarantine Escalation Review</div>
+                            <div style="font-size:1.08rem;font-weight:700;margin-top:0.2rem;">Manual Confirmation Required</div>
+                        </div>
+                        <button class="icon-btn" style="border:1px solid var(--border);" onclick="closeEscalationPrompt()">✖️</button>
+                    </div>
+                    <div style="padding:1.15rem;display:grid;gap:0.85rem;">
+                        <div style="padding:0.95rem;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,0.02);line-height:1.55;">
+                            ${escHtml(reason)}
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;">
+                            <div style="padding:0.8rem;border:1px solid var(--border);border-radius:10px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Prompt Threshold</div>
+                                <div style="margin-top:0.35rem;font-weight:700;">5 reached</div>
+                            </div>
+                            <div style="padding:0.8rem;border:1px solid var(--border);border-radius:10px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Threat Severity</div>
+                                <div style="margin-top:0.35rem;font-weight:700;color:var(--warning);">${escHtml(severityLabel)}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:0.84rem;color:var(--muted-foreground);">No automatic quarantine is executed. Choose explicitly:</div>
+                        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0.7rem;">
+                            <button class="btn btn-outline" onclick="closeEscalationPrompt()">Later</button>
+                            <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); if(ctx?.prompt){ try { await submitDefenseAction(ctx.prompt, 'IGNORE'); closeSecurityPrompt(); } catch(err){ showToast('Failed to apply IGNORE: ' + (err?.message || err), 'error'); } } else { showToast('Escalation ignored for now', 'info'); } })()">Ignore</button>
+                            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); if(ctx?.prompt){ try { await submitDefenseAction(ctx.prompt, 'BLOCK'); closeSecurityPrompt(); } catch(err){ showToast('Failed to apply BLOCK: ' + (err?.message || err), 'error'); } } else { showToast('Apply BLOCK from active prompt when available', 'info'); } })()">Block</button>
+                            <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); await triggerSystemWideQuarantine(ctx?.reason || 'Manual escalation confirmed', ctx?.prompt || null, ctx?.trigger || 'manual_escalation', { confirmed: true, source: 'escalation_prompt' }); })()">Quarantine Now</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            addNotification(
+                'Quarantine review required',
+                `${reason} — choose Ignore, Block, or Quarantine manually.`,
+                'warning',
+                `quarantine_review_required:${trigger}:${now}`,
+                25000
+            );
+            showToast('Threshold reached: manual quarantine confirmation required', 'warning');
+        }
+
+        async function triggerSystemWideQuarantine(reason, prompt = null, trigger = 'manual_escalation', options = {}) {
+            const now = Date.now();
+            const userConfirmed = Boolean(options && options.confirmed === true);
             if (globalQuarantineInProgress) return;
             if ((now - Number(securityEscalationState.lastEscalationAt || 0)) < 10000) return;
+            if (!userConfirmed) {
+                openEscalationPrompt(reason, prompt, trigger);
+                return;
+            }
 
             globalQuarantineInProgress = true;
             promptSuppressedByQuarantine = true;
@@ -5791,7 +6726,9 @@
                     reason,
                     metadata: {
                         ...(prompt?.metadata || {}),
-                        auto_global_quarantine: true,
+                        auto_global_quarantine: false,
+                        user_confirmed_quarantine: true,
+                        confirmation_source: options?.source || 'manual_prompt',
                         escalation_trigger: trigger,
                         escalation_state: {
                             consecutive_blocks: securityEscalationState.consecutiveBlocks,
@@ -5902,11 +6839,11 @@
 
             securityEscalationState.unansweredPromptSignals += 1;
             if (securityEscalationState.unansweredPromptSignals >= PROMPT_ESCALATION_UNANSWERED_THRESHOLD) {
-                triggerSystemWideQuarantine(
+                openEscalationPrompt(
                     `No response after ${securityEscalationState.unansweredPromptSignals} attack prompts`,
                     prompt,
                     'no_response_threshold'
-                ).catch(() => {});
+                );
                 return;
             }
 
@@ -5967,7 +6904,7 @@
             showToast(`${action} request saved for ${prompt.title}`, action === 'IGNORE' ? 'info' : 'success');
 
             if (normalizedAction === 'BLOCK' && securityEscalationState.consecutiveBlocks >= PROMPT_ESCALATION_BLOCK_THRESHOLD) {
-                await triggerSystemWideQuarantine(
+                openEscalationPrompt(
                     `Detected ${securityEscalationState.consecutiveBlocks} consecutive BLOCK responses`,
                     prompt,
                     'block_streak_threshold'
@@ -6055,6 +6992,88 @@
             document.getElementById('notificationDropdown').style.display = 'none';
         }
 
+        function closeNotificationDetail() {
+            const modal = document.getElementById('notificationDetailModal');
+            if (modal) modal.remove();
+        }
+
+        function inferNotificationActions(notif) {
+            const title = String(notif?.title || '').toLowerCase();
+            const message = String(notif?.message || '').toLowerCase();
+            const blob = `${title} ${message}`;
+            const actions = [];
+
+            if (/report|pdf|analysis/.test(blob)) actions.push({ key: 'reports', label: 'Open Reports' });
+            if (/threat|attack|intrusion|quarantine|security event|malicious/.test(blob)) actions.push({ key: 'threats', label: 'Open Threat Center' });
+            if (/scan|scan id|scanning/.test(blob)) actions.push({ key: 'scans', label: 'Open Scans' });
+
+            return actions.slice(0, 3);
+        }
+
+        function handleNotificationAction(notifId, actionKey, closeDetail = true) {
+            const notif = notifications.find(n => n.id === notifId);
+            if (notif) {
+                notif.read = true;
+                persistNotifications();
+            }
+
+            if (actionKey === 'reports') {
+                switchPage('reports');
+                renderAllReportsPage();
+                showToast('Opened reports', 'info');
+            } else if (actionKey === 'threats') {
+                switchPage('threats');
+                viewAllThreats();
+                showToast('Opened threat center', 'warning');
+            } else if (actionKey === 'scans') {
+                switchPage('scans');
+                fetchScanHistory();
+                showToast('Opened scans', 'info');
+            }
+
+            renderNotifications();
+            if (closeDetail) closeNotificationDetail();
+        }
+
+        function openNotification(notifId) {
+            const notif = notifications.find(n => n.id === notifId);
+            if (!notif) return;
+
+            notif.read = true;
+            persistNotifications();
+            renderNotifications();
+
+            closeNotificationDetail();
+            const actions = inferNotificationActions(notif);
+            const modal = document.createElement('div');
+            modal.id = 'notificationDetailModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.76);z-index:1500;display:flex;align-items:center;justify-content:center;padding:1rem;';
+            modal.onclick = (e) => {
+                if (e.target === modal) closeNotificationDetail();
+            };
+
+            modal.innerHTML = `
+                <div style="width:min(640px,96vw);max-height:88vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.48);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:1rem 1.2rem;border-bottom:1px solid var(--border);">
+                        <div style="font-size:1.02rem;font-weight:700;">${escHtml(notif.title || 'Notification')}</div>
+                        <button class="icon-btn" onclick="closeNotificationDetail()">✖️</button>
+                    </div>
+                    <div style="padding:1rem 1.2rem;display:grid;gap:0.9rem;">
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            <span class="badge ${notif.level === 'error' ? 'badge-threat' : notif.level === 'warning' ? 'badge-warning' : 'badge-safe'}">${String(notif.level || 'info').toUpperCase()}</span>
+                            <span style="font-size:0.82rem;color:var(--muted-foreground);">${escHtml(notif.time || '')}</span>
+                        </div>
+                        <div style="line-height:1.6;font-size:0.92rem;white-space:pre-wrap;word-break:break-word;">${escHtml(notif.message || '')}</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:0.55rem;justify-content:flex-end;">
+                            ${actions.map(a => `<button class="btn btn-outline btn-sm" onclick="handleNotificationAction(${notif.id}, '${a.key}')">${a.label}</button>`).join('')}
+                            <button class="btn btn-cyber btn-sm" onclick="closeNotificationDetail()">Close</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
         function renderNotifications() {
             const list = document.getElementById('notificationList');
             updateNotificationBadge();
@@ -6071,16 +7090,24 @@
                 }
             });
             
-            list.innerHTML = notifications.map(notif => `
-                <div class="notification-item ${notif.read ? '' : 'notification-unread'}" onclick="markNotificationRead(${notif.id})">
+            list.innerHTML = notifications.map(notif => {
+                const actions = inferNotificationActions(notif);
+                return `
+                <div class="notification-item ${notif.read ? '' : 'notification-unread'}" onclick="openNotification(${notif.id})">
                     <div style="display:flex; justify-content:space-between; gap:0.5rem; align-items:center; margin-bottom:0.25rem;">
                         <div style="font-weight: 500;">${notif.title}</div>
                         <span class="badge ${notif.level === 'error' ? 'badge-threat' : notif.level === 'warning' ? 'badge-warning' : 'badge-safe'}" style="font-size:10px;">${(notif.level || 'info').toUpperCase()}</span>
                     </div>
                     <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">${notif.message}</div>
+                    ${actions.length ? `
+                        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.3rem;" onclick="event.stopPropagation();">
+                            ${actions.map(a => `<button class="btn btn-outline btn-sm" style="padding:0.18rem 0.45rem;font-size:0.72rem;" onclick="handleNotificationAction(${notif.id}, '${a.key}', false)">${a.label}</button>`).join('')}
+                        </div>
+                    ` : ''}
                     <div style="font-size: 0.75rem; color: var(--muted-foreground);">${notif.time}</div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
             
             updateNotificationBadge();
             updateSystemStatusPanel();
@@ -6897,7 +7924,7 @@
                 } catch (error) {
                     latestSecurityPosture = null;
                     updateSourceSignal('posture', { ok: false, error: error?.message || 'posture_failed' });
-                    card.innerHTML = `<div style="padding:1rem; color:var(--muted-foreground);">Security posture data unavailable — run the protection client to generate a startup report.</div>`;
+                    card.innerHTML = `<div class="posture-empty">Security posture data unavailable — run the protection client to generate a startup report.</div>`;
                     updateSystemStatusPanel();
                 }
             });
@@ -6924,37 +7951,39 @@
             const catEntries = Object.entries(categories).filter(([, count]) => count > 0);
 
             card.innerHTML = `
-                <div style="display:flex; flex-wrap:wrap; gap:2rem; align-items:flex-start;">
-                    <div style="flex:1; min-width:160px;">
-                        <div style="font-size:0.75rem; color:var(--muted-foreground); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">System Status</div>
-                        <div style="display:flex; align-items:center; gap:0.75rem;">
+                <div class="posture-layout">
+                    <div class="posture-status-panel">
+                        <div class="posture-status-title">System Status</div>
+                        <div class="posture-status-row">
                             <span style="font-size:2rem;">🛡️</span>
-                            <span class="badge ${statusBadgeClass}" style="font-size:0.9rem; padding:0.3rem 0.9rem; text-transform:uppercase;">${statusText}</span>
+                            <span class="badge ${statusBadgeClass}" style="font-size:0.86rem; padding:0.3rem 0.78rem; text-transform:uppercase;">${statusText}</span>
                         </div>
-                        <div style="font-size:0.75rem; color:var(--muted-foreground); margin-top:0.5rem;">Last scan: ${lastRun}</div>
+                        <div class="posture-meta">Last scan: ${lastRun}</div>
                     </div>
-                    <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
-                        <div style="text-align:center; min-width:70px;">
-                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--destructive);">${criticalCount}</div>
-                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Critical</div>
+                    <div class="posture-details">
+                        <div class="posture-metrics-grid">
+                            <div class="posture-metric">
+                                <div class="posture-metric-value" style="color:var(--destructive);">${criticalCount}</div>
+                                <div class="posture-metric-label">Critical</div>
+                            </div>
+                            <div class="posture-metric">
+                                <div class="posture-metric-value" style="color:var(--warning);">${highCount}</div>
+                                <div class="posture-metric-label">High</div>
+                            </div>
+                            <div class="posture-metric">
+                                <div class="posture-metric-value" style="color:var(--primary);">${totalCount}</div>
+                                <div class="posture-metric-label">Total</div>
+                            </div>
+                            <div class="posture-metric">
+                                <div class="posture-metric-value" style="color:var(--success);">${actionsCount}</div>
+                                <div class="posture-metric-label">Actions</div>
+                            </div>
                         </div>
-                        <div style="text-align:center; min-width:70px;">
-                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--warning);">${highCount}</div>
-                            <div style="font-size:0.75rem; color:var(--muted-foreground);">High</div>
-                        </div>
-                        <div style="text-align:center; min-width:70px;">
-                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--primary);">${totalCount}</div>
-                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Total</div>
-                        </div>
-                        <div style="text-align:center; min-width:70px;">
-                            <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--success);">${actionsCount}</div>
-                            <div style="font-size:0.75rem; color:var(--muted-foreground);">Actions</div>
-                        </div>
+                        ${catEntries.length ? `
+                        <div class="posture-category-row">
+                            ${catEntries.map(([cat, count]) => `<span class="badge badge-threat" style="font-size:0.72rem;">${cat}: ${count}</span>`).join('')}
+                        </div>` : ''}
                     </div>
-                    ${catEntries.length ? `
-                    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-left:auto;">
-                        ${catEntries.map(([cat, count]) => `<span class="badge badge-threat" style="font-size:0.75rem;">${cat}: ${count}</span>`).join('')}
-                    </div>` : ''}
                 </div>
             `;
             if (criticalCount > 0 && shouldNotify('posture_critical', 120000)) {
@@ -7018,6 +8047,69 @@
                 statsDiv.innerHTML = `<span>📦 <strong>${data.total || 0}</strong> quarantined file(s)</span>`;
             }
             updateSystemStatusPanel();
+        }
+
+        async function fetchAuditTelemetry() {
+            const tbody = document.getElementById('auditTrailBody');
+            if (!tbody) return;
+            await runWithRefreshIndicator('refreshAuditTrailBtn', async () => {
+                try {
+                    const payload = await apiRequest(`${API_ENDPOINTS.dashboardAuditTelemetry}?limit=100`, { timeoutMs: 15000 });
+                    const data = asObject(payload) || {};
+                    const items = Array.isArray(data.items) ? data.items : [];
+                    latestAuditEntries = items;
+                    const newestTs = items
+                        .map(item => toEpochMs(item?.created_at))
+                        .filter(ms => ms !== null)
+                        .sort((a, b) => b - a)[0] || Date.now();
+                    updateSourceSignal('logs', { ok: true, dataTimestamp: newestTs });
+                    renderAuditTelemetry(items);
+                } catch (error) {
+                    latestAuditEntries = [];
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.4rem;color:var(--muted-foreground);">Audit trail unavailable.</td></tr>';
+                }
+            });
+        }
+
+        function renderAuditTelemetry(items) {
+            const tbody = document.getElementById('auditTrailBody');
+            if (!tbody) return;
+
+            if (!Array.isArray(items) || items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:1.4rem;color:var(--muted-foreground);">No analyst decision records yet.</td></tr>';
+                return;
+            }
+
+            const summarizeDetails = (details) => {
+                if (!details || typeof details !== 'object') return 'No details';
+                const action = details.action || details.requested_action;
+                const scope = details.scope;
+                const successful = details.successful;
+                const reason = details.reason || details.note;
+                const parts = [];
+                if (action) parts.push(String(action).toUpperCase());
+                if (scope) parts.push(`scope=${scope}`);
+                if (typeof successful === 'boolean') parts.push(successful ? 'ok' : 'failed');
+                if (reason) parts.push(String(reason).slice(0, 80));
+                return parts.length ? parts.join(' · ') : 'Recorded';
+            };
+
+            tbody.innerHTML = items.slice(0, 100).map((item) => {
+                const ts = item?.created_at ? new Date(item.created_at).toLocaleString() : 'Unknown';
+                const eventType = String(item?.event_type || 'event').replace(/_/g, ' ');
+                const actor = item?.actor || 'system';
+                const target = item?.target || 'n/a';
+                const summary = summarizeDetails(item?.details);
+                return `
+                    <tr>
+                        <td><div class="threat-time">🕐 ${ts}</div></td>
+                        <td><span class="badge">${escHtml(eventType)}</span></td>
+                        <td>${escHtml(String(actor))}</td>
+                        <td style="font-family:'JetBrains Mono',monospace;word-break:break-word;">${escHtml(String(target))}</td>
+                        <td style="font-size:0.82rem;color:var(--muted-foreground);">${escHtml(summary)}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         async function fetchMonitoringStats() {
@@ -7853,7 +8945,27 @@
 
         async function fetchScanHistory() {
             try {
-                const scans = await apiRequest(`${API_ENDPOINTS.scans}?source=manual`);
+                const payload = await apiRequest(`${API_ENDPOINTS.scans}?source=manual`);
+                let scans = Array.isArray(payload)
+                    ? payload
+                    : Array.isArray(payload?.scans)
+                        ? payload.scans
+                        : Array.isArray(payload?.items)
+                            ? payload.items
+                            : [];
+
+                // Fallback: if manual filter returns nothing, fetch all recent scans.
+                if (!scans.length) {
+                    const fallbackPayload = await apiRequest(`${API_ENDPOINTS.scans}?source=all`);
+                    scans = Array.isArray(fallbackPayload)
+                        ? fallbackPayload
+                        : Array.isArray(fallbackPayload?.scans)
+                            ? fallbackPayload.scans
+                            : Array.isArray(fallbackPayload?.items)
+                                ? fallbackPayload.items
+                                : [];
+                }
+
                 renderScanHistory(scans);
             } catch (error) {
                 showToast('Could not load scan history: ' + error.message, 'error');
@@ -7863,15 +8975,27 @@
 
         function renderScanHistory(scans) {
             const tbody = document.getElementById('scanHistoryBody');
+            latestScanHistory = Array.isArray(scans) ? [...scans] : [];
             
             if (!scans || scans.length === 0) {
+                        : Array.isArray(payload?.items)
+                            ? payload.items
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No scans yet. Start a new scan to see results here.</td></tr>';
+
+                const normalizeReport = (report) => {
+                    const created = report?.created || report?.created_at || report?.timestamp || report?.generated_at || null;
+                    return {
+                        ...report,
+                        created,
+                    };
+                };
                 updateSystemStatusPanel();
                 return;
-            }
+                    .map(normalizeReport)
+                    .filter(report => report && (report.report_id || report.title || report.created))
 
             const mostRecent = scans[0];
-            if (mostRecent) {
+                const localReports = loadLocalReportsCache().map(normalizeReport);
                 const target = mostRecent.target || mostRecent.target_name || mostRecent.url || mostRecent.ip || mostRecent.hash || 'N/A';
                 lastScanMeta = { target, time: mostRecent.timestamp || new Date().toISOString() };
             }
@@ -7933,6 +9057,12 @@
                 clearTimeout(searchDebounce);
                 const value = e.target.value;
                 searchDebounce = setTimeout(() => applyDashboardSearch(value), 120);
+            });
+            dashboardSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    openSearchNavigator(e.target.value || '');
+                }
             });
         }
 
@@ -8115,6 +9245,7 @@
         // =============================================
         document.addEventListener('DOMContentLoaded', async () => {
             loadSettings();
+            applyLayoutMode(dashboardSettings.layoutMode || 'expanded');
             loadNotifications();
             loadPanelState();
             loadUIState();
@@ -8167,9 +9298,12 @@
             fetchActiveClients();
             fetchSecurityPosture();
             fetchQuarantineInventory();
+            fetchAuditTelemetry();
             refreshLiveActivity();
+            fetchAccuracyMetrics();
             initLogStream();
             setupRefreshScheduler();
+            maybeRunWeeklyThresholdTuning(false);
 
             // Keep relative timestamps fresh in notifications/status panel
             setInterval(() => {
@@ -8186,6 +9320,12 @@
                     fetchApiStatus();
                 }
             }, 20000);
+
+            setInterval(() => {
+                if (isPageVisible) {
+                    fetchAccuracyMetrics();
+                }
+            }, 10 * 60 * 1000);
             
             // Fetch and render reports
             try {
@@ -8214,6 +9354,7 @@
                     fetchActiveClients();
                     fetchSecurityPosture();
                     fetchQuarantineInventory();
+                    fetchAuditTelemetry();
                     refreshLiveActivity();
                 }
             });
@@ -8227,11 +9368,22 @@ async function restoreSystemHealthStatic() {
     // Show loading state
     btn.textContent = 'Restoring...';
     try {
-        const resp = await fetch('/api/v1/dashboard/restore-health', { method: 'POST' });
-        const data = await resp.json();
-        alert(data?.message || 'Recovery attempted.');
+        await syncThreatReviewToBackend();
+        acknowledgeThreatCenterReview();
+        const data = await apiRequest(API_ENDPOINTS.dashboardRestoreHealth, { method: 'POST' });
+        showToast(data?.message || 'Recovery attempted.', data?.success ? 'success' : 'warning');
+        await Promise.allSettled([
+            fetchSystemHealth(),
+            fetchDashboardStats(),
+            fetchThreats(),
+            fetchLogs(),
+            fetchMonitoringStats(),
+            fetchSecurityPosture(),
+            fetchAuditTelemetry(),
+        ]);
+        updateSystemStatusPanel();
     } catch (e) {
-        alert('Recovery failed: ' + (e.message || e));
+        showToast('Recovery failed: ' + (e.message || e), 'error');
     }
     btn.textContent = '🩺 Restore System Health';
     btn.disabled = false;

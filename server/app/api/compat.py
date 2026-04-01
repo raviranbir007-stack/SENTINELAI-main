@@ -913,7 +913,13 @@ async def list_scans(source: Optional[str] = None, db: AsyncSession = Depends(ge
     """
     query = select(ScanHistory).order_by(desc(ScanHistory.scan_timestamp)).limit(100)
     if source != "all":
-        query = query.where(ScanHistory.scan_source == "manual")
+        # Backward compatibility: older records may have NULL scan_source.
+        query = query.where(
+            or_(
+                ScanHistory.scan_source == "manual",
+                ScanHistory.scan_source.is_(None),
+            )
+        )
 
     result = await db.execute(query)
     scans = result.scalars().all()
