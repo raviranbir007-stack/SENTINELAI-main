@@ -1037,7 +1037,6 @@ async def approve_client(
 async def list_clients(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
-    _gate=Depends(_admin_or_blocked_in_safe_mode),
     # user=Depends(admin_required),  # Bypassed for development
 ):
     """
@@ -1920,7 +1919,6 @@ async def list_defense_events(
     limit: int = 200,
     client_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """Return recent defense event timeline for analyst investigation."""
     try:
@@ -1967,7 +1965,6 @@ async def list_attacks(
     client_id: Optional[str] = None,
     blocked_only: bool = False,
     db: AsyncSession = Depends(get_db),
-    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """
     List detected attacks
@@ -2025,7 +2022,6 @@ async def list_network_alerts(
     active_only: bool = True,
     severity: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    _gate=Depends(_admin_or_blocked_in_safe_mode),
 ):
     """
     List network-wide security alerts
