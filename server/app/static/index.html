@@ -3398,7 +3398,8 @@
         let latestMonitoringStats = null;
         let latestActiveClients = null;
         let latestAccuracyMetrics = null;
-        const CLIENT_SAFE_DASHBOARD_MODE = true;
+        const ADMIN_DASHBOARD_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'vbox']);
+        const CLIENT_SAFE_DASHBOARD_MODE = !ADMIN_DASHBOARD_HOSTS.has((window.location.hostname || '').toLowerCase());
         let knownClientIdsForAlerts = null; // null = first load, Set after first fetch
         let securityTaskHistory = {
             cpu: [],

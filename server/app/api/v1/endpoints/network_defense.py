@@ -154,11 +154,8 @@ async def block_and_shutdown_client(
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
-    if _client_safe_mode_enabled():
-        expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
-        provided_bypass = str((request.headers.get("X-Sentinel-Admin-Bypass") if request else "") or "").strip()
-        if not (expected_bypass and provided_bypass and hmac.compare_digest(expected_bypass, provided_bypass)):
-            raise HTTPException(status_code=403, detail="Client-safe mode blocks management endpoints")
+    if request is not None:
+        await _admin_or_blocked_in_safe_mode(request)
     logger.info(f"[BLOCK] Attempting to block client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -178,11 +175,8 @@ async def resume_client(
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
-    if _client_safe_mode_enabled():
-        expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
-        provided_bypass = str((request.headers.get("X-Sentinel-Admin-Bypass") if request else "") or "").strip()
-        if not (expected_bypass and provided_bypass and hmac.compare_digest(expected_bypass, provided_bypass)):
-            raise HTTPException(status_code=403, detail="Client-safe mode blocks management endpoints")
+    if request is not None:
+        await _admin_or_blocked_in_safe_mode(request)
     logger.info(f"[RESUME] Attempting to resume client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -230,9 +224,32 @@ def _registration_alert_recipients() -> list[str]:
     return normalized
 
 
+def _request_origin_host_or_ip(request: Request) -> str:
+    forwarded = str(request.headers.get("X-Forwarded-For", "") or "").strip()
+    if forwarded:
+        # trust first hop in standard X-Forwarded-For list
+        return forwarded.split(",", 1)[0].strip()
+    if request.client and request.client.host:
+        return str(request.client.host).strip()
+    return ""
+
+
+def _request_is_admin_origin(request: Request) -> bool:
+    origin = _request_origin_host_or_ip(request)
+    if not origin:
+        return False
+    parsed_ip = _parse_ip(origin)
+    if parsed_ip:
+        return _is_admin_infrastructure_host("", parsed_ip)
+    return _is_admin_infrastructure_host(origin, "")
+
+
 async def _admin_or_blocked_in_safe_mode(request: Request):
     """Block management endpoints in client-safe mode unless explicit admin bypass is provided."""
     if not _client_safe_mode_enabled():
+        return True
+
+    if _request_is_admin_origin(request):
         return True
 
     expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
