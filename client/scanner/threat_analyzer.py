@@ -55,7 +55,8 @@ class ThreatAnalyzer:
             'reddit.com', 'redd.it',
             'google.com', 'youtube.com', 'gstatic.com',
             'microsoft.com', 'live.com', 'outlook.com',
-            'amazon.com', 'apple.com', 'icloud.com'
+            'amazon.com', 'apple.com', 'icloud.com',
+            'ip-api.com', 'ipapi.co', 'ipify.org', 'api.ipify.org', 'ifconfig.me'
         }
 
     def _extract_host(self, artifact_type: str, artifact_value: str) -> str:
@@ -134,6 +135,35 @@ class ThreatAnalyzer:
         if not artifact_value:
             return
 
+        metadata = metadata or {}
+
+        trusted_metadata_host = ''
+        for key in ('remote_domain', 'domain', 'host', 'hostname', 'url'):
+            value = str(metadata.get(key, '') or '').strip()
+            if not value:
+                continue
+            if key == 'url':
+                trusted_metadata_host = self._extract_host('url', value)
+            else:
+                trusted_metadata_host = value.lower().rstrip('.')
+            if trusted_metadata_host:
+                break
+
+        if trusted_metadata_host and self._is_trusted_domain(trusted_metadata_host):
+            if self.callback:
+                self.callback({
+                    'type': 'threat_verdict',
+                    'artifact_type': artifact_type,
+                    'artifact': artifact_value,
+                    'verdict': 'SAFE',
+                    'risk': 'LOW',
+                    'cached': False,
+                    'sources': 0,
+                    'sources_list': [],
+                    'reason': f'trusted_domain:{trusted_metadata_host}'
+                })
+            return
+
         # Skip localhost/private artifacts to prevent false-positive local blocking.
         if self._is_local_artifact(artifact_type, artifact_value):
             if self.callback:
@@ -185,7 +215,7 @@ class ThreatAnalyzer:
         self.scan_queue.append({
             'type': artifact_type,
             'value': artifact_value,
-            'metadata': metadata or {},
+            'metadata': metadata,
             'queued_at': datetime.now()
         })
     

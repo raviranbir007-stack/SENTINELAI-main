@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import sqlite3
+import socket
 import subprocess
 import tempfile
 import threading
@@ -75,6 +76,15 @@ class ActivityLogger:
             'pastebin.com', 'anonfiles.com', 'mega.nz',
             'tempmail.', 'guerrillamail.', '10minutemail.'
         ]
+
+        self.TRUSTED_TELEMETRY_DOMAINS = {
+            'ip-api.com',
+            'ipapi.co',
+            'ipify.org',
+            'api.ipify.org',
+            'ifconfig.me',
+        }
+        self._reverse_dns_cache = {}
 
         # Chrome/Chromium timestamp origin: microseconds since 1601-01-01
         self._chrome_epoch_offset = 11644473600  # seconds between 1601-01-01 and 1970-01-01
@@ -904,17 +914,43 @@ class ActivityLogger:
             
             conn.commit()
             conn.close()
+
+            remote_domain = self._reverse_lookup_domain(remote_ip)
+
+            if self._is_trusted_telemetry_domain(remote_domain):
+                return
             
             # Queue IP for threat analysis
             if self.threat_analyzer:
                 self.threat_analyzer.queue_scan(
                     artifact_type='ip',
                     artifact_value=remote_ip,
-                    metadata={'app': app_name, 'port': remote_port}
+                    metadata={'app': app_name, 'port': remote_port, 'remote_domain': remote_domain}
                 )
             
         except Exception as e:
             logger.debug(f"Network log failed")
+
+    def _reverse_lookup_domain(self, remote_ip: str) -> str:
+        cached = self._reverse_dns_cache.get(remote_ip)
+        if cached is not None:
+            return cached
+        try:
+            host, *_ = socket.gethostbyaddr(remote_ip)
+            normalized = str(host or '').strip().lower().rstrip('.')
+        except Exception:
+            normalized = ''
+        self._reverse_dns_cache[remote_ip] = normalized
+        return normalized
+
+    def _is_trusted_telemetry_domain(self, domain: str) -> bool:
+        normalized = str(domain or '').strip().lower().rstrip('.')
+        if not normalized:
+            return False
+        return any(
+            normalized == trusted or normalized.endswith(f'.{trusted}')
+            for trusted in self.TRUSTED_TELEMETRY_DOMAINS
+        )
 
     def _analyze_website_risk(self, url: str, domain: str) -> str:
         """Analyze website risk level"""

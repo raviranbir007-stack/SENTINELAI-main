@@ -8978,24 +8978,13 @@
             latestScanHistory = Array.isArray(scans) ? [...scans] : [];
             
             if (!scans || scans.length === 0) {
-                        : Array.isArray(payload?.items)
-                            ? payload.items
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No scans yet. Start a new scan to see results here.</td></tr>';
-
-                const normalizeReport = (report) => {
-                    const created = report?.created || report?.created_at || report?.timestamp || report?.generated_at || null;
-                    return {
-                        ...report,
-                        created,
-                    };
-                };
                 updateSystemStatusPanel();
                 return;
-                    .map(normalizeReport)
-                    .filter(report => report && (report.report_id || report.title || report.created))
+            }
 
             const mostRecent = scans[0];
-                const localReports = loadLocalReportsCache().map(normalizeReport);
+            if (mostRecent) {
                 const target = mostRecent.target || mostRecent.target_name || mostRecent.url || mostRecent.ip || mostRecent.hash || 'N/A';
                 lastScanMeta = { target, time: mostRecent.timestamp || new Date().toISOString() };
             }
