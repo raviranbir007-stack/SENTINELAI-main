@@ -339,6 +339,106 @@ class SecurityTelemetryStore:
         denom = fp + tp + 1.0
         return max(0.0, min(1.0, fp / denom))
 
+    def decayed_feedback_stats(
+        self,
+        fingerprint: str,
+        lookback_days: int = 60,
+        half_life_days: float = 14.0,
+    ) -> Dict[str, float]:
+        """Return decay-weighted analyst feedback stats for adaptive trust/suppression."""
+        days = max(7, int(lookback_days or 60))
+        half_life = max(1.0, float(half_life_days or 14.0))
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT analyst_label, weight, created_at
+            FROM false_positive_feedback
+            WHERE fingerprint=? AND created_at > ?
+            ORDER BY created_at ASC
+            """,
+            (fingerprint, cutoff),
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        false_w = 0.0
+        true_w = 0.0
+        neutral_w = 0.0
+        now = datetime.now(timezone.utc)
+
+        for label, weight, created_at in rows:
+            raw_label = str(label or "").strip().lower()
+            base_weight = max(0.05, float(weight or 1.0))
+            try:
+                created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+            except Exception:
+                created = now
+
+            age_days = max(0.0, (now - created).total_seconds() / 86400.0)
+            decay = 0.5 ** (age_days / half_life)
+            weighted = base_weight * decay
+
+            if raw_label == "false_positive":
+                false_w += weighted
+            elif raw_label in {"true_positive", "malicious"}:
+                true_w += weighted
+            else:
+                neutral_w += weighted
+
+        denom = false_w + true_w + neutral_w + 0.5
+        trust = max(0.0, min(1.0, false_w / denom))
+        certainty = max(0.0, min(1.0, (false_w + true_w) / (false_w + true_w + neutral_w + 1.0)))
+        margin = false_w - true_w
+
+        return {
+            "false_weight": round(false_w, 6),
+            "true_weight": round(true_w, 6),
+            "neutral_weight": round(neutral_w, 6),
+            "trust_score": round(trust, 6),
+            "confidence": round(certainty, 6),
+            "margin": round(margin, 6),
+            "lookback_days": float(days),
+            "half_life_days": float(half_life),
+            "samples": float(len(rows)),
+        }
+
+    def should_suppress_fingerprint(
+        self,
+        fingerprint: str,
+        min_trust: float = 0.68,
+        min_margin: float = 0.75,
+        min_samples: int = 3,
+    ) -> Dict[str, Any]:
+        """Decide whether a fingerprint should be suppressed using decay-weighted trust."""
+        stats = self.decayed_feedback_stats(fingerprint=fingerprint)
+        trust = float(stats.get("trust_score", 0.0) or 0.0)
+        margin = float(stats.get("margin", 0.0) or 0.0)
+        samples = int(stats.get("samples", 0.0) or 0)
+
+        suppress = (
+            samples >= int(min_samples)
+            and trust >= float(min_trust)
+            and margin >= float(min_margin)
+        )
+        return {
+            "suppress": bool(suppress),
+            "trust_score": trust,
+            "margin": margin,
+            "samples": samples,
+            "stats": stats,
+            "policy": {
+                "min_trust": float(min_trust),
+                "min_margin": float(min_margin),
+                "min_samples": int(min_samples),
+            },
+        }
+
     def append_immutable_audit(self, event_type: str, actor: str, target: str, details: Optional[Dict[str, Any]] = None) -> str:
         payload = json.dumps(details or {}, sort_keys=True)
         with self._lock:
@@ -483,6 +583,214 @@ class SecurityTelemetryStore:
                 }
             )
         return out
+
+    @staticmethod
+    def _detector_from_input_type(input_type: str) -> str:
+        value = str(input_type or "").strip().lower()
+        if value in {"ip", "network", "network_traffic"}:
+            return "network"
+        if value in {"file", "file_hash", "hash"}:
+            return "file"
+        if value in {"url", "domain", "browser"}:
+            return "browser"
+        if value in {"ids", "attack", "attack_event", "intrusion"}:
+            return "ids"
+        return "default"
+
+    @staticmethod
+    def _probability_from_verdict(verdict: str) -> float:
+        value = str(verdict or "").strip().lower()
+        if value in {"malicious", "critical", "threat"}:
+            return 0.92
+        if value in {"suspicious", "high", "medium"}:
+            return 0.68
+        if value in {"safe", "clean", "low"}:
+            return 0.10
+        return 0.50
+
+    @staticmethod
+    def _label_to_ground_truth(label: str) -> Optional[int]:
+        value = str(label or "").strip().lower()
+        if value in {"true_positive", "malicious"}:
+            return 1
+        if value == "false_positive":
+            return 0
+        return None
+
+    def get_accuracy_metrics(self, lookback_days: int = 30) -> Dict[str, Any]:
+        """Return Brier score, precision/recall by detector, and weekly false-positive trend."""
+        days = max(7, int(lookback_days or 30))
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = self._connect()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT input_type, verdict, analyst_label, weight, created_at
+            FROM false_positive_feedback
+            WHERE created_at > ?
+            ORDER BY created_at ASC
+            """,
+            (cutoff,),
+        )
+        feedback_rows = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT strftime('%Y-%W', created_at) AS week_bucket,
+                   SUM(CASE WHEN analyst_label='false_positive' THEN 1 ELSE 0 END) AS fp_count,
+                   COUNT(*) AS total_count
+            FROM false_positive_feedback
+            WHERE created_at > ?
+            GROUP BY week_bucket
+            ORDER BY week_bucket ASC
+            """,
+            (cutoff,),
+        )
+        trend_rows = cur.fetchall()
+        conn.close()
+
+        detector_stats: Dict[str, Dict[str, float]] = {}
+        brier_sum = 0.0
+        brier_weight_sum = 0.0
+
+        for input_type, verdict, analyst_label, weight, _created_at in feedback_rows:
+            detector = self._detector_from_input_type(str(input_type or "default"))
+            stats = detector_stats.setdefault(
+                detector,
+                {
+                    "tp": 0.0,
+                    "fp": 0.0,
+                    "fn": 0.0,
+                    "tn": 0.0,
+                    "support": 0.0,
+                    "false_positive": 0.0,
+                },
+            )
+            w = max(0.1, float(weight or 1.0))
+            y = self._label_to_ground_truth(str(analyst_label or ""))
+            p = self._probability_from_verdict(str(verdict or ""))
+            predicted_positive = 1 if p >= 0.50 else 0
+
+            if y is not None:
+                stats["support"] += w
+                brier_sum += ((p - float(y)) ** 2) * w
+                brier_weight_sum += w
+                if predicted_positive == 1 and y == 1:
+                    stats["tp"] += w
+                elif predicted_positive == 1 and y == 0:
+                    stats["fp"] += w
+                elif predicted_positive == 0 and y == 1:
+                    stats["fn"] += w
+                else:
+                    stats["tn"] += w
+
+            if str(analyst_label or "").strip().lower() == "false_positive":
+                stats["false_positive"] += w
+
+        by_detector: Dict[str, Dict[str, Any]] = {}
+        for detector, s in detector_stats.items():
+            tp = float(s["tp"])
+            fp = float(s["fp"])
+            fn = float(s["fn"])
+            support = float(s["support"])
+            precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+            recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+            fp_rate = (float(s["false_positive"]) / support) if support > 0 else 0.0
+            by_detector[detector] = {
+                "samples": round(support, 2),
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "false_positive_rate": round(fp_rate, 4),
+            }
+
+        trend = []
+        for week_bucket, fp_count, total_count in trend_rows:
+            total = int(total_count or 0)
+            fp = int(fp_count or 0)
+            trend.append(
+                {
+                    "week": str(week_bucket or "unknown"),
+                    "false_positive": fp,
+                    "total": total,
+                    "false_positive_rate": round((fp / total), 4) if total else 0.0,
+                }
+            )
+
+        return {
+            "lookback_days": days,
+            "brier_score": round((brier_sum / brier_weight_sum), 6) if brier_weight_sum > 0 else None,
+            "samples": round(brier_weight_sum, 2),
+            "by_detector": by_detector,
+            "false_positive_trend": trend,
+        }
+
+    def build_adaptive_threshold_recommendations(
+        self,
+        current_profiles: Dict[str, Dict[str, Any]],
+        lookback_days: int = 28,
+        min_samples: int = 10,
+    ) -> Dict[str, Any]:
+        """Learn detector-specific threshold recommendations from analyst feedback."""
+        metrics = self.get_accuracy_metrics(lookback_days=lookback_days)
+        by_detector = metrics.get("by_detector", {}) or {}
+
+        updated_profiles: Dict[str, Dict[str, Any]] = {}
+        diagnostics: Dict[str, Dict[str, Any]] = {}
+
+        for detector, profile in (current_profiles or {}).items():
+            if detector == "default":
+                continue
+            baseline = dict(profile or {})
+            stats = by_detector.get(detector, {})
+            samples = float(stats.get("samples", 0.0) or 0.0)
+            fp_rate = float(stats.get("false_positive_rate", 0.0) or 0.0)
+            precision = float(stats.get("precision", 0.0) or 0.0)
+            recall = float(stats.get("recall", 0.0) or 0.0)
+
+            crit = float(baseline.get("critical", 0.94) or 0.94)
+            high = float(baseline.get("high", 0.84) or 0.84)
+            med = float(baseline.get("medium", 0.62) or 0.62)
+            single = float(baseline.get("single_source_auto_high_min", 0.94) or 0.94)
+
+            adjustment = 0.0
+            if samples >= float(min_samples):
+                # Raise thresholds when false positives increase.
+                if fp_rate > 0.35:
+                    adjustment += 0.04
+                elif fp_rate > 0.25:
+                    adjustment += 0.02
+
+                # Lower thresholds slightly if precision is strong but recall is weak.
+                if precision >= 0.8 and recall < 0.6:
+                    adjustment -= 0.02
+
+            crit_n = max(0.88, min(0.99, crit + adjustment))
+            high_n = max(0.74, min(crit_n - 0.04, high + adjustment))
+            med_n = max(0.50, min(high_n - 0.10, med + (adjustment * 0.5)))
+            single_n = max(high_n + 0.06, min(0.995, single + max(0.0, adjustment)))
+
+            updated_profiles[detector] = {
+                "critical": round(crit_n, 4),
+                "high": round(high_n, 4),
+                "medium": round(med_n, 4),
+                "single_source_auto_high_min": round(single_n, 4),
+            }
+            diagnostics[detector] = {
+                "samples": round(samples, 2),
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "false_positive_rate": round(fp_rate, 4),
+                "adjustment": round(adjustment, 4),
+            }
+
+        return {
+            "lookback_days": lookback_days,
+            "min_samples": min_samples,
+            "metrics": metrics,
+            "updated_profiles": updated_profiles,
+            "diagnostics": diagnostics,
+        }
 
 
 security_telemetry = SecurityTelemetryStore()

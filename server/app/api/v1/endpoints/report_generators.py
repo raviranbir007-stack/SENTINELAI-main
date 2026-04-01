@@ -8,7 +8,10 @@ from datetime import datetime
 from typing import Dict, Any, List
 from xml.sax.saxutils import escape
 
-from server.app.gemini_integration import get_gemini_client
+try:
+    from server.app.gemini_integration import get_gemini_client
+except ImportError:
+    from app.gemini_integration import get_gemini_client
 
 try:
     from reportlab.lib import colors

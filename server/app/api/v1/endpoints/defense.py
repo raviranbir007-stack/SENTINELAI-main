@@ -10,7 +10,10 @@ from datetime import datetime
 import logging
 
 from .auth import get_current_user
-from server.app.database import get_db
+try:
+    from server.app.database import get_db
+except ImportError:
+    from app.database import get_db
 
 logger = logging.getLogger(__name__)
 

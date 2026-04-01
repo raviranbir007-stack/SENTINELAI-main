@@ -42,6 +42,7 @@ class IntrusionDetector:
         self.attack_signals: Dict[str, Set[str]] = defaultdict(set)
         # Confirmation requirements before auto-block (number of distinct signals)
         self.MULTI_SIGNAL_THRESHOLD = 2
+        self.AUTO_BLOCK_ONLY_MULTI_SIGNAL = os.getenv("SENTINEL_IDS_AUTO_BLOCK_MULTI_SIGNAL_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
 
         # Listening port cache (refreshed every 30s)
         self._listening_ports_cache: Set[int] = set()
@@ -104,6 +105,20 @@ class IntrusionDetector:
 
         # Restore blocked IP memory from persisted quarantine inventory.
         self._load_persisted_blocked_ips()
+
+    def _register_signal(self, ip: str, signal: str) -> int:
+        """Track unique attack signals per source IP and return count."""
+        if ip and signal:
+            self.attack_signals[ip].add(str(signal).upper())
+        return len(self.attack_signals.get(ip, set()))
+
+    def _should_auto_block(self, ip: str, severity: str) -> bool:
+        """Auto-block policy gate tuned for lower false positives."""
+        signal_count = len(self.attack_signals.get(ip, set()))
+        sev = str(severity or "").upper()
+        if sev == "CRITICAL":
+            return (not self.AUTO_BLOCK_ONLY_MULTI_SIGNAL) or signal_count >= 1
+        return signal_count >= self.MULTI_SIGNAL_THRESHOLD
 
     def _env_int(self, name: str, default: int, minimum: int = 1) -> int:
         """Read an integer from environment with safe fallback and minimum clamp."""
@@ -574,6 +589,7 @@ class IntrusionDetector:
             # Soft threshold: first signal; only raise alert once multi-signal
             # threshold is also met to reduce false positives.
             if len(recent) > self.FLOOD_HARD_THRESHOLD:
+                self._register_signal(ip, "CONNECTION_FLOOD")
                 # Extreme burst — block immediately without waiting for 2nd signal
                 desc = f'Severe connection flood: {len(recent)} inbound connections in {self.TIME_WINDOW}s'
                 family = 'CONNECTION_FLOOD'
@@ -596,7 +612,7 @@ class IntrusionDetector:
                 self.attack_cooldown[ip] = time.time()
             elif len(recent) > self.MAX_CONNECTIONS_PER_MINUTE:
                 # Soft threshold hit — record signal, only alert if multi-signal confirmed
-                self.attack_signals[ip].add('CONNECTION_FLOOD')
+                self._register_signal(ip, 'CONNECTION_FLOOD')
                 if len(self.attack_signals[ip]) >= self.MULTI_SIGNAL_THRESHOLD:
                     desc = f'Connection flood detected: {len(recent)} inbound connections in {self.TIME_WINDOW}s (multi-signal confirmed)'
                     family = 'CONNECTION_FLOOD'
@@ -632,6 +648,8 @@ class IntrusionDetector:
                 if auth_port_hits:
                     top_port, top_hits = max(auth_port_hits.items(), key=lambda item: item[1])
                     if top_hits >= self.BRUTE_FORCE_CONN_THRESHOLD:
+                        signal_count = self._register_signal(ip, 'BRUTE_FORCE')
+                        can_auto_block = self._should_auto_block(ip, 'HIGH')
                         desc = (
                             f'Possible brute-force: {top_hits} attempts against service port {top_port} '
                             f'within monitoring window'
@@ -645,18 +663,22 @@ class IntrusionDetector:
                             'short_description': f'Likely brute-force on port {top_port}',
                             'target_port': top_port,
                             'attempt_count': top_hits,
+                            'signal_count': signal_count,
                             'tool_signature': 'HYDRA_MEDUSA_STYLE',
                             'attack_family': 'BRUTE_FORCE',
                             'mitigation_commands': self._build_mitigation_commands(ip, 'BRUTE_FORCE', top_port),
-                            'recommended_action': 'Block source IP and enforce MFA/strong auth for exposed services',
+                            'recommended_action': 'Block source IP and enforce MFA/strong auth for exposed services' if can_auto_block else 'Manual analyst review required before blocking',
                             'timestamp': current_time,
                             'action_required': True
                         }))
-                        self.blocked_ips.add(ip)
-                        self._persist_ip_block(ip, 'BRUTE_FORCE_ATTEMPT', 'HIGH', desc)
-                        self.attack_cooldown[ip] = time.time()
+                        if can_auto_block:
+                            self.blocked_ips.add(ip)
+                            self._persist_ip_block(ip, 'BRUTE_FORCE_ATTEMPT', 'HIGH', desc)
+                            self.attack_cooldown[ip] = time.time()
 
                 if len(unique_ports) > self.SUSPICIOUS_PORT_THRESHOLD:
+                    signal_count = self._register_signal(ip, 'PORT_SCAN')
+                    can_auto_block = self._should_auto_block(ip, 'HIGH')
                     tool_signature = 'NMAP_RECON' if len(unique_ports) >= max(12, self.SUSPICIOUS_PORT_THRESHOLD) else 'PORT_RECON'
                     desc = f'Port scan detected: {len(unique_ports)} different ports scanned'
                     attacks.append(self._with_prediction({
@@ -667,20 +689,24 @@ class IntrusionDetector:
                         'description': desc,
                         'short_description': f'Likely {"Nmap" if tool_signature == "NMAP_RECON" else "recon"} scan against multiple ports',
                         'ports': list(unique_ports)[:20],  # First 20 ports
+                        'signal_count': signal_count,
                         'tool_signature': tool_signature,
                         'attack_family': 'RECONNAISSANCE',
                         'mitigation_commands': self._build_mitigation_commands(ip, 'NMAP_RECON'),
-                        'recommended_action': 'Block source IP and enable IDS signatures for reconnaissance patterns',
+                        'recommended_action': 'Block source IP and enable IDS signatures for reconnaissance patterns' if can_auto_block else 'Manual review with enrichment before blocking',
                         'timestamp': current_time,
                         'action_required': True
                     }))
-                    self.blocked_ips.add(ip)
-                    self._persist_ip_block(ip, 'PORT_SCAN', 'HIGH', desc)
-                    self.attack_cooldown[ip] = time.time()  # Set cooldown
+                    if can_auto_block:
+                        self.blocked_ips.add(ip)
+                        self._persist_ip_block(ip, 'PORT_SCAN', 'HIGH', desc)
+                        self.attack_cooldown[ip] = time.time()  # Set cooldown
 
                 # Detect Metasploit-like probes (common listener/payload ports)
                 metasploit_ports = sorted(list(unique_ports.intersection(self.METASPLOIT_PORT_SIGNATURES)))
                 if metasploit_ports:
+                    signal_count = self._register_signal(ip, 'METASPLOIT_PROBE')
+                    can_auto_block = self._should_auto_block(ip, 'CRITICAL')
                     probe_port = metasploit_ports[0]
                     desc = f'Potential Metasploit activity: probe on known payload/listener port(s) {metasploit_ports}'
                     attacks.append(self._with_prediction({
@@ -691,20 +717,23 @@ class IntrusionDetector:
                         'description': desc,
                         'short_description': f'Metasploit-like probe observed on port {probe_port}',
                         'ports': metasploit_ports,
+                        'signal_count': signal_count,
                         'tool_signature': 'METASPLOIT_PATTERN',
                         'attack_family': 'METASPLOIT_PROBE',
                         'mitigation_commands': self._build_mitigation_commands(ip, 'METASPLOIT_PROBE', probe_port),
-                        'recommended_action': 'Block source IP and inspect endpoint for reverse-shell sessions',
+                        'recommended_action': 'Block source IP and inspect endpoint for reverse-shell sessions' if can_auto_block else 'Immediate analyst confirmation required before blocking',
                         'timestamp': current_time,
                         'action_required': True
                     }))
-                    self.blocked_ips.add(ip)
-                    self._persist_ip_block(ip, 'METASPLOIT_PROBE', 'CRITICAL', desc)
-                    self.attack_cooldown[ip] = time.time()
+                    if can_auto_block:
+                        self.blocked_ips.add(ip)
+                        self._persist_ip_block(ip, 'METASPLOIT_PROBE', 'CRITICAL', desc)
+                        self.attack_cooldown[ip] = time.time()
 
                 # Summarize targeted service attacks instead of one alert per port
                 targeted_ports = sorted([port for port in unique_ports if port in self.COMMON_ATTACK_PORTS])
                 if targeted_ports:
+                    signal_count = self._register_signal(ip, 'TARGETED_ATTACK')
                     port_labels = [f"{p}:{self.COMMON_ATTACK_PORTS[p]}" for p in targeted_ports[:6]]
                     desc = f'Targeted attack against exposed services: {", ".join(port_labels)}'
                     attacks.append(self._with_prediction({
@@ -715,6 +744,7 @@ class IntrusionDetector:
                         'description': desc,
                         'short_description': f'Targeted service probing on {len(targeted_ports)} critical ports',
                         'target_ports': targeted_ports,
+                        'signal_count': signal_count,
                         'attack_type': 'SERVICE_TARGETING',
                         'attack_family': 'TARGETED_ATTACK',
                         'mitigation_commands': self._build_mitigation_commands(ip, 'TARGETED_ATTACK', targeted_ports[0]),
@@ -726,6 +756,8 @@ class IntrusionDetector:
                 # Detect web attack reconnaissance likely to precede SQLi/XSS/RCE attempts
                 web_hits = sum(1 for p in self.suspicious_ports[ip] if p in {80, 443, 8080, 8443})
                 if web_hits >= self.WEB_ATTACK_CONN_THRESHOLD:
+                    signal_count = self._register_signal(ip, 'WEB_INJECTION_RECON')
+                    can_auto_block = self._should_auto_block(ip, 'HIGH')
                     desc = (
                         f'High-rate web probing detected: {web_hits} inbound attempts on web service ports '
                         f'within monitoring window (possible SQL injection/recon)'
@@ -738,16 +770,18 @@ class IntrusionDetector:
                         'description': desc,
                         'short_description': 'Potential web attack reconnaissance (SQLi/XSS pre-stage)',
                         'attempt_count': web_hits,
+                        'signal_count': signal_count,
                         'attack_family': 'WEB_INJECTION_RECON',
                         'tool_signature': 'WEB_RECON_PATTERN',
                         'mitigation_commands': self._build_mitigation_commands(ip, 'WEB_INJECTION_RECON', 80),
-                        'recommended_action': 'Enable WAF rules, strict input validation, and rate limits on web endpoints',
+                        'recommended_action': 'Enable WAF rules, strict input validation, and rate limits on web endpoints' if can_auto_block else 'Manual review and enrichment before blocking source',
                         'timestamp': current_time,
                         'action_required': True
                     }))
-                    self.blocked_ips.add(ip)
-                    self._persist_ip_block(ip, 'WEB_INJECTION_RECON', 'HIGH', desc)
-                    self.attack_cooldown[ip] = time.time()
+                    if can_auto_block:
+                        self.blocked_ips.add(ip)
+                        self._persist_ip_block(ip, 'WEB_INJECTION_RECON', 'HIGH', desc)
+                        self.attack_cooldown[ip] = time.time()
         
         # Detect unusual network activity
         network_stats = psutil.net_io_counters()

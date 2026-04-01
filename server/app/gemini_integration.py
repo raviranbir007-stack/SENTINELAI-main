@@ -28,7 +28,11 @@ except ImportError:
     legacy_genai = None
     LEGACY_GENAI_AVAILABLE = False
 
-from server.app.config import settings
+try:
+    from server.app.config import settings
+except ImportError:
+    # Fallback when running from within the server package context.
+    from app.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -408,7 +408,7 @@ class ThreatScanRequest(BaseModel):
 class ScanFeedbackRequest(BaseModel):
     target: str
     input_type: str
-    analyst_label: str  # false_positive | true_positive | malicious
+    analyst_label: str  # false_positive | true_positive | malicious | uncertain
     verdict: Optional[str] = None
     weight: float = 1.0
 
@@ -416,8 +416,8 @@ class ScanFeedbackRequest(BaseModel):
     @classmethod
     def validate_label(cls, v: str) -> str:
         value = (v or "").strip().lower()
-        if value not in {"false_positive", "true_positive", "malicious"}:
-            raise ValueError("analyst_label must be false_positive, true_positive, or malicious")
+        if value not in {"false_positive", "true_positive", "malicious", "uncertain"}:
+            raise ValueError("analyst_label must be false_positive, true_positive, malicious, or uncertain")
         return value
 
 

@@ -182,6 +182,14 @@ class ReportGenerator:
         lines.append(f"Corroboration Threshold Met: {forensic.get('corroboration_threshold_met', False)}")
         lines.append(f"APIs Checked: {forensic.get('apis_checked', 0)} / {forensic.get('total_apis_available', 0)}")
         lines.append(f"Scan Coverage: {forensic.get('scan_coverage', '')}")
+        quality = threat_analysis.get("report_quality_checks") or forensic.get("report_quality_checks") or {}
+        if quality:
+            lines.append(f"Report QA Passed: {bool(quality.get('ok', False))}")
+            warnings = quality.get("warnings") or []
+            if warnings:
+                lines.append("Report QA Warnings:")
+                for warning in warnings:
+                    lines.append(f"- {warning}")
         details = forensic.get("source_details", [])
         if details:
             lines.append("\nEvidence Table:")

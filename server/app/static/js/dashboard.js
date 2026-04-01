@@ -3,6 +3,27 @@
  * Manages dashboard interactions and API communication
  */
 
+// Backward-compatible shim for stale highlight scripts.
+window.mgt = window.mgt || {};
+if (typeof window.mgt.clearMarks !== 'function') {
+  window.mgt.clearMarks = function clearMarksCompat() {
+    try {
+      if (window.mgt.markInstance && typeof window.mgt.markInstance.unmark === 'function') {
+        window.mgt.markInstance.unmark();
+        return;
+      }
+      if (window.Mark && document && document.body) {
+        const markInstance = new window.Mark(document.body);
+        if (typeof markInstance.unmark === 'function') {
+          markInstance.unmark();
+        }
+      }
+    } catch (_err) {
+      // Keep dashboard functional even if mark cleanup fails.
+    }
+  };
+}
+
 class Dashboard {
     /**
      * Setup summary card click handlers and active state
