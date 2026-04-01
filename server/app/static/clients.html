@@ -399,6 +399,7 @@
   </div>
 
   <div class="users-row" id="uRow" style="display:none"></div>
+  <div class="users-row" id="adminRow" style="display:none"></div>
 
   <div class="toolbar">
     <div class="srch-wrap">
@@ -501,6 +502,7 @@
 <script>
   const S = {
     clients:   [],
+    adminInfra: null,
     serverNow: null,
     fetchAt:   null,
     knownIds:  null,
@@ -634,6 +636,10 @@
     const withId = all.filter(c=>!!c.current_os_user && c.is_active !== false).length;
     const total  = all.filter(c => c.is_active !== false).length;
     const pct    = total>0 ? Math.round(withId/total*100) : 0;
+    const adminInfo = S.adminInfra || {};
+    const adminHostnames = Array.isArray(adminInfo.hostnames) ? adminInfo.hostnames : [];
+    const adminIps = Array.isArray(adminInfo.ips) ? adminInfo.ips : [];
+    const adminPrimaryIp = adminInfo.primary_ip || adminIps.find(ip => ip !== '127.0.0.1' && ip !== '::1') || adminIps[0] || null;
 
     G('kT').textContent  = String(total);
     G('kTS').textContent = total===1?'1 endpoint enrolled':`${total} endpoints enrolled`;
@@ -654,6 +660,16 @@
         users.map(u=>`<span class="user-chip"><span class="uc-dot"></span>${esc(u)}</span>`).join('');
     } else {
       ur.style.display = 'none';
+    }
+
+    const ar = G('adminRow');
+    if (adminPrimaryIp || adminHostnames.length) {
+      const hostLabel = adminHostnames.length ? adminHostnames[0] : 'admin-host';
+      ar.style.display = 'flex';
+      ar.innerHTML = `<span class="ur-lbl">Admin Infrastructure</span>`+
+        `<span class="user-chip"><span class="uc-dot"></span>${esc(hostLabel)} · ${esc(adminPrimaryIp || 'ip-unavailable')}</span>`;
+    } else {
+      ar.style.display = 'none';
     }
 
     G('rc').textContent = `${list.length} client${list.length!==1?'s':''}${S.filter!=='all'?` · ${S.filter}`:''}${q?` · "${q}"`:''}`;
@@ -854,6 +870,7 @@
       const d = await r.json();
       if (typeof d !== 'object' || !('clients' in d)) throw new Error('Malformed API response');
       S.clients   = Array.isArray(d.clients) ? d.clients : [];
+      S.adminInfra = (d && typeof d.admin_infrastructure === 'object') ? d.admin_infrastructure : null;
       S.serverNow = d.server_time ? parseUTC(d.server_time) : null;
       S.fetchAt   = Date.now();
       S.lastSuccessfulUpdate = S.fetchAt;

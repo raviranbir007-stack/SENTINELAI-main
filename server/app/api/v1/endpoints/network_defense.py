@@ -1104,11 +1104,24 @@ async def list_clients(
                 }
             )
 
+        local_hosts, local_ips = _local_admin_host_markers()
+        configured_hosts = {_normalize_hostname(v) for v in settings.admin_infra_hostnames_list}
+        configured_hosts = {h for h in configured_hosts if h}
+        configured_ips = {_parse_ip(v) for v in settings.admin_infra_ips_list}
+        configured_ips = {i for i in configured_ips if i}
+        admin_hosts = sorted(configured_hosts.union(local_hosts))
+        admin_ips = sorted(configured_ips.union(local_ips))
+
         return {
             "total": len(clients_payload),
             "identified_active_users_count": len(identified_users),
             "identified_active_users": sorted(identified_users),
             "clients": clients_payload,
+            "admin_infrastructure": {
+                "hostnames": admin_hosts,
+                "ips": admin_ips,
+                "primary_ip": next((ip for ip in admin_ips if ip not in {"127.0.0.1", "::1"}), admin_ips[0] if admin_ips else None),
+            },
             "server_time": datetime.utcnow().isoformat() + "Z",
         }
 
