@@ -1,4 +1,4 @@
-from server.app.api.v1.endpoints.auth import admin_required
+from .auth import admin_required
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Request, APIRouter, BackgroundTasks, Depends, HTTPException
@@ -8,8 +8,8 @@ import smtplib
 from email.mime.text import MIMEText
 import logging
 
-from server.app.config import settings
-from server.app.database import get_db
+from ....config import settings
+from ....database import get_db
 
 # Dependency to enforce only approved clients can access features
 async def approved_client_required(request: Request, db: AsyncSession = Depends(get_db)):
@@ -104,13 +104,16 @@ Tracks attacks across all client installations and implements defense mechanisms
 """
 
 import asyncio
+import hmac
+import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,6 +123,7 @@ from ....database import execute_sqlite_write, get_db
 from ....config import settings
 from ....core.nids_ingestor import NIDSIngestor
 from ....core.notifier import NotificationEngine
+from ....core.security_telemetry import security_telemetry
 from ....core.terminal_monitor import terminal_monitor
 from ....models import (
     AttackEvent,
@@ -143,7 +147,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 @router.post("/clients/{client_id}/block_shutdown")
-async def block_and_shutdown_client(client_id: str, db: AsyncSession = Depends(get_db)):
+async def block_and_shutdown_client(
+    client_id: str,
+    db: AsyncSession = Depends(get_db),
+):
     logger.info(f"[BLOCK] Attempting to block client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -158,7 +165,10 @@ async def block_and_shutdown_client(client_id: str, db: AsyncSession = Depends(g
     return JSONResponse({"success": True, "message": f"Client has been blocked and shut down. protection_enabled={client.protection_enabled}. This action is reversible via the Resume button."})
 
 @router.post("/clients/{client_id}/resume")
-async def resume_client(client_id: str, db: AsyncSession = Depends(get_db)):
+async def resume_client(
+    client_id: str,
+    db: AsyncSession = Depends(get_db),
+):
     logger.info(f"[RESUME] Attempting to resume client {client_id}")
     query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
     result = await db.execute(query)
@@ -176,6 +186,50 @@ async def resume_client(client_id: str, db: AsyncSession = Depends(get_db)):
 _SEVERITY_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 _CLIENT_RUNTIME_STATE: dict[str, dict] = {}
 _RUNTIME_STATE_TTL_SECONDS = 15 * 60
+_ROLLBACK_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _client_safe_mode_enabled() -> bool:
+    return os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _registration_alert_recipients() -> list[str]:
+    recipients = []
+    for candidate in [settings.ADMIN_EMAIL, settings.ALERT_EMAIL, settings.SMTP_USERNAME]:
+        if candidate:
+            recipients.append(str(candidate).strip())
+
+    extra = str(getattr(settings, "CLIENT_REGISTRATION_ALERT_EMAILS", "") or "")
+    if extra:
+        recipients.extend([p.strip() for p in extra.replace(";", ",").split(",") if p.strip()])
+
+    normalized: list[str] = []
+    seen = set()
+    for item in recipients:
+        if "@" not in item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(item)
+    return normalized
+
+
+async def _admin_or_blocked_in_safe_mode(request: Request):
+    """Block management endpoints in client-safe mode unless explicit admin bypass is provided."""
+    if not _client_safe_mode_enabled():
+        return True
+
+    expected_bypass = str(os.getenv("SENTINEL_ADMIN_BYPASS_KEY", "") or "").strip()
+    provided_bypass = str(request.headers.get("X-Sentinel-Admin-Bypass", "") or "").strip()
+    if expected_bypass and provided_bypass and hmac.compare_digest(expected_bypass, provided_bypass):
+        return True
+
+    raise HTTPException(
+        status_code=403,
+        detail="Client-safe mode blocks management endpoints. Use an admin backend session or provide X-Sentinel-Admin-Bypass.",
+    )
 
 
 def _extract_runtime_identity(status_payload: Optional[dict]) -> dict:
@@ -327,6 +381,18 @@ class NIDSBatchIngestRequest(BaseModel):
     zeek_log_type: str = "conn"
 
 
+class ReplayScenarioRequest(BaseModel):
+    event: str
+    severity: str = "medium"
+    payload: dict = {}
+    client_id: Optional[str] = None
+    source_ip: Optional[str] = None
+
+
+class ReplayBatchRequest(BaseModel):
+    scenarios: List[ReplayScenarioRequest]
+
+
 def _map_text_severity(value: Optional[str]) -> ThreatSeverity:
     raw = (value or "").strip().lower()
     if raw in {"critical", "p1", "sev1"}:
@@ -462,6 +528,158 @@ def _sanitize_response_metadata(metadata: Optional[dict], max_items: int = 24) -
     return sanitized
 
 
+def _extract_corroboration_sources(payload: dict) -> set[str]:
+    """Extract independent evidence sources from endpoint event payload."""
+    sources: set[str] = set()
+    if not isinstance(payload, dict):
+        return sources
+
+    raw_candidates = []
+    for key in ["source", "module", "detector", "engine", "artifact_type"]:
+        if payload.get(key):
+            raw_candidates.append(payload.get(key))
+
+    for key in ["signals", "source_modules", "evidence_sources", "matched_rules"]:
+        value = payload.get(key)
+        if isinstance(value, list):
+            raw_candidates.extend(value)
+
+    for item in raw_candidates:
+        normalized = _sanitize_response_text(item, max_len=64)
+        if normalized:
+            sources.add(normalized.lower())
+    return sources
+
+
+def _estimate_event_confidence(payload: dict, severity: ThreatSeverity, event_name: str, event_kind: str) -> float:
+    """Estimate confidence from severity + payload richness for safer event promotion."""
+    base_map = {
+        ThreatSeverity.CRITICAL: 0.90,
+        ThreatSeverity.HIGH: 0.78,
+        ThreatSeverity.MEDIUM: 0.58,
+        ThreatSeverity.LOW: 0.38,
+    }
+    score = float(base_map.get(severity, 0.50))
+
+    if isinstance(payload, dict):
+        if payload.get("ioc") or payload.get("iocs"):
+            score += 0.05
+        if payload.get("rule_id") or payload.get("signature"):
+            score += 0.06
+        if payload.get("matched_rules"):
+            score += 0.05
+        if payload.get("confidence") is not None:
+            try:
+                score = max(score, min(1.0, float(payload.get("confidence"))))
+            except Exception:
+                pass
+
+    lower_blob = f"{event_name} {event_kind}".lower()
+    if any(token in lower_blob for token in ["metasploit", "rce", "exploit", "brute", "quarantine"]):
+        score += 0.05
+
+    return max(0.0, min(1.0, score))
+
+
+def _apply_behavior_baseline_adjustment(client_id: Optional[str], artifact_type: str, count_in_window: int, base_confidence: float) -> tuple[float, dict]:
+    """Adjust confidence using per-client behavioral baselines to reduce false alerts."""
+    if not client_id:
+        return float(base_confidence), {"available": False}
+    try:
+        principal = f"client:{client_id}"
+        baseline = security_telemetry.baseline_anomaly_score(
+            principal=principal,
+            artifact_type=str(artifact_type or "defense_event")[:80],
+            count_in_window=max(0, int(count_in_window)),
+        )
+        z = float(baseline.get("z_score", 0.0) or 0.0)
+        adjusted = float(base_confidence)
+        # Normal repeated behavior should slightly reduce confidence escalation.
+        if z <= -0.5:
+            adjusted -= 0.05
+        elif z <= 0.5:
+            adjusted -= 0.02
+        # Significant behavioral spike should increase confidence.
+        elif z >= 3.5:
+            adjusted += 0.10
+        elif z >= 2.5:
+            adjusted += 0.06
+        elif z >= 1.5:
+            adjusted += 0.03
+        return max(0.0, min(1.0, adjusted)), {
+            "available": True,
+            "z_score": round(z, 3),
+            "mean": round(float(baseline.get("mean", 0.0) or 0.0), 3),
+            "std": round(float(baseline.get("std", 1.0) or 1.0), 3),
+            "sample_count": int(float(baseline.get("sample_count", 0.0) or 0.0)),
+            "anomalous": bool(float(baseline.get("anomalous", 0.0) or 0.0) >= 1.0),
+        }
+    except Exception as exc:
+        logger.debug("Baseline adjustment unavailable for %s: %s", client_id, exc)
+        return float(base_confidence), {"available": False, "error": str(exc)}
+
+
+async def _auto_revert_after_window(action_id: str, delay_seconds: int) -> None:
+    """Rollback temporary block rules after safety window when still active."""
+    try:
+        await asyncio.sleep(max(1, int(delay_seconds)))
+        with execute_sqlite_write() as cursor:
+            cursor.execute(
+                """
+                SELECT action_id, action_type, target, status
+                FROM defense_actions
+                WHERE action_id = ?
+                """,
+                (action_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return
+            orig_action_id, action_type, target, status = row
+            if str(status or "").lower() != "executed":
+                return
+            if str(action_type or "").lower() not in {"block_ip", "block_domain"}:
+                return
+
+            revert_type = "unblock_ip" if action_type == "block_ip" else "unblock_domain"
+            rollback_id = f"DEF_{uuid.uuid4().hex[:12].upper()}"
+            details = json.dumps(
+                {
+                    "rollback_of": orig_action_id,
+                    "reason": "automatic safety-window rollback",
+                    "delay_seconds": int(delay_seconds),
+                }
+            )
+            cursor.execute(
+                """
+                INSERT INTO defense_actions(action_id, action_type, target, details, status, successful, executed_at)
+                VALUES (?, ?, ?, ?, 'executed', 1, CURRENT_TIMESTAMP)
+                """,
+                (rollback_id, revert_type, target, details),
+            )
+            cursor.execute(
+                """
+                UPDATE defense_actions
+                SET status = 'reverted', reverted_at = CURRENT_TIMESTAMP
+                WHERE action_id = ?
+                """,
+                (orig_action_id,),
+            )
+    except Exception as exc:
+        logger.warning("Auto rollback failed for %s: %s", action_id, exc)
+    finally:
+        _ROLLBACK_TASKS.pop(action_id, None)
+
+
+def _schedule_auto_rollback(action_id: str, delay_seconds: int) -> None:
+    if not action_id:
+        return
+    existing = _ROLLBACK_TASKS.get(action_id)
+    if existing and not existing.done():
+        return
+    _ROLLBACK_TASKS[action_id] = asyncio.create_task(_auto_revert_after_window(action_id, delay_seconds))
+
+
 @router.post("/client/register")
 async def register_client(request: ClientRegistrationRequest, db: AsyncSession = Depends(get_db)):
     """
@@ -520,7 +738,8 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
             logger.info("New client registered from hostname=%s ip=%s", request.hostname, request.ip_address)
 
             # ── Email alert: new client enrolled ──────────────────────────
-            if settings.ALERT_EMAIL:
+            recipients = _registration_alert_recipients()
+            if recipients:
                 _now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                 _subj = f"SENTINEL-AI: New Client Enrolled — {request.hostname}"
                 _body = (
@@ -562,13 +781,22 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                     "</p></div></div>"
                 )
                 asyncio.create_task(
-                    NotificationEngine.send_email(settings.ALERT_EMAIL, _subj, _body)
+                    NotificationEngine.send_email(recipients, _subj, _body)
                 )
             # ──────────────────────────────────────────────────────────────
 
             return {
                 "status": "registered",
                 "client_id": client_id,
+                "client_scope": {
+                    "can_send": ["heartbeat", "attack_report", "defense_events"],
+                    "cannot_access": [
+                        "client_management",
+                        "admin_controls",
+                        "api_key_configuration",
+                        "other_client_inventory",
+                    ],
+                },
                 "message": "Client successfully registered",
             }
 
@@ -698,10 +926,35 @@ async def client_heartbeat(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/client/approve")
+async def approve_client(
+    request: ClientApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
+):
+    """Approve or deny pending client registrations (admin-managed endpoint)."""
+    query = select(ClientInstallation).where(ClientInstallation.client_id == request.client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    if not client:
+        return JSONResponse({"success": False, "message": "Client not found."}, status_code=404)
+
+    if request.approve:
+        client.is_active = True
+        await db.commit()
+        await db.refresh(client)
+        return JSONResponse({"success": True, "message": "Client approved and activated."})
+
+    await db.delete(client)
+    await db.commit()
+    return JSONResponse({"success": True, "message": "Client registration denied and removed."})
+
+
 @router.get("/clients")
 async def list_clients(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
+    _gate=Depends(_admin_or_blocked_in_safe_mode),
     # user=Depends(admin_required),  # Bypassed for development
 ):
     """
@@ -792,6 +1045,33 @@ async def report_attack(
             "critical": ThreatSeverity.CRITICAL,
         }
 
+        base_confidence = float(
+            request.confidence
+            if request.confidence is not None
+            else {
+                "critical": 0.92,
+                "high": 0.82,
+                "medium": 0.62,
+                "low": 0.40,
+            }.get(request.severity.lower(), 0.62)
+        )
+
+        recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+        recent_query = (
+            select(func.count(AttackEvent.id))
+            .where(AttackEvent.target_client_id == client.id)
+            .where(AttackEvent.detected_at >= recent_cutoff)
+        )
+        recent_result = await db.execute(recent_query)
+        recent_count = int(recent_result.scalar() or 0) + 1
+
+        adjusted_confidence, baseline_meta = _apply_behavior_baseline_adjustment(
+            client_id=request.client_id,
+            artifact_type=str(request.attack_type or "attack"),
+            count_in_window=recent_count,
+            base_confidence=base_confidence,
+        )
+
         attack = AttackEvent(
             event_id=event_id,
             attack_type=request.attack_type,
@@ -800,18 +1080,15 @@ async def report_attack(
             destination_ip=request.destination_ip,
             destination_port=request.destination_port,
             severity=severity_map.get(request.severity.lower(), ThreatSeverity.MEDIUM),
-            confidence=float(
-                request.confidence
-                if request.confidence is not None
-                else {
-                    "critical": 0.92,
-                    "high": 0.82,
-                    "medium": 0.62,
-                    "low": 0.40,
-                }.get(request.severity.lower(), 0.62)
-            ),
+            confidence=adjusted_confidence,
             description=request.description,
-            indicators=request.indicators or {},
+            indicators={
+                **(request.indicators or {}),
+                "baseline_adjustment": baseline_meta,
+                "baseline_recent_event_count_10m": recent_count,
+                "base_confidence": round(base_confidence, 3),
+                "adjusted_confidence": round(adjusted_confidence, 3),
+            },
             status="detected",
             target_client_id=client.id,
         )
@@ -893,6 +1170,24 @@ async def execute_defense_action(request: DefenseActionRequest, db: AsyncSession
         action.status = "executed" if success else "failed"
         action.successful = success
         action.executed_at = datetime.utcnow()
+
+        if success and request.action_type in {"block_ip", "block_domain"}:
+            req_details = request.details if isinstance(request.details, dict) else {}
+            rollback_seconds = int(
+                req_details.get("temporary_seconds")
+                or req_details.get("rollback_in_seconds")
+                or getattr(settings, "SENTINEL_TEMP_BLOCK_ROLLBACK_SECONDS", 900)
+                or 900
+            )
+            disable_rollback = bool(req_details.get("disable_auto_rollback"))
+            if not disable_rollback and rollback_seconds > 0:
+                action.details = {
+                    **(action.details if isinstance(action.details, dict) else {}),
+                    "rollback_in_seconds": rollback_seconds,
+                    "auto_rollback_enabled": True,
+                }
+                _schedule_auto_rollback(action.action_id, rollback_seconds)
+
         await db.commit()
 
         logger.info(f"Defense action {action_id}: {request.action_type} on {request.target} - {'Success' if success else 'Failed'}")
@@ -936,6 +1231,9 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
         attack_identifier = request.attack_id or payload.get("attack_id") or payload.get("event_id")
         external_event_id = _sanitize_external_event_id(attack_identifier)
         event_log_level = _log_level_for_event(event_kind, severity, request.alert_number, request.max_alerts)
+        corroboration_sources = _extract_corroboration_sources(payload)
+        corroboration_count = len(corroboration_sources)
+        computed_confidence = _estimate_event_confidence(payload, severity, event_name, event_kind)
 
         # Resolve client foreign key (optional)
         client_fk = None
@@ -945,6 +1243,24 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             client = r.scalar_one_or_none()
             if client:
                 client_fk = client.id
+
+        recent_baseline_count = 1
+        if client_fk:
+            recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+            recent_q = (
+                select(func.count(AttackEvent.id))
+                .where(AttackEvent.target_client_id == client_fk)
+                .where(AttackEvent.detected_at >= recent_cutoff)
+            )
+            recent_r = await db.execute(recent_q)
+            recent_baseline_count = int(recent_r.scalar() or 0) + 1
+        adjusted_confidence, baseline_meta = _apply_behavior_baseline_adjustment(
+            client_id=request.client_id,
+            artifact_type=str(event_name or event_kind or "defense_event"),
+            count_in_window=recent_baseline_count,
+            base_confidence=computed_confidence,
+        )
+        computed_confidence = adjusted_confidence
 
         # Always persist raw event in structured system log
         db.add(
@@ -968,14 +1284,28 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                     "destination_port": destination_port,
                     "description": description,
                     "payload": payload,
+                    "baseline_adjustment": baseline_meta,
+                    "baseline_recent_event_count_10m": recent_baseline_count,
                 },
             )
         )
 
         created_attack_id = None
 
-        # Promote to attack event when high confidence or security-significant event type
-        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} or _is_security_event(event_name) or _is_security_event(event_kind):
+        # Promote to attack event only with sufficient confidence/corroboration to reduce false positives.
+        is_security_signal = _is_security_event(event_name) or _is_security_event(event_kind)
+        promote_event = False
+        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL}:
+            promote_event = computed_confidence >= 0.72
+        elif severity == ThreatSeverity.MEDIUM:
+            promote_event = is_security_signal and (computed_confidence >= 0.66 and corroboration_count >= 2)
+        else:
+            promote_event = is_security_signal and (computed_confidence >= 0.80 and corroboration_count >= 2)
+
+        if baseline_meta.get("available") and not baseline_meta.get("anomalous") and computed_confidence < 0.74:
+            promote_event = False
+
+        if promote_event:
             attack = None
             if external_event_id:
                 existing_res = await db.execute(select(AttackEvent).where(AttackEvent.event_id == external_event_id))
@@ -991,7 +1321,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                     destination_ip=destination_ip,
                     destination_port=destination_port,
                     severity=severity,
-                    confidence=0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55,
+                    confidence=float(computed_confidence),
                     description=description,
                     indicators={
                         **(payload if payload else {}),
@@ -1000,6 +1330,10 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                         "alert_number": request.alert_number,
                         "max_alerts": request.max_alerts,
                         "reason": request.reason,
+                        "corroboration_sources": sorted(corroboration_sources),
+                        "corroboration_count": corroboration_count,
+                        "baseline_adjustment": baseline_meta,
+                        "baseline_recent_event_count_10m": recent_baseline_count,
                     },
                     status=_status_from_event(event_kind),
                     target_client_id=client_fk,
@@ -1013,7 +1347,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                 attack.destination_ip = destination_ip or attack.destination_ip
                 attack.destination_port = destination_port or attack.destination_port
                 attack.severity = severity
-                attack.confidence = max(float(attack.confidence or 0.0), 0.9 if severity == ThreatSeverity.CRITICAL else 0.75 if severity == ThreatSeverity.HIGH else 0.55)
+                attack.confidence = max(float(attack.confidence or 0.0), float(computed_confidence))
                 attack.description = description or attack.description
                 attack.indicators = {
                     **(attack.indicators if isinstance(attack.indicators, dict) else {}),
@@ -1023,6 +1357,10 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                     "alert_number": request.alert_number,
                     "max_alerts": request.max_alerts,
                     "reason": request.reason,
+                    "corroboration_sources": sorted(corroboration_sources),
+                    "corroboration_count": corroboration_count,
+                    "baseline_adjustment": baseline_meta,
+                    "baseline_recent_event_count_10m": recent_baseline_count,
                 }
                 attack.status = _status_from_event(event_kind, attack.status or "detected")
                 if client_fk:
@@ -1096,6 +1434,8 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             "event": event_kind,
             "attack_type": event_name,
             "severity": severity.value,
+            "confidence": round(computed_confidence, 3),
+            "corroboration_count": corroboration_count,
             "created_attack_event": created_attack_id,
             "correlated_alert": alert_created,
             "recent_related_events_10m": recent_count,
@@ -1136,6 +1476,14 @@ async def respond_to_defense_event(
             or bool(metadata.get("system_wide"))
             or bool(metadata.get("quarantine_all"))
         )
+
+        if action == "QUARANTINE" and is_global_quarantine:
+            confirmed = bool(metadata.get("user_confirmed_quarantine"))
+            if not confirmed:
+                raise HTTPException(
+                    status_code=400,
+                    detail="System-wide quarantine requires explicit user confirmation",
+                )
 
         attack = None
         attack_lookup_id = _sanitize_external_event_id(request.attack_id or request.event_id)
@@ -1224,6 +1572,20 @@ async def respond_to_defense_event(
         response_action.status = "executed" if successful else "failed"
         response_action.successful = successful
         response_action.executed_at = datetime.utcnow()
+        if successful and action == "BLOCK" and action_type in {"block_ip", "block_domain"}:
+            rollback_seconds = int(
+                metadata.get("temporary_seconds")
+                or metadata.get("rollback_in_seconds")
+                or getattr(settings, "SENTINEL_TEMP_BLOCK_ROLLBACK_SECONDS", 900)
+                or 900
+            )
+            if not bool(metadata.get("disable_auto_rollback")) and rollback_seconds > 0:
+                response_action.details = {
+                    **(response_action.details if isinstance(response_action.details, dict) else {}),
+                    "rollback_in_seconds": rollback_seconds,
+                    "auto_rollback_enabled": True,
+                }
+                _schedule_auto_rollback(response_action.action_id, rollback_seconds)
         response_action.details = {
             **(response_action.details if isinstance(response_action.details, dict) else {}),
             "affected_attack_events": affected_attack_events,
@@ -1377,6 +1739,89 @@ async def ingest_nids_events(request: NIDSBatchIngestRequest, db: AsyncSession =
         await db.rollback()
         logger.error(f"NIDS ingestion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/replay/simulate")
+async def simulate_threat_replay(request: ReplayBatchRequest, db: AsyncSession = Depends(get_db)):
+    """Replay synthetic IDS/IPS scenarios and return predicted promotion/block decisions."""
+    scenarios = list(request.scenarios or [])
+    if not scenarios:
+        return {"total": 0, "results": []}
+
+    results = []
+    for idx, scenario in enumerate(scenarios, start=1):
+        event_name = str(scenario.event or "unknown_event")
+        severity = _map_text_severity(scenario.severity)
+        payload = scenario.payload if isinstance(scenario.payload, dict) else {}
+        corroboration_sources = _extract_corroboration_sources(payload)
+        corroboration_count = len(corroboration_sources)
+
+        confidence = _estimate_event_confidence(payload, severity, event_name, event_name)
+
+        recent_count = 1
+        client_fk = None
+        if scenario.client_id:
+            c_res = await db.execute(select(ClientInstallation).where(ClientInstallation.client_id == scenario.client_id))
+            client = c_res.scalar_one_or_none()
+            if client:
+                client_fk = client.id
+                recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+                recent_q = (
+                    select(func.count(AttackEvent.id))
+                    .where(AttackEvent.target_client_id == client_fk)
+                    .where(AttackEvent.detected_at >= recent_cutoff)
+                )
+                recent_r = await db.execute(recent_q)
+                recent_count = int(recent_r.scalar() or 0) + 1
+
+        adjusted_conf, baseline_meta = _apply_behavior_baseline_adjustment(
+            client_id=scenario.client_id,
+            artifact_type=event_name,
+            count_in_window=recent_count,
+            base_confidence=confidence,
+        )
+
+        is_security_signal = _is_security_event(event_name)
+        promote_event = False
+        if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL}:
+            promote_event = adjusted_conf >= 0.72
+        elif severity == ThreatSeverity.MEDIUM:
+            promote_event = is_security_signal and (adjusted_conf >= 0.66 and corroboration_count >= 2)
+        else:
+            promote_event = is_security_signal and (adjusted_conf >= 0.80 and corroboration_count >= 2)
+
+        if baseline_meta.get("available") and not baseline_meta.get("anomalous") and adjusted_conf < 0.74:
+            promote_event = False
+
+        source_ip = scenario.source_ip or payload.get("source_ip")
+        auto_block = bool(promote_event and source_ip and _should_auto_block(severity, adjusted_conf))
+        recommendation = (
+            "auto_block" if auto_block
+            else "manual_review" if promote_event
+            else "monitor_only"
+        )
+
+        results.append(
+            {
+                "scenario": idx,
+                "event": event_name,
+                "severity": severity.value,
+                "confidence": round(float(adjusted_conf), 3),
+                "corroboration_count": corroboration_count,
+                "promote_event": bool(promote_event),
+                "auto_block": bool(auto_block),
+                "recommendation": recommendation,
+                "baseline": baseline_meta,
+                "client_id": scenario.client_id,
+                "source_ip": source_ip,
+            }
+        )
+
+    return {
+        "total": len(results),
+        "results": results,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 @router.get("/events")
@@ -1608,7 +2053,11 @@ async def _execute_defense_response(
                     action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
                     action_type="block_ip",
                     target=source_ip,
-                    details={"reason": "Automatic block - high severity attack", "attack_id": attack.event_id},
+                    details={
+                        "reason": "Automatic block - high severity attack",
+                        "attack_id": attack.event_id,
+                        "auto_rollback_enabled": True,
+                    },
                     status="pending",
                     attack_event_id=attack.id,
                     client_id=client.id,
@@ -1628,6 +2077,14 @@ async def _execute_defense_response(
                     attack.blocked = True
                     attack.blocked_at = datetime.utcnow()
                     attack.status = "blocked"
+
+                    rollback_seconds = int(getattr(settings, "SENTINEL_TEMP_BLOCK_ROLLBACK_SECONDS", 900) or 900)
+                    if rollback_seconds > 0:
+                        action.details = {
+                            **(action.details if isinstance(action.details, dict) else {}),
+                            "rollback_in_seconds": rollback_seconds,
+                        }
+                        _schedule_auto_rollback(action.action_id, rollback_seconds)
 
                     logger.info(f"Auto-blocked IP {source_ip} due to attack {attack.event_id}")
 
@@ -1841,3 +2298,74 @@ async def revert_defense_action(action_id: str, db: AsyncSession = Depends(get_d
         await db.rollback()
         logger.error(f"Defense action rollback failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/defense/action/rollback/sweep")
+async def sweep_expired_rollbacks(db: AsyncSession = Depends(get_db)):
+    """Revert temporary blocks whose rollback windows have expired."""
+    try:
+        now = datetime.utcnow()
+        res = await db.execute(
+            select(DefenseAction).where(
+                DefenseAction.status == "executed",
+                DefenseAction.action_type.in_(["block_ip", "block_domain"]),
+            )
+        )
+        actions = res.scalars().all()
+
+        processed = 0
+        reverted = 0
+        skipped = 0
+
+        for action in actions:
+            processed += 1
+            details = action.details if isinstance(action.details, dict) else {}
+            rollback_seconds = int(details.get("rollback_in_seconds") or 0)
+            if rollback_seconds <= 0:
+                skipped += 1
+                continue
+            executed_at = action.executed_at or action.created_at
+            if not executed_at:
+                skipped += 1
+                continue
+            if (now - executed_at).total_seconds() < rollback_seconds:
+                skipped += 1
+                continue
+
+            rollback_action = DefenseAction(
+                action_id=f"DEF_{uuid.uuid4().hex[:12].upper()}",
+                action_type="unblock_ip" if action.action_type == "block_ip" else "unblock_domain",
+                target=action.target,
+                details={
+                    "rollback_of": action.action_id,
+                    "reason": "scheduled rollback sweep",
+                    "rollback_in_seconds": rollback_seconds,
+                },
+                status="pending",
+                attack_event_id=action.attack_event_id,
+                client_id=action.client_id,
+            )
+            db.add(rollback_action)
+            await db.flush()
+            ok = await _apply_defense_action(rollback_action, db)
+            rollback_action.status = "executed" if ok else "failed"
+            rollback_action.successful = bool(ok)
+            rollback_action.executed_at = datetime.utcnow()
+
+            if ok:
+                action.status = "reverted"
+                action.reverted_at = datetime.utcnow()
+                reverted += 1
+
+        await db.commit()
+        return {
+            "status": "ok",
+            "processed": processed,
+            "reverted": reverted,
+            "skipped": skipped,
+            "generated_at": now.isoformat() + "Z",
+        }
+    except Exception as exc:
+        await db.rollback()
+        logger.error("Rollback sweep failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))

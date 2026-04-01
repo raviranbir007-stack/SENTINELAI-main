@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "alerts@sentinel-ai.com")
     ALERT_EMAIL: Optional[str] = os.getenv("ALERT_EMAIL", os.getenv("SMTP_USERNAME"))
+    CLIENT_REGISTRATION_ALERT_EMAILS: str = os.getenv("CLIENT_REGISTRATION_ALERT_EMAILS", "")
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
