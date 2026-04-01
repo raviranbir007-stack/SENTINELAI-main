@@ -140,6 +140,33 @@ server_process = None
 client_process = None
 
 
+def _is_admin_terminal_context() -> bool:
+    """Return True when this terminal should receive admin-only dashboard links."""
+    explicit = os.getenv("SENTINEL_SHOW_ADMIN_LINKS", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+
+    host_markers = {h.strip().lower() for h in settings.admin_infra_hostnames_list}
+    ip_markers = {str(i).strip() for i in settings.admin_infra_ips_list}
+
+    try:
+        current_host = (socket.gethostname() or "").strip().lower()
+        current_fqdn = (socket.getfqdn() or "").strip().lower()
+        if current_host in host_markers or current_fqdn in host_markers:
+            return True
+    except Exception:
+        pass
+
+    try:
+        local_ips = set(socket.gethostbyname_ex(socket.gethostname())[2] or [])
+    except Exception:
+        local_ips = set()
+    local_ips.update({"127.0.0.1", "::1"})
+    return any(ip in ip_markers for ip in local_ips)
+
+
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     # Avoid logging during multiprocessing to prevent reentrant errors
@@ -729,8 +756,11 @@ def run_kali_optimized():
         logger.info("\n" + "="*70)
         logger.info("✅ SENTINEL-AI PROTECTION ACTIVE")
         logger.info("="*70)
-        logger.info(f"👥 Clients dashboard: http://localhost:{settings.API_PORT}/static/clients.html")
-        logger.info(f"📝 For full client details, use the above link.")
+        if _is_admin_terminal_context():
+            logger.info(f"👥 Clients dashboard: http://localhost:{settings.API_PORT}/static/clients.html")
+            logger.info("📝 For full client details, use the above link.")
+        else:
+            logger.info("👥 Clients dashboard link hidden in client terminal context.")
         logger.info(f"📊 Status: Server | IDS | IPS | Monitor | Traffic | Defense → RUNNING")
         logger.info(f"🚨 Alerts: 3 warnings before auto-quarantine (60s intervals)")
         logger.info(f"📝 Logs: logs/ | Press Ctrl+C to stop")
