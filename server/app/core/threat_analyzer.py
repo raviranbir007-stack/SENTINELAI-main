@@ -981,7 +981,7 @@ class ThreatAnalyzer:
             elif input_type == InputType.FILE_HASH:
                 hash_type = metadata.get("hash_type")
                 analysis_result = await self._analyze_file_hash(
-                    value, hash_type, analysis_result
+                    normalized_value, hash_type, analysis_result
                 )
 
             else:

@@ -44,6 +44,11 @@ class ActivityLogger:
         self.last_check_time = time.time()  # Track last check to only get NEW activities
         self.recent_files = {}  # file_path -> last_seen timestamp
         
+        # Deduplication: track recently triggered URLs/domains to prevent duplicate scans
+        # Maps URL -> last_trigger_time; entries older than 5 seconds are auto-expired
+        self._recent_scans = {}
+        self._scan_dedup_window_seconds = 5
+        
         # OS log monitoring
         # allow tests or callers to specify a custom log file path
         self.os_log_file = os_log_file or self._detect_os_log_file()
@@ -51,6 +56,28 @@ class ActivityLogger:
 
         # Initialize database
         self._init_database()
+        
+    def _should_trigger_scan(self, url_or_domain: str) -> bool:
+        """
+        Check if a URL/domain should trigger a scan.
+        Returns False if it was scanned within the last 5 seconds (deduplication).
+        Returns True and updates the timestamp if it should be scanned.
+        """
+        now = time.time()
+        key = str(url_or_domain).lower().strip()
+        
+        # Clean up old entries (older than dedup window)
+        expired_keys = [k for k, t in self._recent_scans.items() if now - t > self._scan_dedup_window_seconds]
+        for k in expired_keys:
+            del self._recent_scans[k]
+        
+        # Check if recently scanned
+        if key in self._recent_scans:
+            return False
+        
+        # Mark as scanned and allow
+        self._recent_scans[key] = now
+        return True
         
         # Browser process names by platform
         self.BROWSER_PROCESSES = {
@@ -672,10 +699,11 @@ class ActivityLogger:
             ''', (last_check_microsec,))
             
             rows = cursor.fetchall()
-            # Fallback: if no rows, try last 5 minutes window (clock drift or epoch issues)
+            # Fallback: if no rows, try last 5 seconds window (to catch entries missed due to clock drift)
+            # but NOT 5 minutes, which would create duplicates
             if not rows:
-                five_min_ago = time.time() - 300
-                fallback_microsec = self._chrome_time_from_unix(five_min_ago)
+                five_sec_ago = time.time() - 5
+                fallback_microsec = self._chrome_time_from_unix(five_sec_ago)
                 cursor.execute('''
                     SELECT url, title, last_visit_time
                     FROM urls
