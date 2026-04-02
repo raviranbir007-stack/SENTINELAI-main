@@ -690,11 +690,9 @@ def run_kali_optimized():
             if _http_ready():
                 return True
 
-            try:
-                with socket.create_connection(("127.0.0.1", int(settings.API_PORT)), timeout=1.0):
-                    return True
-            except Exception:
-                time.sleep(0.35)
+            # Do not treat an open socket as ready unless HTTP API responds, to avoid false positives
+            # while the app is still initializing or has a blocking startup path.
+            time.sleep(0.35)
         return False
     
     try:

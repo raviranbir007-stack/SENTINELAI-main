@@ -439,7 +439,7 @@ class ThreatAnalyzer:
         # Parse domain for additional scanning
         try:
             domain = urlparse(url).netloc
-        except:
+        except Exception:
             domain = url
         
         # API 1: VirusTotal
@@ -450,7 +450,7 @@ class ThreatAnalyzer:
                 total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
                 if total_vt > 0:
                     detections += min(total_vt, 3)
-            except:
+            except Exception:
                 pass
         
         # API 2: URLScan.io
@@ -460,7 +460,7 @@ class ThreatAnalyzer:
                 sources.append('urlscan')
                 if us_result['malicious']:
                     detections += 1
-            except:
+            except Exception:
                 pass
         
         # API 3: AbuseIPDB (for domain IP)
@@ -474,7 +474,7 @@ class ThreatAnalyzer:
                         detections += 2
                     elif aip_result.get('abuse_confidence', 0) > 25:
                         detections += 1
-            except:
+            except Exception:
                 pass
         
         # API 4: AlienVault OTX
@@ -483,7 +483,7 @@ class ThreatAnalyzer:
             sources.append('otx')
             if otx_result['pulses'] > 0:
                 detections += 1
-        except:
+        except Exception:
             pass
         
         # API 5: Generic IP Quality Score
@@ -493,7 +493,7 @@ class ThreatAnalyzer:
                 sources.append('ipqualityscore')
                 if iqs_result.get('is_malicious'):
                     detections += 1
-            except:
+            except Exception:
                 pass
 
         # Optional enrichment: Shodan host context for resolved IP
@@ -509,7 +509,7 @@ class ThreatAnalyzer:
                         detections += 2
                     elif risky_ports > 0:
                         detections += 1
-            except:
+            except Exception:
                 pass
         
         # Determine verdict
@@ -544,7 +544,7 @@ class ThreatAnalyzer:
                     detections += 2
                 elif aip_result.get('abuse_confidence', 0) > 25:
                     detections += 1
-            except:
+            except Exception:
                 pass
         
         # API 2: VirusTotal
@@ -555,7 +555,7 @@ class ThreatAnalyzer:
                 total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
                 if total_vt > 0:
                     detections += min(total_vt, 3)
-            except:
+            except Exception:
                 pass
         
         # API 3: AlienVault OTX
@@ -564,7 +564,7 @@ class ThreatAnalyzer:
             sources.append('otx')
             if otx_result['pulses'] > 0:
                 detections += 1
-        except:
+        except Exception:
             pass
         
         # API 4: IPQualityScore
@@ -574,7 +574,7 @@ class ThreatAnalyzer:
                 sources.append('ipqualityscore')
                 if iqs_result.get('is_malicious'):
                     detections += 1
-            except:
+            except Exception:
                 pass
         
         # API 5: Shodan (if configured)
@@ -586,7 +586,7 @@ class ThreatAnalyzer:
                     detections += 2
                 elif shodan_result.get('risky_ports', 0) > 0:
                     detections += 1
-            except:
+            except Exception:
                 pass
         else:
             sources.append('reputation_db')
@@ -627,7 +627,7 @@ class ThreatAnalyzer:
                 total_vt = vt_result.get('malicious', 0) + vt_result.get('suspicious', 0)
                 if total_vt > 0:
                     detections += min(total_vt, 4)
-            except:
+            except Exception:
                 pass
 
         # Optional: Hybrid Analysis hash lookup
@@ -637,7 +637,7 @@ class ThreatAnalyzer:
                 sources.append('hybrid_analysis')
                 if ha_result.get('is_malicious'):
                     detections += 2
-            except:
+            except Exception:
                 pass
         
         # API 2-5: Other sources
@@ -694,7 +694,7 @@ class ThreatAnalyzer:
                     'malicious': result.get('malicious', 0),
                     'suspicious': result.get('suspicious', 0)
                 }
-        except:
+        except Exception:
             pass
         return {'malicious': 0, 'suspicious': 0}
     
@@ -713,7 +713,7 @@ class ThreatAnalyzer:
                     'malicious': result.get('malicious', 0),
                     'suspicious': result.get('suspicious', 0)
                 }
-        except:
+        except Exception:
             pass
         return {'malicious': 0, 'suspicious': 0}
     
@@ -732,7 +732,7 @@ class ThreatAnalyzer:
                     'malicious': result.get('malicious', 0),
                     'suspicious': result.get('suspicious', 0)
                 }
-        except:
+        except Exception:
             pass
         return {'malicious': 0, 'suspicious': 0}
     
@@ -756,7 +756,7 @@ class ThreatAnalyzer:
                     'abuse_confidence': data.get('abuseConfidenceScore', 0),
                     'total_reports': data.get('totalReports', 0)
                 }
-        except:
+        except Exception:
             pass
         return {'abuse_confidence': 0, 'total_reports': 0}
     
@@ -773,7 +773,7 @@ class ThreatAnalyzer:
             )
             if response.status_code == 201:
                 return {'malicious': False}
-        except:
+        except Exception:
             pass
         return {'malicious': False}
     
@@ -787,7 +787,7 @@ class ThreatAnalyzer:
             )
             if response.status_code == 200:
                 return {'pulses': len(response.json().get('results', []))}
-        except:
+        except Exception:
             pass
         return {'pulses': 0}
     
@@ -800,7 +800,7 @@ class ThreatAnalyzer:
             )
             if response.status_code == 200:
                 return {'pulses': len(response.json().get('results', []))}
-        except:
+        except Exception:
             pass
         return {'pulses': 0}
     
@@ -822,7 +822,7 @@ class ThreatAnalyzer:
                         data.get('fraud_score', 0) > 75
                     )
                 }
-        except:
+        except Exception:
             pass
         return {'is_malicious': False}
     
@@ -845,7 +845,7 @@ class ThreatAnalyzer:
                         data.get('risk_score', 0) > 75
                     )
                 }
-        except:
+        except Exception:
             pass
         return {'is_malicious': False}
 
@@ -867,7 +867,7 @@ class ThreatAnalyzer:
                     'risky_ports': len(risky),
                     'vulns': len(vulns.keys()) if isinstance(vulns, dict) else len(vulns)
                 }
-        except:
+        except Exception:
             pass
         return {'risky_ports': 0, 'vulns': 0}
 
@@ -887,7 +887,7 @@ class ThreatAnalyzer:
                 if isinstance(data, list) and data:
                     max_score = max([int(item.get('threat_score', 0)) for item in data])
                     return {'is_malicious': max_score >= 70}
-        except:
+        except Exception:
             pass
         return {'is_malicious': False}
     
@@ -895,5 +895,15 @@ class ThreatAnalyzer:
         """Resolve domain to IP"""
         try:
             return socket.gethostbyname(domain)
-        except:
+        except Exception:
             return None
+
+    def get_statistics(self) -> Dict:
+        """Get threat analyzer statistics for heartbeat"""
+        return {
+            'queue_size': len(self.scan_queue),
+            'scanned_artifacts': len(self.scanned_artifacts),
+            'scan_history_size': len(self.scan_history),
+            'is_running': self.scanning,
+        }
+

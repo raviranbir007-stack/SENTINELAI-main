@@ -71,7 +71,10 @@ GEMINI_API_KEY = (
 # Gemini Configuration Initialization
 def initialize_gemini_configuration():
     """Initialize Gemini configuration and validate settings"""
-    from server.app.gemini_config import get_gemini_config, validate_gemini_config
+    try:
+        from app.gemini_config import get_gemini_config, validate_gemini_config
+    except ImportError:
+        from server.app.gemini_config import get_gemini_config, validate_gemini_config
     
     try:
         # Get configuration

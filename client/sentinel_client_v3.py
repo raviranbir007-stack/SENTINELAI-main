@@ -49,7 +49,7 @@ CONFIG_FILE = Path("config.ini")
 LOG_FILE = Path("sentinel_client_v3.log")
 
 # Setup logging - MINIMAL CONSOLE OUTPUT
-logger = configure_module_logger("SentinelAI_v3", LOG_FILE)
+logger = configure_module_logger("SentinelAI_v3", LOG_FILE, file_level=logging.INFO)
 
 
 class SentinelClientV3:
@@ -202,11 +202,13 @@ class SentinelClientV3:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "X-Client-ID": self.client_id,
         }
 
     async def register(self) -> bool:
         """Register client with the server"""
         try:
+            logger.info(f"🔗 Attempting registration with {self.server_url}...")
             hostname = socket.gethostname()
             ip_address = socket.gethostbyname(hostname)
 
@@ -254,22 +256,39 @@ class SentinelClientV3:
                 f"{self.server_url}/api/v1/network/client/register",
                 headers=self._get_headers(),
                 json=registration_data,
-                timeout=30,
+                timeout=60,  # Increased from 30s to 60s (registration may trigger email + DB operations)
             )
 
             if response.status_code == 200:
                 result = response.json()
-                self.client_id = result.get("client_id", self.client_id)
-                self.cli.prompt_registration_success(self.client_id)
-                return True
+                server_client_id = result.get("client_id")
+                if server_client_id:
+                    old_client_id = self.client_id
+                    self.client_id = server_client_id
+                    logger.info(f"✅ Registration SUCCESS: {old_client_id[:8]}... → {self.client_id}")
+                    logger.info(f"   Status: {result.get('status')} | Message: {result.get('message')}")
+                    self.cli.prompt_registration_success(self.client_id)
+                    return True
+                else:
+                    logger.error(f"❌ Registration response missing client_id. Response: {result}")
+                    self.cli.prompt_registration_failed("No client_id in response")
+                    return False
             else:
                 # include status code and url for debugging
                 reason = f"{response.status_code} @{self.server_url}"
+                logger.error(f"❌ Registration failed: HTTP {response.status_code}")
+                logger.error(f"   Response: {response.text}")
                 self.cli.prompt_registration_failed(reason)
                 return False
 
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ Registration connection failed: {self.server_url} unreachable")
+            logger.error(f"   Error: {str(e)}")
+            self.cli.prompt_registration_failed(f"Server unreachable: {self.server_url}")
+            return False
         except Exception as e:
             # capture exception message
+            logger.error(f"❌ Registration exception: {str(e)}")
             self.cli.prompt_registration_failed(str(e))
             return False
 
@@ -506,6 +525,11 @@ class SentinelClientV3:
         """Send heartbeat to server"""
         while self.running:
             try:
+                if not self.client_id:
+                    logger.warning("Heartbeat skipped: client_id not set")
+                    await asyncio.sleep(self.heartbeat_interval)
+                    continue
+
                 # Get status from all modules
                 status = {
                     'intrusion_detector': self.intrusion_detector.get_statistics(),
@@ -531,12 +555,12 @@ class SentinelClientV3:
                 )
 
                 if response.status_code == 200:
-                    logger.debug("Heartbeat sent")
+                    logger.debug(f"Heartbeat sent (client_id={self.client_id})")
                 else:
-                    logger.error(f"Heartbeat failed")
+                    logger.error(f"Heartbeat failed ({self.client_id}): {response.status_code} - {response.text}")
 
             except Exception as e:
-                logger.error(f"Heartbeat failed")
+                logger.error(f"Heartbeat error ({self.client_id}): {str(e)}")
 
             await asyncio.sleep(self.heartbeat_interval)
 
@@ -746,13 +770,22 @@ class SentinelClientV3:
 async def main():
     """Main entry point"""
     client = SentinelClientV3()
+    logger.info(f"Initial client_id (pre-registration): {client.client_id[:8]}...")
+    
     registered = await client.register()
+    
+    logger.info(f"Post-registration client_id: {client.client_id}")
+    logger.info(f"Registration result: {'SUCCESS ✅' if registered else 'FAILED ❌'}")
+    
     if not registered:
         # continue regardless of registration result; the client has a full
         # offline mode and aborting the entire program when the server is
         # unavailable is confusing for users who expect monitoring to work
         # regardless.
-        logger.warning("Registration failed, proceeding without server connection")
+        logger.warning("⚠️  Running in offline mode (server registration failed)")
+    else:
+        logger.info("🚀 Starting monitoring with registered client_id...")
+    
     await client.start_monitoring()
 
 

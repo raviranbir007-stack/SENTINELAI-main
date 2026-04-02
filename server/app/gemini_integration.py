@@ -29,10 +29,10 @@ except ImportError:
     LEGACY_GENAI_AVAILABLE = False
 
 try:
-    from server.app.config import settings
+    from app.config import settings
 except ImportError:
     # Fallback when running from within the server package context.
-    from app.config import settings
+    from server.app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -113,25 +113,48 @@ class GeminiIntegration:
     
     def check_availability(self) -> Dict[str, Any]:
         """
-        Check Gemini availability and return status
-        
-        Returns:
-            Dict with availability status and details
+        Check Gemini availability and return status.
+
+        This should be safe and fast for health checks. Avoid real-time
+        API calls here to prevent endpoint timeouts if external Gemini
+        connect is slow or unavailable.
         """
         if not self.is_available():
             return {
                 'available': False,
-                'status': 'not_initialized',
-                'message': 'Gemini AI not initialized'
+                'status': 'not_available',
+                'message': 'Gemini AI not initialized or unavailable'
             }
-        
-        return {
-            'available': True,
-            'status': 'ready',
-            'message': 'Gemini AI is available',
-            'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash',
-            'models_available': len(self.available_models)
-        }
+
+        if SKIP_STARTUP_TESTS:
+            # Skip expensive runtime checks in integration mode.
+            return {
+                'available': True,
+                'status': 'ready',
+                'message': 'Gemini AI initialized (startup tests skipped)',
+                'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash',
+                'models_available': len(self.available_models)
+            }
+
+        # If tests are enabled, do a lightweight non-blocking check where possible.
+        try:
+            model_name = self.available_models[0] if self.available_models else 'gemini-2.5-flash'
+            return {
+                'available': True,
+                'status': 'ready',
+                'message': 'Gemini AI initialized',
+                'model': model_name,
+                'models_available': len(self.available_models)
+            }
+        except Exception as e:
+            logger.warning(f"Gemini availability check minor failure: {e}")
+            return {
+                'available': False,
+                'status': 'error',
+                'message': f'Gemini availability check failed: {e}',
+                'model': 'N/A',
+                'models_available': len(self.available_models)
+            }
     
     async def analyze_with_gemini(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
