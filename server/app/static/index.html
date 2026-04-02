@@ -4777,6 +4777,27 @@
                     }
                     
                     content.innerHTML = `
+                        <div style="margin-bottom: 2rem; padding: 1.2rem; background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05)); border-left: 4px solid var(--destructive); border-radius: 8px;">
+                            <div style="font-size: 1.125rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--destructive);">🔍 VULNERABILITY SCAN REPORT</div>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                                <div style="padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.3rem;">Target</div>
+                                    <div style="font-family: monospace; font-size: 0.875rem; word-break: break-all;" title="${scan.target}">${scan.target.length > 25 ? scan.target.substring(0, 22) + '...' : scan.target}</div>
+                                </div>
+                                <div style="padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.3rem;">Scan Type</div>
+                                    <div style="font-weight: 600;">${scan.type || 'unknown'}</div>
+                                </div>
+                                <div style="padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.3rem;">Risk Level</div>
+                                    <div style="font-weight: 600; color: ${threatColor};">${normalizedThreatLevel.toUpperCase()}</div>
+                                </div>
+                                <div style="padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.3rem;">Threats Found</div>
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: ${scan.threats_detected > 0 ? 'var(--destructive)' : 'var(--success)'}">${scan.threats_detected || 0}</div>
+                                </div>
+                            </div>
+                        </div>
                         <div style="margin-bottom: 1.5rem;">
                             <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Scan ID</div>
                             <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.125rem;">${scan.scan_id}</div>
@@ -7009,6 +7030,22 @@
             if (modal) modal.remove();
         }
 
+        function extractScanIdFromNotification(notif) {
+            // Try to extract scan ID from message or metadata
+            const message = String(notif?.message || '');
+            const fullText = `${notif?.title || ''} ${message}`;
+            
+            // Look for SCAN-xxx format or scan_id pattern
+            const scanIdMatch = fullText.match(/SCAN-[A-F0-9]{8,}/i);
+            if (scanIdMatch) return scanIdMatch[0];
+            
+            // Check if notif has metadata with scan_id
+            if (notif?.metadata?.scan_id) return notif.metadata.scan_id;
+            if (notif?.scan_id) return notif.scan_id;
+            
+            return null;
+        }
+
         function inferNotificationActions(notif) {
             const title = String(notif?.title || '').toLowerCase();
             const message = String(notif?.message || '').toLowerCase();
@@ -7017,12 +7054,15 @@
 
             if (/report|pdf|analysis/.test(blob)) actions.push({ key: 'reports', label: 'Open Reports' });
             if (/threat|attack|intrusion|quarantine|security event|malicious/.test(blob)) actions.push({ key: 'threats', label: 'Open Threat Center' });
-            if (/scan|scan id|scanning/.test(blob)) actions.push({ key: 'scans', label: 'Open Scans' });
+            if (/scan|scan id|scanning|vulnerability/.test(blob)) {
+                const scanId = extractScanIdFromNotification(notif);
+                actions.push({ key: 'scans', label: scanId ? 'View Scan Details' : 'Open Scans', meta: { scanId } });
+            }
 
             return actions.slice(0, 3);
         }
 
-        function handleNotificationAction(notifId, actionKey, closeDetail = true) {
+        function handleNotificationAction(notifId, actionKey, closeDetail = true, meta = {}) {
             const notif = notifications.find(n => n.id === notifId);
             if (notif) {
                 notif.read = true;
@@ -7038,9 +7078,17 @@
                 viewAllThreats();
                 showToast('Opened threat center', 'warning');
             } else if (actionKey === 'scans') {
-                switchPage('scans');
-                fetchScanHistory();
-                showToast('Opened scans', 'info');
+                // If we have a scan ID from the notification, open it directly
+                const scanId = meta?.scanId || extractScanIdFromNotification(notif);
+                if (scanId) {
+                    viewScanDetail(scanId);
+                    showToast('Loading scan details...', 'info');
+                } else {
+                    // Fallback: just show the scans list
+                    switchPage('scans');
+                    fetchScanHistory();
+                    showToast('Opened scans', 'info');
+                }
             }
 
             renderNotifications();
@@ -7076,8 +7124,11 @@
                             <span style="font-size:0.82rem;color:var(--muted-foreground);">${escHtml(notif.time || '')}</span>
                         </div>
                         <div style="line-height:1.6;font-size:0.92rem;white-space:pre-wrap;word-break:break-word;">${escHtml(notif.message || '')}</div>
-                        <div style="display:flex;flex-wrap:wrap;gap:0.55rem;justify-content:flex-end;">
-                            ${actions.map(a => `<button class="btn btn-outline btn-sm" onclick="handleNotificationAction(${notif.id}, '${a.key}')">${a.label}</button>`).join('')}
+                    <div style="display:flex;flex-wrap:wrap;gap:0.55rem;justify-content:flex-end;">
+                            ${actions.map(a => {
+                                const metaStr = a.meta?.scanId ? `,'${a.meta.scanId}'` : '';
+                                return `<button class="btn btn-outline btn-sm" onclick="handleNotificationAction(${notif.id}, '${a.key}', true, {scanId:'${a.meta?.scanId || ''}'})">${a.label}</button>`;
+                            }).join('')}
                             <button class="btn btn-cyber btn-sm" onclick="closeNotificationDetail()">Close</button>
                         </div>
                     </div>
@@ -7113,7 +7164,7 @@
                     <div style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 0.25rem;">${notif.message}</div>
                     ${actions.length ? `
                         <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.3rem;" onclick="event.stopPropagation();">
-                            ${actions.map(a => `<button class="btn btn-outline btn-sm" style="padding:0.18rem 0.45rem;font-size:0.72rem;" onclick="handleNotificationAction(${notif.id}, '${a.key}', false)">${a.label}</button>`).join('')}
+                            ${actions.map(a => `<button class="btn btn-outline btn-sm" style="padding:0.18rem 0.45rem;font-size:0.72rem;" onclick="handleNotificationAction(${notif.id}, '${a.key}', false, {scanId:'${a.meta?.scanId || ''}'})">${a.label}</button>`).join('')}
                         </div>
                     ` : ''}
                     <div style="font-size: 0.75rem; color: var(--muted-foreground);">${notif.time}</div>
