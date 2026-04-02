@@ -54,31 +54,6 @@ class ActivityLogger:
         self.os_log_file = os_log_file or self._detect_os_log_file()
         self._log_fp = None
 
-        # Initialize database
-        self._init_database()
-        
-    def _should_trigger_scan(self, url_or_domain: str) -> bool:
-        """
-        Check if a URL/domain should trigger a scan.
-        Returns False if it was scanned within the last 5 seconds (deduplication).
-        Returns True and updates the timestamp if it should be scanned.
-        """
-        now = time.time()
-        key = str(url_or_domain).lower().strip()
-        
-        # Clean up old entries (older than dedup window)
-        expired_keys = [k for k, t in self._recent_scans.items() if now - t > self._scan_dedup_window_seconds]
-        for k in expired_keys:
-            del self._recent_scans[k]
-        
-        # Check if recently scanned
-        if key in self._recent_scans:
-            return False
-        
-        # Mark as scanned and allow
-        self._recent_scans[key] = now
-        return True
-        
         # Browser process names by platform
         self.BROWSER_PROCESSES = {
             'firefox', 'firefox.exe', 'firefox-bin',
@@ -115,6 +90,31 @@ class ActivityLogger:
 
         # Chrome/Chromium timestamp origin: microseconds since 1601-01-01
         self._chrome_epoch_offset = 11644473600  # seconds between 1601-01-01 and 1970-01-01
+
+        # Initialize database
+        self._init_database()
+        
+    def _should_trigger_scan(self, url_or_domain: str) -> bool:
+        """
+        Check if a URL/domain should trigger a scan.
+        Returns False if it was scanned within the last 5 seconds (deduplication).
+        Returns True and updates the timestamp if it should be scanned.
+        """
+        now = time.time()
+        key = str(url_or_domain).lower().strip()
+        
+        # Clean up old entries (older than dedup window)
+        expired_keys = [k for k, t in self._recent_scans.items() if now - t > self._scan_dedup_window_seconds]
+        for k in expired_keys:
+            del self._recent_scans[k]
+        
+        # Check if recently scanned
+        if key in self._recent_scans:
+            return False
+        
+        # Mark as scanned and allow
+        self._recent_scans[key] = now
+        return True
 
     def _init_database(self):
         """Initialize SQLite database for activity logs"""
