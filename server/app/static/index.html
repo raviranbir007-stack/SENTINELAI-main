@@ -1877,6 +1877,15 @@
             box-shadow: 0 0 20px rgba(45, 212, 191, 0.2);
         }
 
+        .card.active {
+            border: 1px solid rgba(45, 212, 191, 0.75);
+            background: rgba(45, 212, 191, 0.1);
+            box-shadow: 0 0 14px rgba(45, 212, 191, 0.25);
+            transform: translateY(-1px);
+        }
+
+        .card.active div { color: #d3f7f2; }
+
         .btn-card-content h4 {
             font-size: 0.875rem;
             font-weight: 500;
@@ -2791,7 +2800,7 @@
                 </div>
 
                 <!-- Scan Type Quick-pick -->
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 2rem;">
+                <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-bottom: 2rem;">
                     <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="ip">
                         <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
                         <div style="font-weight:600;font-size:0.875rem;">IP Address</div>
@@ -2811,6 +2820,11 @@
                         <div style="font-size:1.5rem;margin-bottom:0.5rem;">📁</div>
                         <div style="font-weight:600;font-size:0.875rem;">File / Folder</div>
                         <div style="font-size:0.75rem;color:var(--muted-foreground);">Deep inspection</div>
+                    </div>
+                    <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="file_type">
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">🗎</div>
+                        <div style="font-weight:600;font-size:0.875rem;">File Type / Doc</div>
+                        <div style="font-size:0.75rem;color:var(--muted-foreground);">pdf, docx, xlsx, hash</div>
                     </div>
                 </div>
 
@@ -7345,19 +7359,47 @@
 
             try {
                 // Detect scan type
-                let type = 'ip';
-                if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-                    type = target.startsWith('http') ? 'url' : 'domain';
-                } else if (target.length === 32 || target.length === 40 || target.length === 64) {
-                    type = 'hash';
+                let type = selectedScanType || 'ip';
+                const hashRegex = /^([a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
+                const extRegex = /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt|md|csv|zip|exe|dll|ps1)$/i;
+
+                if (type === 'ip') {
+                    if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    }
+                } else if (type === 'domain') {
+                    if (target.startsWith('http')) {
+                        type = 'url';
+                    }
+                } else if (type === 'url') {
+                    if (!target.startsWith('http')) {
+                        type = target.match(/^\d+\.\d+\.\d+\.\d+$/) ? 'ip' : 'domain';
+                    }
+                } else if (type === 'file_type') {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else {
+                        type = 'file';
+                    }
+                }
+
+                if (!['ip','domain','url','file','hash'].includes(type)) {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else if (extRegex.test(target) || target.includes('/') || target.includes('\\')) {
+                        type = 'file';
+                    } else if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    } else {
+                        type = 'ip';
+                    }
                 }
 
                 const result = await apiRequest(API_ENDPOINTS.scan, {
                     method: 'POST',
                     body: JSON.stringify({ type, target })
                 });
-
-                const isThreat = isThreatResult(result);
+const isThreat = isThreatResult(result);
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
                 lastScanMeta = { target, time: new Date().toISOString() };
                 updateSystemStatusPanel();
@@ -8754,12 +8796,41 @@
             statusDiv.textContent = 'Scanning in progress...';
 
             try {
-                // Detect scan type
-                let type = 'ip';
-                if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-                    type = target.startsWith('http') ? 'url' : 'domain';
-                } else if (target.length === 32 || target.length === 40 || target.length === 64) {
-                    type = 'hash';
+                // Detect scan type (quick-pick selection + heuristic fallback)
+                let type = selectedScanType || 'ip';
+                const hashRegex = /^([a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
+                const extRegex = /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt|md|csv|zip|exe|dll|ps1)$/i;
+
+                if (type === 'ip') {
+                    if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    }
+                } else if (type === 'domain') {
+                    if (target.startsWith('http')) {
+                        type = 'url';
+                    }
+                } else if (type === 'url') {
+                    if (!target.startsWith('http')) {
+                        type = target.match(/^\d+\.\d+\.\d+\.\d+$/) ? 'ip' : 'domain';
+                    }
+                } else if (type === 'file_type') {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else {
+                        type = 'file';
+                    }
+                }
+
+                if (!['ip','domain','url','file','hash'].includes(type)) {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else if (extRegex.test(target) || target.includes('/') || target.includes('\\')) {
+                        type = 'file';
+                    } else if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    } else {
+                        type = 'ip';
+                    }
                 }
 
                 const result = await apiRequest(API_ENDPOINTS.scan, {
@@ -9280,22 +9351,30 @@
         }
 
         // Scan type selection
-        document.querySelectorAll('[data-scan-type]').forEach(card => {
-            card.addEventListener('click', () => {
-                const type = card.dataset.scanType;
-                const input = document.getElementById('newScanInput');
-                if (input) {
-                    const placeholders = {
-                        ip: 'Enter IP address (e.g., 192.168.1.1)...',
-                        domain: 'Enter domain (e.g., example.com)...',
-                        url: 'Enter URL (e.g., https://example.com)...',
-                        file: 'Upload file for analysis...'
-                    };
-                    input.placeholder = placeholders[type] || 'Enter target...';
-                    input.focus();
-                }
+        let selectedScanType = 'ip';
+        function setActiveScanType(type) {
+            selectedScanType = type;
+            document.querySelectorAll('[data-scan-type]').forEach(card => {
+                card.classList.toggle('active', card.dataset.scanType === type);
             });
+            const input = document.getElementById('newScanInput');
+            if (input) {
+                const placeholders = {
+                    ip: 'Enter IP address (e.g., 192.168.1.1)...',
+                    domain: 'Enter domain (e.g., example.com)...',
+                    url: 'Enter URL (e.g., https://example.com)...',
+                    file: 'Enter file path or upload with file/folder selectors...',
+                    file_type: 'Enter file type, document name, extension, or hash (pdf, docx, xlsx, sha256...)'
+                };
+                input.placeholder = placeholders[type] || 'Enter target...';
+                input.focus();
+            }
+        }
+
+        document.querySelectorAll('[data-scan-type]').forEach(card => {
+            card.addEventListener('click', () => setActiveScanType(card.dataset.scanType || 'ip'));
         });
+        setActiveScanType('ip');
 
         // Close modals on outside click
         const scanDetailModal = document.getElementById('scanDetailModal');
