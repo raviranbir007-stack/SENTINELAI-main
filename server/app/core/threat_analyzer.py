@@ -5,6 +5,7 @@ Enhanced with Multi-API Corroboration Engine
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -699,6 +700,10 @@ class ThreatAnalyzer:
                 {"key": "abuseipdb", "name": "AbuseIPDB"},
                 {"key": "shodan", "name": "Shodan"},
             ],
+            "file": [
+                {"key": "virustotal", "name": "VirusTotal"},
+                {"key": "hybrid_analysis", "name": "Hybrid Analysis"},
+            ],
             "file_hash": [
                 {"key": "virustotal", "name": "VirusTotal"},
                 {"key": "hybrid_analysis", "name": "Hybrid Analysis"},
@@ -984,10 +989,15 @@ class ThreatAnalyzer:
                     normalized_value, hash_type, analysis_result
                 )
 
+            elif input_type == InputType.FILE:
+                analysis_result = await self._analyze_file(
+                    normalized_value, metadata, analysis_result
+                )
+
             else:
                 analysis_result["verdict"] = ThreatLevel.SUSPICIOUS
                 analysis_result["summary"] = (
-                    "Input type could not be determined. Please provide a valid IP, URL, domain, or file hash."
+                    "Input type could not be determined. Please provide a valid IP, URL, domain, file name, or file hash."
                 )
 
             # Always apply AI/ML analysis after all API results are collected
@@ -1673,6 +1683,14 @@ class ThreatAnalyzer:
         warnings = result.setdefault("warnings", [])
         self._prepare_api_tracking(result, result.get("input_type", "url"))
 
+        # Handle chrome-extension wrappers by using embedded URL if present
+        if url.lower().startswith("chrome-extension://"):
+            embedded = InputDetector.extract_embedded_url(url)
+            if embedded:
+                logger.debug(f"Extracted embedded URL from chrome-extension wrapper: {embedded}")
+                result.setdefault("metadata", {})["original_wrapper"] = url
+                url = embedded
+
         # Run heuristic analysis first
         logger.debug(f"Running heuristic analysis on URL: {url}")
         heuristic_threats = self._analyze_url_heuristics(url)
@@ -2217,6 +2235,60 @@ class ThreatAnalyzer:
 
         return result
     
+    async def _analyze_file(self, file_value: str, metadata: Dict, result: Dict) -> Dict:
+        """Analyze filename/path inputs for suspicious extensions and provide heuristic and API-assisted analysis."""
+        logger.debug(f"Analyzing file input: {file_value}")
+
+        # Start with heuristic file extension checks
+        threats = list(result.get("threat_indicators", []))
+        self._prepare_api_tracking(result, result.get("input_type", "file"))
+
+        file_extension = metadata.get("file_extension") if isinstance(metadata, dict) else None
+        if not file_extension and "." in str(file_value):
+            file_extension = "." + str(file_value).strip().split('.')[-1].lower()
+
+        suspicious_exts = {
+            ".exe", ".dll", ".bat", ".cmd", ".com", ".js", ".vbs", ".ps1", ".scr", ".jar", ".msi", ".docm", ".xlsm", ".pptm"
+        }
+
+        if file_extension and file_extension.lower() in suspicious_exts:
+            threats.append({
+                "source": "Heuristic Analysis",
+                "severity": "suspicious",
+                "indicator": f"Suspicious file extension detected: {file_extension}",
+                "type": "suspicious_file_extension",
+                "confidence": 0.55,
+            })
+
+        # If external APIs are enabled, attempt file-hash intelligence via derived hash path
+        if result.get("use_external_apis", settings.EXTERNAL_APIS_ENABLED):
+            derived_hash = hashlib.sha256(str(file_value).encode("utf-8")).hexdigest()
+            result.setdefault("metadata", {})["derived_file_hash"] = derived_hash
+            result.setdefault("metadata", {})["file_extension"] = file_extension
+
+            # Keep existing heuristics + API results merged from file hash path
+            hash_analysis = await self._analyze_file_hash(derived_hash, "sha256", result)
+            result = hash_analysis
+            # Post-process to preserve the heuristic markers
+            result_threats = result.get("threat_indicators", [])
+            result["threat_indicators"] = threats + [t for t in result_threats if t not in threats]
+            result["summary"] = (
+                "File detected by extension. Derived hash-based API checks completed; use actual file hash for strongest results."
+            )
+            return result
+
+        # Otherwise evaluate locally and skip external APIs
+        self._mark_external_apis_skipped(result, reason="File path/name input does not support direct external API lookup; provide hash for full coverage")
+
+        result["threat_indicators"] = threats
+        result = self._calculate_verdict(result)
+        if not result.get("summary"):
+            result["summary"] = (
+                "File input acknowledged. For hash-based analysis, provide a MD5/SHA1/SHA256 hash."
+            )
+
+        return result
+
     async def _apply_ai_analysis(self, result: Dict) -> Dict:
         """
         Apply AI and ML models to enhance threat analysis with predictions
@@ -2498,7 +2570,7 @@ class ThreatAnalyzer:
             return "network"
         if input_type in {"url", "domain"}:
             return "browser"
-        if input_type in {"file_hash", "hash"}:
+        if input_type in {"file", "file_hash", "hash"}:
             return "file"
 
         sources = " ".join(str((t or {}).get("source", "")).lower() for t in threats if isinstance(t, dict))

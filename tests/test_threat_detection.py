@@ -38,6 +38,11 @@ async def test_universal_scan():
             "target": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "description": "Scan SHA256 hash (empty file)",
         },
+        {
+            "name": "File Name Scan",
+            "target": "report.docx",
+            "description": "Scan file name/type for heuristic file analysis",
+        },
     ]
 
     async with httpx.AsyncClient(timeout=30.0) as client:

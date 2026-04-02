@@ -22,6 +22,13 @@ class InputType(str, Enum):
 class InputDetector:
     """Detects and validates input type"""
 
+    # Known file-like extensions for hint-based detection
+    FILE_EXTENSIONS = {
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf', '.odt', '.md', '.csv', '.zip',
+        '.exe', '.dll', '.bat', '.cmd', '.com', '.js', '.vbs', '.ps1', '.scr', '.jar', '.msi', '.docm', '.xlsm', '.pptm',
+        '.html', '.htm', '.xml', '.json', '.yaml', '.yml', '.tar', '.gz', '.7z', '.rar'
+    }
+
     # Regex patterns
     IPV4_PATTERN = re.compile(
         r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
@@ -114,7 +121,15 @@ class InputDetector:
     @staticmethod
     def is_url(value: str) -> bool:
         """Check if value is a valid URL"""
-        return bool(InputDetector.URL_PATTERN.match(value))
+        if InputDetector.URL_PATTERN.match(value):
+            return True
+
+        value_lower = value.strip().lower()
+        # Allow chrome-extension wrappers with embedded http(s) URL
+        if value_lower.startswith("chrome-extension://") and InputDetector.extract_embedded_url(value):
+            return True
+
+        return False
 
     @staticmethod
     def is_domain(value: str) -> bool:
@@ -122,7 +137,45 @@ class InputDetector:
         value = value.strip().lower()
         if value.startswith("http://") or value.startswith("https://"):
             return False
+
+        # Avoid confusing file names with domains (e.g., report.docx)
+        if "." in value:
+            ext = "." + value.split('.')[-1]
+            if ext in InputDetector.FILE_EXTENSIONS:
+                return False
+
         return bool(InputDetector.DOMAIN_PATTERN.match(value))
+
+    @staticmethod
+    def extract_embedded_url(value: str) -> str:
+        """Extract embedded URL, e.g., from chrome-extension:// wrapper."""
+        try:
+            m = re.search(r"(https?://[^\s]+)", value, re.IGNORECASE)
+            if m:
+                extracted = m.group(1).strip().rstrip(' ,;')
+                return extracted
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def is_file(value: str) -> bool:
+        """Check if value looks like a file path/type"""
+        value = value.strip().lower()
+        if not value:
+            return False
+
+        if '/' in value or '\\' in value:
+            # Windows or Unix path access by name or extension
+            ext = '.' + value.split('.')[-1] if '.' in value else ''
+            return ext in InputDetector.FILE_EXTENSIONS
+
+        if '.' in value and not value.startswith('http') and not InputDetector.is_domain(value):
+            # name.pdf, myfile.docx etc.
+            ext = '.' + value.split('.')[-1]
+            return ext in InputDetector.FILE_EXTENSIONS
+
+        return False
 
     @staticmethod
     def defang_to_normal(value: str) -> str:
@@ -189,13 +242,21 @@ class InputDetector:
 
         # Check URL
         if InputDetector.is_url(value):
-            parsed = urlparse(value)
+            # Handle chrome-extension URL wrapper by extracting the inner web URL
+            parsed_value = value
+            if value.lower().startswith("chrome-extension://"):
+                embedded_url = InputDetector.extract_embedded_url(value)
+                if embedded_url:
+                    parsed_value = embedded_url
+
+            parsed = urlparse(parsed_value)
             return InputType.URL, {
                 "scheme": parsed.scheme,
                 "netloc": parsed.netloc,
                 "path": parsed.path,
-                "value": value,
-                "original_value": original_value if original_value != value else None
+                "value": parsed_value,
+                "original_value": original_value if original_value != parsed_value else None,
+                "wrapper": "chrome-extension" if value.lower().startswith("chrome-extension://") else None,
             }
 
         # Check file hash
@@ -204,6 +265,14 @@ class InputDetector:
             return InputType.FILE_HASH, {
                 "hash_type": hash_type, 
                 "value": value,
+                "original_value": original_value if original_value != value else None
+            }
+
+        # Check file path / extension (new file type handling)
+        if InputDetector.is_file(value):
+            return InputType.FILE, {
+                "value": value,
+                "file_extension": '.' + value.split('.')[-1].lower() if '.' in value else None,
                 "original_value": original_value if original_value != value else None
             }
 
