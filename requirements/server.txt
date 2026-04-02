@@ -1,0 +1,4 @@
+# SENTINEL-AI Server Requirements
+# Includes base requirements plus server-specific dependencies
+
+-r base.txt

@@ -537,43 +537,49 @@ class Dashboard {
    * Update threats display
    */
   updateThreatsDisplay(threats) {
-    const threatsList = document.getElementById('threats-list');
+    const threatsTableBody = document.getElementById('threatsTableBody');
     const threatsData = threats && threats.length > 0 ? threats : [];
-    threatsList.innerHTML = threatsData.map(threat => {
-      // API Coverage block
-      let apiCoverageHTML = '';
-      if (threat.api_status || (threat.analysis && threat.analysis.api_results && threat.analysis.api_results.api_status)) {
-        const apiStatus = threat.api_status || (threat.analysis && threat.analysis.api_results && threat.analysis.api_results.api_status) || {};
-        apiCoverageHTML = `<div style="margin-top:0.5rem;font-size:0.95em;">
-          <strong>API Coverage:</strong> ` + Object.entries(apiStatus).map(([api, meta]) => {
-            let icon = '❔';
-            let color = '#aaa';
-            if (meta.status === 'checked' || meta.status === 'clean' || meta.status === 'no_threat') { icon = '✅'; color = 'green'; }
-            else if (meta.status === 'error') { icon = '❌'; color = 'red'; }
-            else if (meta.status === 'not_configured') { icon = '⚠️'; color = 'orange'; }
-            else if (meta.status === 'not_applicable') { icon = '⏭️'; color = '#888'; }
-            else if (meta.status === 'pending') { icon = '⏳'; color = '#888'; }
-            else if (meta.status === 'rate_limited') { icon = '🚫'; color = 'orange'; }
-            return `<span style="margin-right:0.5em;color:${color}">${icon} ${meta.name || api}</span>`;
-          }).join('') + `</div>`;
-      }
-      // Mark as Read button
-      let markReadBtn = '';
-      if (!threat.is_read && threat.scan_id) {
-        markReadBtn = `<button style="margin-top:0.5rem;background:var(--success);color:white;border:none;padding:0.4rem 1rem;border-radius:4px;cursor:pointer;font-size:0.95em;" onclick="window.dashboard.markThreatAsRead('${threat.scan_id}')">Mark as Read</button>`;
-      }
+    
+    threatsTableBody.innerHTML = threatsData.map(threat => {
+      const threatId = threat.id || threat.scan_id || threat.threat_id || `threat-${Math.random().toString(36).substr(2, 9)}`;
+      const type = threat.type || threat.threat_type || 'Unknown';
+      const target = threat.target || threat.name || threat.file_path || 'N/A';
+      const severity = threat.severity || threat.threat_level || 'low';
+      const source = threat.source || threat.detected_by || 'System';
+      const location = threat.location || threat.path || 'Local';
+      const time = threat.timestamp ? new Date(threat.timestamp).toLocaleString() : new Date().toLocaleString();
+      
+      // Determine severity color
+      const severityColor = {
+        'critical': 'var(--destructive)',
+        'high': 'var(--warning)',
+        'medium': 'var(--primary)',
+        'low': 'var(--success)'
+      }[severity.toLowerCase()] || 'var(--muted-foreground)';
+      
       return `
-        <div class="threat-item severity-${threat.severity}">
-          <div class="threat-info">
-            <div class="threat-name">${threat.name || threat.target || threat.scan_id}</div>
-            <div class="threat-details">${threat.details || threat.summary || ''}</div>
-            ${apiCoverageHTML}
-            ${markReadBtn}
-          </div>
-          <div class="threat-severity ${threat.severity}">${threat.severity}</div>
-        </div>
+        <tr data-severity="${severity.toLowerCase()}">
+          <td style="font-family: monospace; font-size: 0.9rem;">${threatId}</td>
+          <td>${type}</td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${target}">${target}</td>
+          <td>
+            <span style="background: ${severityColor}; color: white; padding: 0.25rem 0.5rem; border-radius: 12px; font-size: 0.8rem; text-transform: uppercase;">
+              ${severity}
+            </span>
+          </td>
+          <td>${source}</td>
+          <td>${location}</td>
+          <td style="font-size: 0.9rem; color: var(--muted-foreground);">${time}</td>
+          <td style="text-align: right;">
+            <button class="btn btn-ghost btn-sm" onclick="window.dashboard.viewThreatDetails('${threatId}')" title="View Details">👁️</button>
+            ${threat.report_url ? `<button class="btn btn-ghost btn-sm" onclick="window.open('${threat.report_url}', '_blank')" title="Download Report">📄</button>` : ''}
+          </td>
+        </tr>
       `;
     }).join('');
+    
+    // Update threat count
+    this.updateVisibleThreatCount();
   }
 
   /**
@@ -1106,6 +1112,135 @@ class Dashboard {
       toast.style.animation = 'slideOut 0.3s ease';
       setTimeout(() => toast.remove(), 300);
     }, 3000);
+  }
+
+  /**
+   * Filter dashboard by status type
+   */
+  filterByStatus(statusType) {
+    console.log(`🔍 Filtering by status: ${statusType}`);
+    
+    // Update active filter button
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    const activeBtn = document.querySelector(`[data-filter="${statusType}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+    
+    // Filter threat table rows
+    const rows = document.querySelectorAll('#threatsTableBody tr');
+    rows.forEach(row => {
+      const severity = row.getAttribute('data-severity') || '';
+      if (statusType === 'all' || severity.includes(statusType.toLowerCase())) {
+        row.style.display = '';
+      } else {
+        row.style.display = 'none';
+      }
+    });
+    
+    // Update visible count
+    this.updateVisibleThreatCount();
+  }
+
+  /**
+   * Show alerts panel
+   */
+  showAlertsPanel() {
+    console.log('🔔 Showing alerts panel');
+    
+    // Scroll to alerts section
+    const alertsSection = document.querySelector('#alerts-section');
+    if (alertsSection) {
+      alertsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      
+      // Highlight the section briefly
+      alertsSection.style.boxShadow = '0 0 20px var(--primary)';
+      setTimeout(() => {
+        alertsSection.style.boxShadow = '';
+      }, 2000);
+    }
+  }
+
+  /**
+   * Show API status panel
+   */
+  showApiStatus() {
+    console.log('🔗 Showing API status panel');
+    
+    // Scroll to API status section
+    const apiSection = document.querySelector('#api-status-section');
+    if (apiSection) {
+      apiSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      
+      // Highlight the section briefly
+      apiSection.style.boxShadow = '0 0 20px var(--primary)';
+      setTimeout(() => {
+        apiSection.style.boxShadow = '';
+      }, 2000);
+    }
+  }
+
+  /**
+   * Update visible threat count
+   */
+  updateVisibleThreatCount() {
+    const visibleRows = document.querySelectorAll('#threatsTableBody tr:not([style*="display: none"])');
+    const totalRows = document.querySelectorAll('#threatsTableBody tr');
+    
+    const countElement = document.querySelector('#threat-count');
+    if (countElement) {
+      countElement.textContent = `${visibleRows.length}/${totalRows.length}`;
+    }
+  }
+
+  /**
+   * View threat details
+   */
+  async viewThreatDetails(threatId) {
+    try {
+      this.showLoading(true, 'Loading threat details...');
+      const threatDetails = await this.api.getThreatDetails(threatId);
+      
+      // Create modal to show threat details
+      const modal = document.createElement('div');
+      modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;display:flex;align-items:center;justify-content:center;padding:2rem;';
+      modal.innerHTML = `
+        <div style="background:var(--card);border-radius:8px;max-width:800px;width:100%;max-height:90vh;overflow-y:auto;padding:2rem;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <h2>Threat Details: ${threatId}</h2>
+            <button onclick="this.closest('[style*=fixed]').remove()" style="background:var(--destructive);color:white;border:none;padding:0.5rem 1rem;border-radius:4px;cursor:pointer;">Close</button>
+          </div>
+          <div style="display:grid;gap:1rem;">
+            <div style="background:var(--secondary);padding:1rem;border-radius:6px;">
+              <h3>Basic Information</h3>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:0.5rem;">
+                <div><strong>Type:</strong> ${threatDetails.type || 'Unknown'}</div>
+                <div><strong>Severity:</strong> ${threatDetails.severity || 'Unknown'}</div>
+                <div><strong>Source:</strong> ${threatDetails.source || 'Unknown'}</div>
+                <div><strong>Timestamp:</strong> ${threatDetails.timestamp ? new Date(threatDetails.timestamp).toLocaleString() : 'Unknown'}</div>
+              </div>
+            </div>
+            <div style="background:var(--secondary);padding:1rem;border-radius:6px;">
+              <h3>Description</h3>
+              <p style="margin-top:0.5rem;">${threatDetails.description || threatDetails.details || 'No description available'}</p>
+            </div>
+            ${threatDetails.recommendations ? `
+              <div style="background:var(--secondary);padding:1rem;border-radius:6px;">
+                <h3>Recommendations</h3>
+                <p style="margin-top:0.5rem;">${threatDetails.recommendations}</p>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      this.showLoading(false);
+    } catch (error) {
+      console.error('Error loading threat details:', error);
+      this.showToast('Failed to load threat details', 'error');
+      this.showLoading(false);
+    }
   }
 }
 

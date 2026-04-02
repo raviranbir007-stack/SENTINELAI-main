@@ -1,14 +1,451 @@
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
+from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
-class SecurityTelemetryStore:
+class CircuitBreakerState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class EnhancedSecurityTelemetryStore:
+    """Enhanced security telemetry with improved API failure handling and recovery"""
+
+    def __init__(self, db_path: str = "security_telemetry.db"):
+        base = Path(__file__).resolve().parents[2]
+        self.db_path = str((base / db_path).resolve())
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = Lock()
+        self._init_schema()
+
+        # Circuit breaker configuration
+        self._circuit_configs = {
+            "default": {
+                "failure_threshold": 5,
+                "recovery_timeout": 60,  # seconds
+                "success_threshold": 3,  # successes needed to close circuit
+                "timeout_threshold": 3
+            }
+        }
+
+        # In-memory circuit states
+        self._circuit_states: Dict[str, Dict] = {}
+
+    def _connect(self):
+        return sqlite3.connect(self.db_path)
+
+    def _init_schema(self):
+        conn = self._connect()
+        cur = conn.cursor()
+
+        # Enhanced API quality metrics
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_quality_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_name TEXT NOT NULL,
+                input_type TEXT,
+                status TEXT NOT NULL,
+                latency_ms REAL DEFAULT 0,
+                confidence REAL,
+                verdict TEXT,
+                is_timeout INTEGER DEFAULT 0,
+                is_false_positive INTEGER DEFAULT 0,
+                retry_count INTEGER DEFAULT 0,
+                circuit_breaker_state TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Enhanced circuit breaker state
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_circuit_state (
+                api_name TEXT PRIMARY KEY,
+                state TEXT DEFAULT 'closed',
+                fail_count INTEGER DEFAULT 0,
+                timeout_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                opened_until_epoch REAL DEFAULT 0,
+                last_failure_epoch REAL DEFAULT 0,
+                last_success_epoch REAL DEFAULT 0,
+                consecutive_successes INTEGER DEFAULT 0,
+                total_calls INTEGER DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # API failure patterns for analysis
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_failure_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_name TEXT NOT NULL,
+                failure_type TEXT NOT NULL,
+                error_message TEXT,
+                input_type TEXT,
+                pattern_hash TEXT,
+                frequency INTEGER DEFAULT 1,
+                first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Recovery actions tracking
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_recovery_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_name TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                success INTEGER DEFAULT 0,
+                details TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        conn.commit()
+        conn.close()
+
+    def record_api_metric(self, api_name: str, input_type: str, status: str,
+                         latency_ms: float = 0.0, is_timeout: bool = False,
+                         retry_count: int = 0) -> None:
+        """Record enhanced API call metrics with circuit breaker state"""
+        with self._lock:
+            conn = self._connect()
+            cur = conn.cursor()
+
+            # Get current circuit state
+            circuit_state = self.get_circuit_state(api_name)
+            circuit_state_str = circuit_state.get("state", "closed")
+
+            cur.execute(
+                """
+                INSERT INTO api_quality_metrics
+                (api_name, input_type, status, latency_ms, is_timeout, retry_count, circuit_breaker_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (api_name, input_type, status, latency_ms, int(is_timeout), retry_count, circuit_state_str)
+            )
+
+            # Update circuit breaker state based on result
+            self._update_circuit_state(api_name, status, is_timeout)
+
+            conn.commit()
+            conn.close()
+
+    def _update_circuit_state(self, api_name: str, status: str, is_timeout: bool):
+        """Update circuit breaker state based on API call result"""
+        current_time = time.time()
+        config = self._circuit_configs.get(api_name, self._circuit_configs["default"])
+
+        # Get current state
+        state = self.get_circuit_state(api_name)
+        current_state = state.get("state", CircuitBreakerState.CLOSED.value)
+        fail_count = state.get("fail_count", 0)
+        timeout_count = state.get("timeout_count", 0)
+        success_count = state.get("success_count", 0)
+        consecutive_successes = state.get("consecutive_successes", 0)
+        opened_until = state.get("opened_until_epoch", 0)
+
+        # Update counters
+        if status in ["error", "rate_limited", "quota_exceeded"]:
+            fail_count += 1
+            consecutive_successes = 0
+            state["last_failure_epoch"] = current_time
+            if is_timeout:
+                timeout_count += 1
+        elif status == "checked":
+            success_count += 1
+            consecutive_successes += 1
+            state["last_success_epoch"] = current_time
+        else:
+            # Unknown status, don't change counters
+            pass
+
+        # Determine new state
+        new_state = current_state
+
+        if current_state == CircuitBreakerState.CLOSED.value:
+            # Check if we should open the circuit
+            if fail_count >= config["failure_threshold"] or timeout_count >= config["timeout_threshold"]:
+                new_state = CircuitBreakerState.OPEN.value
+                opened_until = current_time + config["recovery_timeout"]
+                logger.warning(f"Circuit breaker opened for {api_name} (failures: {fail_count}, timeouts: {timeout_count})")
+
+        elif current_state == CircuitBreakerState.OPEN.value:
+            # Check if recovery timeout has passed
+            if current_time >= opened_until:
+                new_state = CircuitBreakerState.HALF_OPEN.value
+                consecutive_successes = 0  # Reset for half-open state
+                logger.info(f"Circuit breaker half-open for {api_name}")
+
+        elif current_state == CircuitBreakerState.HALF_OPEN.value:
+            # Check if we have enough consecutive successes to close
+            if consecutive_successes >= config["success_threshold"]:
+                new_state = CircuitBreakerState.CLOSED.value
+                fail_count = 0  # Reset failure count
+                timeout_count = 0
+                logger.info(f"Circuit breaker closed for {api_name}")
+            elif fail_count > 0:
+                # Failure in half-open state, go back to open
+                new_state = CircuitBreakerState.OPEN.value
+                opened_until = current_time + config["recovery_timeout"]
+                logger.warning(f"Circuit breaker re-opened for {api_name} after half-open failure")
+
+        # Update state
+        state.update({
+            "state": new_state,
+            "fail_count": fail_count,
+            "timeout_count": timeout_count,
+            "success_count": success_count,
+            "consecutive_successes": consecutive_successes,
+            "opened_until_epoch": opened_until,
+            "total_calls": state.get("total_calls", 0) + 1,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        # Persist to database
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO api_circuit_state
+            (api_name, state, fail_count, timeout_count, success_count, consecutive_successes,
+             opened_until_epoch, last_failure_epoch, last_success_epoch, total_calls, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (api_name, new_state, fail_count, timeout_count, success_count, consecutive_successes,
+             opened_until, state.get("last_failure_epoch", 0), state.get("last_success_epoch", 0),
+             state["total_calls"], state["updated_at"])
+        )
+        conn.commit()
+        conn.close()
+
+        self._circuit_states[api_name] = state
+
+    def get_circuit_state(self, api_name: str) -> Dict[str, Any]:
+        """Get current circuit breaker state for an API"""
+        if api_name in self._circuit_states:
+            return self._circuit_states[api_name].copy()
+
+        # Load from database
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM api_circuit_state WHERE api_name = ?", (api_name,))
+        row = cur.fetchone()
+        conn.close()
+
+        if row:
+            state = {
+                "api_name": row[0],
+                "state": row[1],
+                "fail_count": row[2],
+                "timeout_count": row[3],
+                "success_count": row[4],
+                "consecutive_successes": row[5],
+                "opened_until_epoch": row[6],
+                "last_failure_epoch": row[7] or 0,
+                "last_success_epoch": row[8] or 0,
+                "total_calls": row[9] or 0,
+                "updated_at": row[10]
+            }
+        else:
+            # Default state
+            state = {
+                "api_name": api_name,
+                "state": CircuitBreakerState.CLOSED.value,
+                "fail_count": 0,
+                "timeout_count": 0,
+                "success_count": 0,
+                "consecutive_successes": 0,
+                "opened_until_epoch": 0,
+                "last_failure_epoch": 0,
+                "last_success_epoch": 0,
+                "total_calls": 0,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+
+        self._circuit_states[api_name] = state
+        return state.copy()
+
+    def should_attempt_call(self, api_name: str) -> Tuple[bool, str]:
+        """Check if an API call should be attempted based on circuit breaker state"""
+        state = self.get_circuit_state(api_name)
+        current_state = state.get("state", CircuitBreakerState.CLOSED.value)
+        current_time = time.time()
+
+        if current_state == CircuitBreakerState.OPEN.value:
+            opened_until = state.get("opened_until_epoch", 0)
+            if current_time < opened_until:
+                remaining = int(opened_until - current_time)
+                return False, f"Circuit breaker open, retry in {remaining}s"
+            else:
+                # Transition to half-open
+                self._update_circuit_state(api_name, "half_open_check", False)
+                return True, "Circuit breaker half-open, attempting call"
+
+        return True, "OK"
+
+    def record_failure_pattern(self, api_name: str, failure_type: str,
+                              error_message: str, input_type: str):
+        """Record API failure patterns for analysis"""
+        pattern_hash = hashlib.sha256(
+            f"{api_name}:{failure_type}:{error_message[:100]}:{input_type}".encode()
+        ).hexdigest()[:16]
+
+        with self._lock:
+            conn = self._connect()
+            cur = conn.cursor()
+
+            # Check if pattern exists
+            cur.execute(
+                "SELECT id, frequency FROM api_failure_patterns WHERE pattern_hash = ?",
+                (pattern_hash,)
+            )
+            existing = cur.fetchone()
+
+            if existing:
+                # Update existing pattern
+                cur.execute(
+                    "UPDATE api_failure_patterns SET frequency = frequency + 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?",
+                    (existing[0],)
+                )
+            else:
+                # Insert new pattern
+                cur.execute(
+                    """
+                    INSERT INTO api_failure_patterns
+                    (api_name, failure_type, error_message, input_type, pattern_hash)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (api_name, failure_type, error_message, input_type, pattern_hash)
+                )
+
+            conn.commit()
+            conn.close()
+
+    def get_failure_patterns(self, api_name: str, limit: int = 10) -> List[Dict]:
+        """Get failure patterns for an API"""
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT failure_type, error_message, input_type, frequency, first_seen, last_seen
+            FROM api_failure_patterns
+            WHERE api_name = ?
+            ORDER BY frequency DESC, last_seen DESC
+            LIMIT ?
+            """,
+            (api_name, limit)
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        return [
+            {
+                "failure_type": row[0],
+                "error_message": row[1],
+                "input_type": row[2],
+                "frequency": row[3],
+                "first_seen": row[4],
+                "last_seen": row[5]
+            }
+            for row in rows
+        ]
+
+    def record_recovery_action(self, api_name: str, action_type: str,
+                              success: bool, details: str = ""):
+        """Record recovery actions taken"""
+        with self._lock:
+            conn = self._connect()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO api_recovery_actions
+                (api_name, action_type, success, details)
+                VALUES (?, ?, ?, ?)
+                """,
+                (api_name, action_type, int(success), details)
+            )
+            conn.commit()
+            conn.close()
+
+    def get_api_health_score(self, api_name: str, window_hours: int = 24) -> float:
+        """Calculate API health score (0-1) based on recent performance"""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT status, is_timeout, latency_ms
+            FROM api_quality_metrics
+            WHERE api_name = ? AND created_at >= ?
+            """,
+            (api_name, cutoff_time.isoformat())
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return 1.0  # No data = assume healthy
+
+        total_calls = len(rows)
+        successful_calls = sum(1 for row in rows if row[0] == "checked")
+        timeout_calls = sum(1 for row in rows if row[1] == 1)
+
+        # Calculate weighted score
+        success_rate = successful_calls / total_calls
+        timeout_penalty = min(0.5, (timeout_calls / total_calls) * 0.5)
+
+        # Latency penalty (calls over 5 seconds get penalty)
+        slow_calls = sum(1 for row in rows if row[2] and row[2] > 5000)
+        latency_penalty = min(0.3, (slow_calls / total_calls) * 0.3)
+
+        health_score = success_rate - timeout_penalty - latency_penalty
+        return max(0.0, min(1.0, health_score))
+
+    def get_circuit_breaker_stats(self) -> Dict[str, Dict]:
+        """Get circuit breaker statistics for all APIs"""
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM api_circuit_state")
+        rows = cur.fetchall()
+        conn.close()
+
+        stats = {}
+        for row in rows:
+            api_name = row[0]
+            stats[api_name] = {
+                "state": row[1],
+                "fail_count": row[2],
+                "timeout_count": row[3],
+                "success_count": row[4],
+                "consecutive_successes": row[5],
+                "total_calls": row[9] or 0,
+                "health_score": self.get_api_health_score(api_name),
+                "failure_patterns": self.get_failure_patterns(api_name, 3)
+            }
+
+        return stats
+
+
+class EnhancedSecurityTelemetryStore:
     """Persist API quality, correlation signals, baseline stats, feedback, and immutable audit chain."""
 
     def __init__(self, db_path: str = "security_telemetry.db"):
@@ -793,4 +1230,4 @@ class SecurityTelemetryStore:
         }
 
 
-security_telemetry = SecurityTelemetryStore()
+security_telemetry = EnhancedSecurityTelemetryStore()

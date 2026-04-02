@@ -354,6 +354,25 @@
             transform: scale(0.95);
         }
         
+        /* Filter button styles */
+        .filter-buttons .btn {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .filter-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        
+        .filter-btn:hover {
+            background: var(--secondary);
+            border-color: var(--primary);
+        }
+        
         /* Tooltip styles */
         .tooltip {
             position: relative;
@@ -691,6 +710,22 @@
         .status-item-value {
             font-size: 0.875rem;
             font-family: 'JetBrains Mono', monospace;
+        }
+
+        .status-item.clickable {
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-radius: 6px;
+            padding: 0.5rem;
+        }
+
+        .status-item.clickable:hover {
+            background: rgba(255, 255, 255, 0.05);
+            transform: translateY(-1px);
+        }
+
+        .status-item.clickable:active {
+            transform: translateY(0);
         }
 
         .status-footer {
@@ -2235,28 +2270,28 @@
                             </div>
                         </div>
                         <div class="status-grid">
-                            <div class="status-item">
+                            <div class="status-item clickable" onclick="filterByStatus('firewall')" title="Click to view firewall-related activity">
                                 <div class="status-item-icon" style="color: var(--success);">🛡️</div>
                                 <div>
                                     <div class="status-item-label">Firewall</div>
                                     <div class="status-item-value" style="color: var(--success);">Active</div>
                                 </div>
                             </div>
-                            <div class="status-item">
+                            <div class="status-item clickable" onclick="filterByStatus('monitor')" title="Click to view monitoring activity">
                                 <div class="status-item-icon" style="color: var(--primary);">🤖</div>
                                 <div>
                                     <div class="status-item-label">Monitor</div>
                                     <div class="status-item-value" style="color: var(--primary);" id="statusMonitorValue">Running</div>
                                 </div>
                             </div>
-                            <div class="status-item">
+                            <div class="status-item clickable" onclick="showAlertsPanel()" title="Click to view and manage alerts" id="alertsStatusItem">
                                 <div class="status-item-icon" style="color: var(--warning);">🔔</div>
                                 <div>
                                     <div class="status-item-label">Alerts</div>
                                     <div class="status-item-value" style="color: var(--warning);" id="statusAlertsValue">0 New</div>
                                 </div>
                             </div>
-                            <div class="status-item">
+                            <div class="status-item clickable" onclick="showApiStatus()" title="Click to view API configuration and status">
                                 <div class="status-item-icon" style="color: var(--success);">🌐</div>
                                 <div>
                                     <div class="status-item-label">APIs</div>
@@ -2382,6 +2417,16 @@
                         <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
                     </div>
                 </div>
+                
+                <!-- Threat Filter Buttons -->
+                <div class="filter-buttons" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="filter-btn btn btn-outline active" data-filter="all" onclick="window.dashboard.filterByStatus('all')">All (<span id="threat-count">0/0</span>)</button>
+                    <button class="filter-btn btn btn-outline" data-filter="critical" onclick="window.dashboard.filterByStatus('critical')">Critical</button>
+                    <button class="filter-btn btn btn-outline" data-filter="high" onclick="window.dashboard.filterByStatus('high')">High</button>
+                    <button class="filter-btn btn btn-outline" data-filter="medium" onclick="window.dashboard.filterByStatus('medium')">Medium</button>
+                    <button class="filter-btn btn btn-outline" data-filter="low" onclick="window.dashboard.filterByStatus('low')">Low</button>
+                </div>
+                
                 <div class="card card-glass dashboard-card" id="recentThreatsCard">
                     <div class="table-shell">
                     <table class="threats-table">

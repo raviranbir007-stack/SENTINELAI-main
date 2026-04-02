@@ -1,1 +1,0 @@
-"""Nested app config package."""

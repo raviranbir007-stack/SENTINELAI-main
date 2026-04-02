@@ -3,9 +3,19 @@
 scan_interval=300
 heartbeat_interval=60
 
+enable_auto_defense=true
+
 [server]
 url=http://localhost:8000
 api_key=
+
+[defense]
+auto_block_threats=true
+time_window=60
+max_scan_ports=12
+max_bruteforce_attempts=20
+max_web_probe_attempts=35
+alert_cooldown_seconds=180
 
 [apis]
 # Required / recommended threat-intel APIs
@@ -47,3 +57,8 @@ poll_interval=5
 
 [behavior]
 poll_interval=5
+
+[registration]
+master_password=your_master_password_here
+admin_hostnames=kali,kali-linux-vbox
+admin_ips=127.0.0.1

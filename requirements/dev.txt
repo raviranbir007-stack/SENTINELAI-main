@@ -1,0 +1,14 @@
+# SENTINEL-AI Development Requirements
+# Testing, linting, and development tools
+
+-r server.txt
+
+# Testing
+pytest==7.4.0
+anyio==4.12.0
+
+# Development tools
+black
+flake8
+mypy
+pre-commit

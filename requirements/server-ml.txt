@@ -1,0 +1,21 @@
+# SENTINEL-AI Server ML Requirements
+# Optional heavy ML dependencies — install in separate virtualenv if needed
+# May conflict with google-generativeai protobuf requirements
+
+-r server.txt
+
+# ML / heavy packages
+scikit-learn==1.5.2
+numpy==2.3.5
+pandas==2.3.3
+joblib==1.3.2
+
+# TensorFlow and PyTorch are large and may have binary/compat issues on some platforms
+tensorflow==2.20.0
+torch==2.5.1
+
+# Additional ML libraries
+scipy
+opencv-python
+transformers
+sentence-transformers

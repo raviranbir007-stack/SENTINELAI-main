@@ -1,0 +1,4 @@
+# SENTINEL-AI Client Requirements
+# Includes base requirements plus client-specific dependencies
+
+-r base.txt

@@ -24,6 +24,7 @@ from ..config import settings
 from .input_detector import InputDetector, InputType
 from .corroboration_engine import corroboration_engine
 from .security_telemetry import security_telemetry
+from .alert_suppression import alert_suppression_engine
 
 # Import ML models
 try:
@@ -3188,6 +3189,26 @@ class ThreatAnalyzer:
         )
         result["forensic_metadata"]["advanced_analysis"] = advanced_forensic
         result["forensic_analysis"] = advanced_forensic
+
+        # Apply alert suppression for non-clean results
+        if result.get("verdict") != ThreatLevel.CLEAN:
+            should_suppress, suppression_reason = alert_suppression_engine.should_suppress_alert(result)
+            if should_suppress:
+                logger.info(f"Alert suppressed for {value}: {suppression_reason}")
+                result["suppressed"] = True
+                result["suppression_reason"] = suppression_reason
+                result["verdict"] = ThreatLevel.CLEAN
+                result["confidence"] = max(0.1, result.get("confidence", 0.0) * 0.3)  # Reduce confidence
+                result["summary"] = f"Alert suppressed: {suppression_reason}"
+                # Add suppression metadata
+                result.setdefault("forensic_metadata", {})["alert_suppression"] = {
+                    "suppressed": True,
+                    "reason": suppression_reason,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            else:
+                # Record the alert for future deduplication
+                alert_suppression_engine.record_alert(result)
 
         return result
 

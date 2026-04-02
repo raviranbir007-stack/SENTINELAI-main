@@ -64,7 +64,16 @@ class SentinelClientV3:
         default_url = "http://localhost:8000"
         self.server_url = env_url or self.config.get("server", {}).get("url", default_url)
         self.api_key = self.config.get("server", {}).get("api_key", "")
-        self.client_id = str(uuid.uuid4())  # Generate unique client ID
+        
+        # Separate runtime ID from server-assigned client ID
+        self.local_runtime_id = str(uuid.uuid4())  # Always unique, never changes
+        self.server_client_id = None  # Set only after successful registration
+        self.is_registered = False
+        self.offline_mode = False
+        
+        # Check if this host should run as admin infrastructure (not client)
+        self._is_admin_infrastructure = self._check_admin_infrastructure()
+        
         self.running = False
         self.cli = MinimalCLI()  # Minimal CLI interface
 
@@ -197,18 +206,66 @@ class SentinelClientV3:
         except Exception as e:
             logger.error(f"Config load failed")
             return {}
+
+    def _check_admin_infrastructure(self) -> bool:
+        """Check if this host should run as admin infrastructure (not client)"""
+        try:
+            hostname = socket.gethostname().lower()
+            fqdn = socket.getfqdn().lower()
+            
+            # Get local IPs
+            local_ips = set()
+            try:
+                local_ips.update(socket.gethostbyname_ex(socket.gethostname())[2])
+            except:
+                pass
+            local_ips.update({"127.0.0.1", "::1"})
+            
+            # Check hostname markers from config
+            hostname_markers = self.config.get("registration", {}).get("admin_hostnames", "").split(",")
+            hostname_markers = [h.strip().lower() for h in hostname_markers if h.strip()]
+            
+            # Check IP markers from config  
+            ip_markers = self.config.get("registration", {}).get("admin_ips", "").split(",")
+            ip_markers = [ip.strip() for ip in ip_markers if ip.strip()]
+            
+            # Check if hostname matches
+            if hostname in hostname_markers or fqdn in hostname_markers:
+                logger.info(f"🖥️  Host {hostname} identified as admin infrastructure")
+                return True
+                
+            # Check if IP matches
+            if any(ip in ip_markers for ip in local_ips):
+                logger.info(f"🖥️  IP {list(local_ips)[0]} identified as admin infrastructure")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Admin infrastructure check failed: {e}")
+            return False
+
     def _get_headers(self) -> Dict[str, str]:
         """Get request headers with authentication"""
+        # Use server_client_id if registered, otherwise local_runtime_id for registration
+        client_id = self.server_client_id if self.server_client_id else self.local_runtime_id
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "X-Client-ID": self.client_id,
+            "X-Client-ID": client_id,
         }
 
     async def register(self) -> bool:
         """Register client with the server"""
+        # Skip registration if this is admin infrastructure
+        if self._is_admin_infrastructure:
+            logger.info("⏭️  Skipping registration: admin infrastructure host")
+            self.offline_mode = True
+            return True
+            
         try:
-            logger.info(f"🔗 Attempting registration with {self.server_url}...")
+            logger.info(f"🔗 Registering with {self.server_url} (runtime_id: {self.local_runtime_id[:8]}...)")
+            
             hostname = socket.gethostname()
             ip_address = socket.gethostbyname(hostname)
 
@@ -242,7 +299,7 @@ class SentinelClientV3:
                 "gateway": gateway or "Unknown",
                 "dns_servers": self._get_dns_servers(),
                 "version": "3.0.0",
-                "client_id": self.client_id,
+                "client_id": self.local_runtime_id,  # Send runtime ID for tracking
                 "capabilities": [
                     "intrusion_detection",
                     "activity_logging",
@@ -261,34 +318,41 @@ class SentinelClientV3:
 
             if response.status_code == 200:
                 result = response.json()
-                server_client_id = result.get("client_id")
-                if server_client_id:
-                    old_client_id = self.client_id
-                    self.client_id = server_client_id
-                    logger.info(f"✅ Registration SUCCESS: {old_client_id[:8]}... → {self.client_id}")
-                    logger.info(f"   Status: {result.get('status')} | Message: {result.get('message')}")
-                    self.cli.prompt_registration_success(self.client_id)
+                server_assigned_id = result.get("client_id")
+                if server_assigned_id:
+                    # Registration successful - set server client ID
+                    self.server_client_id = server_assigned_id
+                    self.is_registered = True
+                    self.offline_mode = False
+                    
+                    logger.info(f"✅ Registration SUCCESS: {self.local_runtime_id[:8]}... → {self.server_client_id}")
+                    logger.info(f"   Status: {result.get('status')} | Mode: online")
+                    self.cli.prompt_registration_success(self.server_client_id)
                     return True
                 else:
                     logger.error(f"❌ Registration response missing client_id. Response: {result}")
                     self.cli.prompt_registration_failed("No client_id in response")
                     return False
             else:
-                # include status code and url for debugging
-                reason = f"{response.status_code} @{self.server_url}"
-                logger.error(f"❌ Registration failed: HTTP {response.status_code}")
-                logger.error(f"   Response: {response.text}")
-                self.cli.prompt_registration_failed(reason)
+                # Registration failed - enter offline mode
+                error_msg = f"HTTP {response.status_code}"
+                logger.warning(f"⚠️  Registration failed: {error_msg} - entering offline mode")
+                logger.warning(f"   Response: {response.text}")
+                
+                self.offline_mode = True
+                self.cli.prompt_registration_failed(error_msg)
                 return False
 
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"❌ Registration connection failed: {self.server_url} unreachable")
-            logger.error(f"   Error: {str(e)}")
+            logger.warning(f"⚠️  Registration connection failed: {self.server_url} unreachable - entering offline mode")
+            logger.warning(f"   Error: {str(e)}")
+            self.offline_mode = True
             self.cli.prompt_registration_failed(f"Server unreachable: {self.server_url}")
             return False
         except Exception as e:
-            # capture exception message
-            logger.error(f"❌ Registration exception: {str(e)}")
+            # Registration failed - enter offline mode
+            logger.warning(f"⚠️  Registration exception: {str(e)} - entering offline mode")
+            self.offline_mode = True
             self.cli.prompt_registration_failed(str(e))
             return False
 
@@ -386,7 +450,7 @@ class SentinelClientV3:
                 attack_timestamp = datetime.utcnow().isoformat()
 
             payload = {
-                'client_id': self.client_id,
+                'client_id': self.server_client_id or self.local_runtime_id,
                 'attack_type': attack.get('type', 'intrusion_detected'),
                 'source_ip': source_ip,
                 'source_domain': source_hostname,
@@ -453,7 +517,7 @@ class SentinelClientV3:
     def _send_defense_event_to_server(self, event: Dict):
         """Send defense events to server"""
         try:
-            event['client_id'] = self.client_id
+            event['client_id'] = self.server_client_id or self.local_runtime_id
 
             headers = self._get_headers()
             endpoints = [
@@ -469,13 +533,13 @@ class SentinelClientV3:
                     timeout=10,
                 )
                 if response.status_code == 200:
-                    logger.debug("Event sent")
+                    logger.debug("Defense event sent")
                     return
 
-            logger.error("Event send failed")
+            logger.debug("Defense event send failed")
                 
         except Exception as e:
-            logger.error(f"Event send failed")
+            logger.debug("Defense event send failed")
 
     def _handle_prevention_event(self, event: Dict):
         """Handle prevention system events"""
@@ -522,14 +586,20 @@ class SentinelClientV3:
     # ===== MONITORING LOOPS =====
 
     async def send_heartbeat(self):
-        """Send heartbeat to server"""
+        """Send heartbeat to server (only if registered)"""
         while self.running:
-            try:
-                if not self.client_id:
-                    logger.warning("Heartbeat skipped: client_id not set")
-                    await asyncio.sleep(self.heartbeat_interval)
-                    continue
+            # Only send heartbeat if registered
+            if not self.is_registered:
+                logger.debug("⏸️  Heartbeat skipped: not registered")
+                await asyncio.sleep(self.heartbeat_interval)
+                continue
+                
+            if not self.server_client_id:
+                logger.warning("⏸️  Heartbeat skipped: no server client_id")
+                await asyncio.sleep(self.heartbeat_interval)
+                continue
 
+            try:
                 # Get status from all modules
                 status = {
                     'intrusion_detector': self.intrusion_detector.get_statistics(),
@@ -548,19 +618,21 @@ class SentinelClientV3:
                 
                 response = requests.post(
                     f"{self.server_url}/api/v1/network/client/heartbeat",
-                    params={"client_id": self.client_id},
+                    params={"client_id": self.server_client_id},
                     headers=self._get_headers(),
                     json={'status': status},
                     timeout=10,
                 )
 
                 if response.status_code == 200:
-                    logger.debug(f"Heartbeat sent (client_id={self.client_id})")
+                    logger.debug(f"💓 Heartbeat sent (client_id={self.server_client_id})")
                 else:
-                    logger.error(f"Heartbeat failed ({self.client_id}): {response.status_code} - {response.text}")
+                    logger.warning(f"💓 Heartbeat failed ({self.server_client_id}): HTTP {response.status_code}")
+                    if response.status_code == 403:
+                        logger.warning("💓 Access denied - client may have been deactivated")
 
             except Exception as e:
-                logger.error(f"Heartbeat error ({self.client_id}): {str(e)}")
+                logger.warning(f"💓 Heartbeat error ({self.server_client_id}): {str(e)}")
 
             await asyncio.sleep(self.heartbeat_interval)
 
@@ -608,8 +680,12 @@ class SentinelClientV3:
 
     async def start_monitoring(self):
         """Start all monitoring and defense systems"""
-        if not self.client_id:
-            logger.error("Client not registered")
+        if self._is_admin_infrastructure:
+            logger.info("⏭️  Skipping monitoring: admin infrastructure host")
+            return
+            
+        if not self.is_registered and not self.offline_mode:
+            logger.error("❌ Cannot start monitoring: not registered and not in offline mode")
             return
 
         self.running = True
@@ -630,16 +706,22 @@ class SentinelClientV3:
         
         # Start background tasks
         tasks = [
-            asyncio.create_task(self.send_heartbeat()),
             asyncio.create_task(self.activity_analysis_loop()),
         ]
+        
+        # Only start heartbeat if registered
+        if self.is_registered:
+            tasks.append(asyncio.create_task(self.send_heartbeat()))
+            logger.info("🚀 Monitoring started with server connectivity")
+        else:
+            logger.info("🚀 Monitoring started in offline mode (no heartbeat)")
 
         try:
             await asyncio.gather(*tasks)
         except KeyboardInterrupt:
             self.stop_monitoring()
         except Exception as e:
-            logger.error(f"Monitoring error")
+            logger.error(f"Monitoring error: {e}")
             self.stop_monitoring()
 
     def stop_monitoring(self):
@@ -742,7 +824,11 @@ class SentinelClientV3:
     def get_status(self) -> Dict:
         """Get comprehensive system status"""
         return {
-            'client_id': self.client_id,
+            'local_runtime_id': self.local_runtime_id,
+            'server_client_id': self.server_client_id,
+            'is_registered': self.is_registered,
+            'offline_mode': self.offline_mode,
+            'admin_infrastructure': self._is_admin_infrastructure,
             'running': self.running,
             'intrusion_detector': self.intrusion_detector.get_statistics(),
             'defense_coordinator': self.defense_coordinator.get_status(),
@@ -770,21 +856,29 @@ class SentinelClientV3:
 async def main():
     """Main entry point"""
     client = SentinelClientV3()
-    logger.info(f"Initial client_id (pre-registration): {client.client_id[:8]}...")
+    
+    # Check if admin infrastructure
+    if client._is_admin_infrastructure:
+        logger.info("🖥️  Running as admin infrastructure - monitoring disabled")
+        logger.info(f"   Runtime ID: {client.local_runtime_id[:8]}...")
+        # Keep process alive for admin infrastructure
+        while True:
+            await asyncio.sleep(60)
+        return
+    
+    logger.info(f"🚀 Initializing SENTINEL-AI Client v3.0")
+    logger.info(f"   Runtime ID: {client.local_runtime_id[:8]}...")
+    logger.info(f"   Server: {client.server_url}")
     
     registered = await client.register()
     
-    logger.info(f"Post-registration client_id: {client.client_id}")
-    logger.info(f"Registration result: {'SUCCESS ✅' if registered else 'FAILED ❌'}")
-    
-    if not registered:
-        # continue regardless of registration result; the client has a full
-        # offline mode and aborting the entire program when the server is
-        # unavailable is confusing for users who expect monitoring to work
-        # regardless.
-        logger.warning("⚠️  Running in offline mode (server registration failed)")
+    if registered:
+        logger.info(f"✅ Online mode: registered as {client.server_client_id}")
+    elif client.offline_mode:
+        logger.info(f"⚠️  Offline mode: registration failed, running locally")
     else:
-        logger.info("🚀 Starting monitoring with registered client_id...")
+        logger.error(f"❌ Failed to initialize: registration failed")
+        return
     
     await client.start_monitoring()
 
