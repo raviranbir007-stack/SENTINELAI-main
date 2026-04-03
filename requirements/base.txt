@@ -41,6 +41,9 @@ reportlab==4.0.9
 # File Analysis
 python-magic==0.4.27
 pefile==2023.2.7
+lief==0.17.6
+capstone==5.0.7
+yara-python==4.5.4
 ssdeep==3.4
 pypdf2==3.0.1
 pillow==10.4.0

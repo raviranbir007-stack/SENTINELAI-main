@@ -746,28 +746,39 @@ class SentinelClientV3:
     # ===== MANUAL SCAN METHODS (backward compatibility) =====
 
     async def scan_file(self, file_path: Path) -> Dict:
-        """Scan a file for threats"""
+        """Scan a file for threats using comprehensive file scanner"""
         try:
             if not file_path.exists():
                 return {"error": "File not found"}
 
-            # Calculate file hash
-            file_hash = self._calculate_file_hash(file_path)
+            # Use the comprehensive file scanner
+            scan_result = self.file_scanner.scan_file(str(file_path))
             
-            # Analyze with AI
-            analysis = self.activity_analyzer.analyze_file(str(file_path), file_hash)
-            
-            # If malicious, quarantine
-            if analysis['risk_level'] in ['HIGH', 'CRITICAL']:
-                self.prevention_system.block_file(
-                    str(file_path),
-                    reason=f"Malware detected: {analysis['risk_level']}"
+            # Send to threat analyzer for external API checks
+            if self.threat_analyzer and scan_result.get("risk_level") in ["MEDIUM", "HIGH", "CRITICAL"]:
+                self.threat_analyzer.queue_scan(
+                    "file", scan_result.get("sha256", ""), 
+                    metadata={"file_path": str(file_path), "scan_result": scan_result}
                 )
             
-            return analysis
+            # If malicious, quarantine
+            if scan_result.get('risk_level') in ['HIGH', 'CRITICAL']:
+                self.prevention_system.block_file(
+                    str(file_path),
+                    reason=f"Malware detected: {scan_result['risk_level']}"
+                )
+                # Trigger defense coordinator alert
+                self.defense_coordinator.handle_attack({
+                    "type": "malware_file",
+                    "source_file": str(file_path),
+                    "severity": scan_result['risk_level'],
+                    "details": scan_result
+                })
+            
+            return scan_result
             
         except Exception as e:
-            logger.debug(f"File scan failed")
+            logger.debug(f"File scan failed: {e}")
             return {"error": "Scan failed"}
 
     async def scan_url(self, url: str) -> Dict:

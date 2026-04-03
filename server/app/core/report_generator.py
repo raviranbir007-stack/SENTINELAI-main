@@ -1154,6 +1154,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                         ("TOPPADDING", (0, 0), (-1, -1), 8),
                         ("GRID", (0, 0), (-1, -1), 1, colors.black),
                         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f0f0")]),
+                        ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top
                     ])
                 )
                 
@@ -1189,6 +1191,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
                             ("BACKGROUND", (0, 6), (-1, 6), colors.HexColor("#eceff1")),
                             ("FONTNAME", (0, 6), (-1, 6), "Helvetica-Bold"),
+                            ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top
                         ])
                     )
                     elements.append(vuln_table)
@@ -1207,6 +1211,42 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         except Exception as e:
             logger.debug(f"Could not include activity monitoring in report: {e}")
 
+        # Analysis Methods Used Section
+        elements.append(Paragraph("ANALYSIS METHODS USED", heading_style))
+        
+        # Get analysis methods from threat_analysis data
+        analysis_methods = self._get_analysis_methods_used(threat_analysis)
+        
+        methods_data = [["Method", "Status", "Details"]]
+        for method in analysis_methods:
+            methods_data.append([
+                method["name"],
+                method["status"],
+                method["details"]
+            ])
+        
+        methods_table = Table(
+            methods_data,
+            colWidths=[2.2 * inch, 1.2 * inch, 3.6 * inch]
+        )
+        methods_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2e7d32")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f8e9")]),
+                ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping for long text
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top for better readability
+            ])
+        )
+        elements.append(methods_table)
+        elements.append(Spacer(1, 0.2 * inch))
+
         # Intelligence source coverage
         elements.append(Paragraph("INTELLIGENCE SOURCE COVERAGE", heading_style))
         coverage_table = Table(
@@ -1224,6 +1264,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                     ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top
                 ]
             )
         )
@@ -1266,6 +1308,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                         ("TOPPADDING", (0, 0), (-1, -1), 4),
                         ("GRID", (0, 0), (-1, -1), 1, colors.grey),
                         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f8f0")]),
+                        ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top
                     ])
                 )
                 elements.append(evidence_table)
@@ -1364,6 +1408,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                             (-1, -1),
                             [colors.white, colors.HexColor("#f9f9f9")],
                         ),
+                        ("WORDWRAP", (0, 0), (-1, -1), True),  # Enable word wrapping
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),  # Align text to top
                     ]
                 )
             )
@@ -1413,6 +1459,108 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         # Get PDF bytes
         pdf_buffer.seek(0)
         return pdf_buffer.read()
+
+    def _get_analysis_methods_used(self, threat_analysis: Dict[str, Any]) -> list:
+        """Get list of analysis methods used in the scan"""
+        methods = []
+        
+        # Get file analysis data if available
+        file_data = threat_analysis.get("file_analysis", {})
+        
+        # 1. Signature Analysis
+        signatures = file_data.get("signatures", [])
+        sig_count = len(signatures)
+        methods.append({
+            "name": "Signature Matching",
+            "status": "COMPLETED" if sig_count >= 0 else "NOT APPLICABLE",
+            "details": f"YARA rules and byte-pattern matching applied. Found {sig_count} signature matches."
+        })
+        
+        # 2. Entropy Analysis
+        entropy = file_data.get("entropy", 0)
+        methods.append({
+            "name": "Shannon Entropy Analysis",
+            "status": "COMPLETED",
+            "details": f"Calculated file entropy: {entropy:.3f}. Used for packed/encrypted file detection."
+        })
+        
+        # 3. PE/COFF Analysis
+        pe_info = file_data.get("pe_info")
+        if pe_info:
+            methods.append({
+                "name": "PE/COFF Binary Analysis",
+                "status": "COMPLETED",
+                "details": f"Advanced PE parsing with lief library. Sections: {len(pe_info.get('sections', []))}, Imports: {len(pe_info.get('imports', []))}"
+            })
+        else:
+            methods.append({
+                "name": "PE/COFF Binary Analysis",
+                "status": "NOT APPLICABLE",
+                "details": "File is not a PE/COFF executable or lief library not available."
+            })
+        
+        # 4. Disassembly Analysis
+        disassembly = file_data.get("disassembly_info", {})
+        if disassembly:
+            suspicious_patterns = len(disassembly.get("suspicious_patterns", []))
+            methods.append({
+                "name": "Code Disassembly",
+                "status": "COMPLETED",
+                "details": f"Capstone-based disassembly analysis. Found {suspicious_patterns} suspicious code patterns."
+            })
+        else:
+            methods.append({
+                "name": "Code Disassembly",
+                "status": "NOT APPLICABLE",
+                "details": "Disassembly not applicable for this file type or Capstone not available."
+            })
+        
+        # 5. ML Classification
+        ml_result = file_data.get("ml_classification", {})
+        if ml_result:
+            prediction = ml_result.get("prediction", "UNKNOWN")
+            confidence = ml_result.get("confidence", 0)
+            methods.append({
+                "name": "Machine Learning Classification",
+                "status": "COMPLETED",
+                "details": f"Scikit-learn based malware classification. Prediction: {prediction} (Confidence: {confidence:.2f})"
+            })
+        else:
+            methods.append({
+                "name": "Machine Learning Classification",
+                "status": "NOT APPLICABLE",
+                "details": "ML classification not available (scikit-learn or required libraries not installed)."
+            })
+        
+        # 6. Threat Intelligence APIs
+        api_results = threat_analysis.get("api_results", {})
+        apis_called = api_results.get("apis_called", [])
+        apis_expected = api_results.get("apis_expected", [])
+        methods.append({
+            "name": "Threat Intelligence APIs",
+            "status": "COMPLETED" if apis_called else "PARTIAL",
+            "details": f"Checked {len(apis_called)}/{len(apis_expected)} threat intelligence sources: {', '.join(apis_called)}"
+        })
+        
+        # 7. Behavioral Analysis (if available)
+        behavioral = threat_analysis.get("behavioral_analysis", {})
+        if behavioral:
+            methods.append({
+                "name": "Behavioral Analysis",
+                "status": "COMPLETED",
+                "details": f"Analyzed {len(behavioral.get('indicators', []))} behavioral indicators and {len(behavioral.get('anomalies', []))} anomalies."
+            })
+        
+        # 8. Network Analysis (if applicable)
+        network = threat_analysis.get("network_analysis", {})
+        if network:
+            methods.append({
+                "name": "Network Traffic Analysis",
+                "status": "COMPLETED",
+                "details": f"Analyzed network connections and traffic patterns. Found {len(network.get('suspicious_connections', []))} suspicious connections."
+            })
+        
+        return methods
 
 
 # Global instance

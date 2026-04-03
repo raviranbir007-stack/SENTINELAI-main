@@ -29,6 +29,12 @@ ipqualityscore=
 shodan=
 hybrid_analysis=
 
+# Additional threat intelligence APIs
+malwarebazaar=
+threatfox=
+malshare=
+triage=
+
 [email]
 scan_local_thunderbird=true
 poll_interval=60

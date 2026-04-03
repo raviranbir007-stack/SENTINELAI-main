@@ -27,6 +27,19 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("FileScanner")
 
+try:
+    import pefile
+    import lief
+    import capstone
+    import yara
+    import joblib
+    import numpy as np
+    from sklearn.ensemble import RandomForestClassifier
+    PE_ANALYSIS_AVAILABLE = True
+except ImportError:
+    PE_ANALYSIS_AVAILABLE = False
+    logger.warning("Advanced PE analysis libraries not available. Using basic PE parsing.")
+
 
 # ---------------------------------------------------------------------------
 # Byte-pattern signatures  (YARA-like)
@@ -141,6 +154,8 @@ class FileScanner:
         self.threat_analyzer = threat_analyzer
         self.db_path = db_path
         self.quarantine_dir = Path(quarantine_dir)
+        self.yara_rules = None
+        self._load_yara_rules()
         self._init_db()
 
     def _init_db(self):
@@ -168,6 +183,31 @@ class FileScanner:
             conn.close()
         except Exception as e:
             logger.error(f"FileScanner DB init: {e}")
+
+    def _load_yara_rules(self):
+        """Load YARA rules for malware detection"""
+        if not PE_ANALYSIS_AVAILABLE:
+            return
+        try:
+            rules_path = Path(__file__).parent / "signatures" / "malware.yara"
+            if rules_path.exists():
+                self.yara_rules = yara.compile(filepath=str(rules_path))
+                logger.info(f"Loaded YARA rules from {rules_path}")
+            else:
+                logger.warning(f"YARA rules file not found: {rules_path}")
+        except Exception as e:
+            logger.error(f"Failed to load YARA rules: {e}")
+
+    def _scan_yara(self, data: bytes) -> List[str]:
+        """Scan data with YARA rules"""
+        if not self.yara_rules:
+            return []
+        try:
+            matches = self.yara_rules.match(data=data)
+            return [match.rule for match in matches]
+        except Exception as e:
+            logger.error(f"YARA scan failed: {e}")
+            return []
 
     @staticmethod
     def calculate_hash(filepath: str) -> str:
@@ -204,12 +244,32 @@ class FileScanner:
             result["magic_type"] = self._identify_magic(sample)
             result["signatures"] = self._match_signatures(sample)
             result["suspicious_strings"] = self._extract_suspicious_strings(sample)
+            
+            # YARA scanning
+            yara_matches = self._scan_yara(sample)
+            result["signatures"].extend(yara_matches)
 
             pe_info = self._analyse_pe(sample)
             if pe_info:
                 result["pe_info"] = pe_info
                 if pe_info.get("suspicious"):
                     result["signatures"].append("PE_ANOMALY")
+                
+                # Add disassembly analysis
+                disassembly_info = self._disassemble_binary(sample, pe_info)
+                if disassembly_info:
+                    result["disassembly_info"] = disassembly_info
+                    # Add suspicious disassembly patterns to signatures
+                    if disassembly_info.get("suspicious_patterns"):
+                        result["signatures"].append("SUSPICIOUS_DISASSEMBLY")
+            
+            # ML-based classification
+            if PE_ANALYSIS_AVAILABLE:
+                ml_features = self._extract_ml_features(result)
+                ml_result = self._ml_classify_malware(ml_features)
+                result["ml_classification"] = ml_result
+            else:
+                result["ml_classification"] = {"prediction": "UNKNOWN", "confidence": 0.0}
 
             result["risk_level"] = self._score_risk(result)
 
@@ -295,6 +355,142 @@ class FileScanner:
         return list(set(found))[:20]
 
     def _analyse_pe(self, data: bytes) -> Optional[Dict]:
+        if not PE_ANALYSIS_AVAILABLE:
+            # Fallback to basic analysis
+            return self._analyse_pe_basic(data)
+        
+        try:
+            # Use lief for advanced binary analysis
+            binary = lief.parse(data)
+            
+            if isinstance(binary, lief.PE.Binary):
+                return self._analyse_pe_binary(binary)
+            elif isinstance(binary, lief.ELF.Binary):
+                return self._analyse_elf_binary(binary)
+            else:
+                # Unknown binary format
+                return None
+            
+        except Exception as e:
+            logger.warning(f"Advanced binary analysis failed: {e}")
+            # Fallback to basic analysis
+            return self._analyse_pe_basic(data)
+            
+            pe_info = {
+                "arch": str(binary.header.machine).replace("MACHINE_TYPES.", ""),
+                "is_dll": binary.header.has_characteristic(lief.PE.HEADER_CHARACTERISTICS.DLL),
+                "is_exe": binary.header.has_characteristic(lief.PE.HEADER_CHARACTERISTICS.EXECUTABLE_IMAGE),
+                "sections": [],
+                "imports": [],
+                "exports": [],
+                "resources": [],
+                "anomalies": [],
+                "suspicious": False,
+                "coff_info": {}
+            }
+            
+            # COFF header analysis
+            coff_header = binary.header
+            pe_info["coff_info"] = {
+                "machine": str(coff_header.machine),
+                "number_of_sections": coff_header.numberof_sections,
+                "time_date_stamp": coff_header.time_date_stamp,
+                "pointer_to_symbol_table": coff_header.pointerto_symbol_table,
+                "number_of_symbols": coff_header.numberof_symbols,
+                "size_of_optional_header": coff_header.sizeof_optional_header,
+                "characteristics": [str(char) for char in coff_header.characteristics_list]
+            }
+            
+            # Section analysis
+            for section in binary.sections:
+                section_info = {
+                    "name": section.name,
+                    "virtual_size": section.virtual_size,
+                    "virtual_address": section.virtual_address,
+                    "size_of_raw_data": section.sizeof_raw_data,
+                    "pointer_to_raw_data": section.pointerto_raw_data,
+                    "characteristics": [str(char) for char in section.characteristics_lists],
+                    "entropy": section.entropy
+                }
+                pe_info["sections"].append(section_info)
+                
+                # Check for suspicious sections
+                if section.entropy > 7.5:
+                    pe_info["anomalies"].append(f"High entropy section: {section.name}")
+                    pe_info["suspicious"] = True
+                
+                # Check for executable sections with RWX
+                if (lief.PE.SECTION_CHARACTERISTICS.MEM_EXECUTE in section.characteristics_lists and
+                    lief.PE.SECTION_CHARACTERISTICS.MEM_READ in section.characteristics_lists and
+                    lief.PE.SECTION_CHARACTERISTICS.MEM_WRITE in section.characteristics_lists):
+                    pe_info["anomalies"].append(f"RWX section: {section.name}")
+                    pe_info["suspicious"] = True
+            
+            # Import analysis
+            if binary.has_imports:
+                for imp in binary.imports:
+                    dll_imports = {
+                        "dll": imp.name,
+                        "functions": [entry.name if entry.name else f"ordinal_{entry.ordinal}" for entry in imp.entries]
+                    }
+                    pe_info["imports"].append(dll_imports)
+                    
+                    # Check for suspicious imports
+                    suspicious_dlls = ["kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll"]
+                    if imp.name.lower() in suspicious_dlls:
+                        # Check for malware-common functions
+                        malware_funcs = ["CreateRemoteThread", "VirtualAlloc", "WriteProcessMemory", 
+                                       "CreateProcess", "ShellExecute", "WinExec", "LoadLibrary"]
+                        for func in dll_imports["functions"]:
+                            if func in malware_funcs:
+                                pe_info["anomalies"].append(f"Suspicious import: {imp.name}.{func}")
+                                pe_info["suspicious"] = True
+            
+            # Export analysis
+            if binary.has_exports:
+                for exp in binary.exports:
+                    pe_info["exports"].append({
+                        "name": exp.name,
+                        "ordinal": exp.ordinal,
+                        "address": exp.address
+                    })
+            
+            # Resource analysis
+            if binary.has_resources:
+                for resource in binary.resources:
+                    pe_info["resources"].append({
+                        "type": str(resource.type),
+                        "id": resource.id,
+                        "language": str(resource.language),
+                        "code_page": resource.code_page,
+                        "size": len(resource.content) if resource.content else 0
+                    })
+            
+            # Additional checks
+            if binary.optional_header:
+                opt_header = binary.optional_header
+                pe_info["image_base"] = opt_header.imagebase
+                pe_info["entry_point"] = opt_header.addressof_entrypoint
+                
+                # Check for suspicious entry point
+                if opt_header.addressof_entrypoint == 0:
+                    pe_info["anomalies"].append("Entry point at 0")
+                    pe_info["suspicious"] = True
+            
+            # Check for packer signatures or anomalies
+            if len(pe_info["sections"]) == 0:
+                pe_info["anomalies"].append("No sections found")
+                pe_info["suspicious"] = True
+            
+            return pe_info
+            
+        except Exception as e:
+            logger.warning(f"Advanced PE analysis failed: {e}")
+            # Fallback to basic analysis
+            return self._analyse_pe_basic(data)
+
+    def _analyse_pe_basic(self, data: bytes) -> Optional[Dict]:
+        """Basic PE analysis fallback"""
         if data[:2] != b"MZ":
             return None
         try:
@@ -312,9 +508,374 @@ class FileScanner:
             is_dll   = bool(characteristics & 0x2000)
             no_reloc = bool(characteristics & 0x0001)
             return {"arch": arch, "is_dll": is_dll, "no_reloc": no_reloc,
-                    "suspicious": no_reloc and not is_dll}
+                    "suspicious": no_reloc and not is_dll, "coff_info": {}}
         except Exception:
             return None
+
+    def _analyse_pe_binary(self, binary: lief.PE.Binary) -> Dict:
+        """Analyze PE binary"""
+        pe_info = {
+            "format": "PE",
+            "arch": str(binary.header.machine).replace("MACHINE_TYPES.", ""),
+            "is_dll": binary.header.has_characteristic(lief.PE.HEADER_CHARACTERISTICS.DLL),
+            "is_exe": binary.header.has_characteristic(lief.PE.HEADER_CHARACTERISTICS.EXECUTABLE_IMAGE),
+            "sections": [],
+            "imports": [],
+            "exports": [],
+            "resources": [],
+            "anomalies": [],
+            "suspicious": False,
+            "coff_info": {}
+        }
+        
+        # COFF header analysis
+        coff_header = binary.header
+        pe_info["coff_info"] = {
+            "machine": str(coff_header.machine),
+            "number_of_sections": coff_header.numberof_sections,
+            "time_date_stamp": coff_header.time_date_stamp,
+            "pointer_to_symbol_table": coff_header.pointerto_symbol_table,
+            "number_of_symbols": coff_header.numberof_symbols,
+            "size_of_optional_header": coff_header.sizeof_optional_header,
+            "characteristics": [str(char) for char in coff_header.characteristics_list]
+        }
+        
+        # Section analysis
+        for section in binary.sections:
+            section_info = {
+                "name": section.name,
+                "virtual_size": section.virtual_size,
+                "virtual_address": section.virtual_address,
+                "size_of_raw_data": section.sizeof_raw_data,
+                "pointer_to_raw_data": section.pointerto_raw_data,
+                "characteristics": [str(char) for char in section.characteristics_lists],
+                "entropy": section.entropy
+            }
+            pe_info["sections"].append(section_info)
+            
+            # Check for suspicious sections
+            if section.entropy > 7.5:
+                pe_info["anomalies"].append(f"High entropy section: {section.name}")
+                pe_info["suspicious"] = True
+            
+            # Check for executable sections with RWX
+            if (lief.PE.SECTION_CHARACTERISTICS.MEM_EXECUTE in section.characteristics_lists and
+                lief.PE.SECTION_CHARACTERISTICS.MEM_READ in section.characteristics_lists and
+                lief.PE.SECTION_CHARACTERISTICS.MEM_WRITE in section.characteristics_lists):
+                pe_info["anomalies"].append(f"RWX section: {section.name}")
+                pe_info["suspicious"] = True
+        
+        # Import analysis
+        if binary.has_imports:
+            for imp in binary.imports:
+                dll_imports = {
+                    "dll": imp.name,
+                    "functions": [entry.name if entry.name else f"ordinal_{entry.ordinal}" for entry in imp.entries]
+                }
+                pe_info["imports"].append(dll_imports)
+                
+                # Check for suspicious imports
+                suspicious_dlls = ["kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll"]
+                if imp.name.lower() in suspicious_dlls:
+                    # Check for malware-common functions
+                    malware_funcs = ["CreateRemoteThread", "VirtualAlloc", "WriteProcessMemory", 
+                                   "CreateProcess", "ShellExecute", "WinExec", "LoadLibrary"]
+                    for func in dll_imports["functions"]:
+                        if func in malware_funcs:
+                            pe_info["anomalies"].append(f"Suspicious import: {imp.name}.{func}")
+                            pe_info["suspicious"] = True
+        
+        # Export analysis
+        if binary.has_exports:
+            for exp in binary.exports:
+                pe_info["exports"].append({
+                    "name": exp.name,
+                    "ordinal": exp.ordinal,
+                    "address": exp.address
+                })
+        
+        # Resource analysis
+        if binary.has_resources:
+            for resource in binary.resources:
+                pe_info["resources"].append({
+                    "type": str(resource.type),
+                    "id": resource.id,
+                    "language": str(resource.language),
+                    "code_page": resource.code_page,
+                    "size": len(resource.content) if resource.content else 0
+                })
+        
+        # Additional checks
+        if binary.optional_header:
+            opt_header = binary.optional_header
+            pe_info["image_base"] = opt_header.imagebase
+            pe_info["entry_point"] = opt_header.addressof_entrypoint
+            
+            # Check for suspicious entry point
+            if opt_header.addressof_entrypoint == 0:
+                pe_info["anomalies"].append("Entry point at 0")
+                pe_info["suspicious"] = True
+        
+        # Check for packer signatures or anomalies
+        if len(pe_info["sections"]) == 0:
+            pe_info["anomalies"].append("No sections found")
+            pe_info["suspicious"] = True
+        
+        return pe_info
+
+    def _analyse_elf_binary(self, binary: lief.ELF.Binary) -> Dict:
+        """Analyze ELF binary"""
+        elf_info = {
+            "format": "ELF",
+            "arch": str(binary.header.machine_type).replace("ARCH.", ""),
+            "is_executable": binary.header.file_type.value == 2,  # ET_EXEC
+            "sections": [],
+            "imports": [],
+            "exports": [],
+            "anomalies": [],
+            "suspicious": False
+        }
+        
+        # Section analysis
+        for section in binary.sections:
+            section_info = {
+                "name": section.name,
+                "virtual_address": section.virtual_address,
+                "size": section.size,
+                "type": str(section.type).replace("SECTION_TYPES.", ""),
+                "entropy": 0  # lief doesn't provide entropy for ELF sections easily
+            }
+            elf_info["sections"].append(section_info)
+        
+        # Import analysis
+        try:
+            if binary.has_imports:
+                for imp in binary.imported_functions:
+                    elf_info["imports"].append({
+                        "name": imp.name,
+                        "library": "unknown"  # Simplified
+                    })
+        except:
+            pass
+        
+        # Export analysis
+        try:
+            if binary.has_exports:
+                for exp in binary.exported_functions:
+                    elf_info["exports"].append({
+                        "name": exp.name,
+                        "address": exp.address
+                    })
+        except:
+            pass
+        
+        return elf_info
+
+    def _disassemble_binary(self, data: bytes, binary_info: Dict) -> Dict:
+        """Disassemble executable code using Capstone"""
+        if not PE_ANALYSIS_AVAILABLE:
+            return {}
+        
+        disassembly_info = {
+            "instructions": [],
+            "suspicious_patterns": [],
+            "code_sections": [],
+            "total_instructions": 0
+        }
+        
+        try:
+            # Determine architecture
+            arch = binary_info.get("arch", "").lower()
+            if "x86" in arch or "i386" in arch:
+                cs_arch = capstone.CS_ARCH_X86
+                cs_mode = capstone.CS_MODE_32
+            elif "x64" in arch or "amd64" in arch:
+                cs_arch = capstone.CS_ARCH_X86
+                cs_mode = capstone.CS_MODE_64
+            elif "arm" in arch:
+                cs_arch = capstone.CS_ARCH_ARM
+                cs_mode = capstone.CS_MODE_ARM
+            else:
+                return disassembly_info
+            
+            # Initialize disassembler
+            md = capstone.Cs(cs_arch, cs_mode)
+            md.detail = True
+            
+            # Get code sections to disassemble
+            sections = binary_info.get("sections", [])
+            code_sections = []
+            
+            for section in sections:
+                chars = section.get("characteristics", [])
+                if isinstance(chars, str):
+                    chars = chars.lower()
+                else:
+                    chars = str(chars).lower()
+                
+                # Check if section is executable
+                if ("mem_execute" in chars or 
+                    section.get("name", "").lower() in [".text", ".code", "code", "text"]):
+                    code_sections.append(section)
+            
+            disassembly_info["code_sections"] = [s.get("name", "unknown") for s in code_sections]
+            
+            # Disassemble each code section
+            suspicious_opcodes = [
+                "int 0x80", "int 0x2e", "sysenter", "syscall",  # System calls
+                "cpuid", "rdtsc", "rdpmc",  # Anti-debugging
+                "icebp", "int 0x3",  # Debug breaks
+                "jmp esp", "jmp ebp", "call esp", "call ebp",  # Stack pivoting
+                "pushad", "popad", "pushfd", "popfd",  # Register saving
+            ]
+            
+            for section in code_sections:
+                section_name = section.get("name", "unknown")
+                virtual_address = section.get("virtual_address", 0)
+                
+                # Get section data (simplified - in real implementation, you'd extract from binary)
+                # For now, we'll disassemble a sample of the file
+                sample_size = min(1024, len(data) // 4)  # Sample first 1KB or 1/4 of file
+                code_data = data[:sample_size]
+                
+                try:
+                    instructions = list(md.disasm(code_data, virtual_address))
+                    disassembly_info["total_instructions"] += len(instructions)
+                    
+                    # Analyze instructions for suspicious patterns
+                    for inst in instructions[:100]:  # Analyze first 100 instructions
+                        inst_str = f"{inst.mnemonic} {inst.op_str}"
+                        disassembly_info["instructions"].append({
+                            "address": inst.address,
+                            "mnemonic": inst.mnemonic,
+                            "operands": inst.op_str,
+                            "bytes": inst.bytes.hex(),
+                            "size": inst.size
+                        })
+                        
+                        # Check for suspicious patterns
+                        if any(susp in inst_str.lower() for susp in suspicious_opcodes):
+                            disassembly_info["suspicious_patterns"].append({
+                                "pattern": inst_str,
+                                "address": inst.address,
+                                "section": section_name
+                            })
+                        
+                        # Check for shellcode patterns
+                        if inst.mnemonic in ["xor", "add", "sub"] and "esp" in inst.op_str:
+                            disassembly_info["suspicious_patterns"].append({
+                                "pattern": f"Stack manipulation: {inst_str}",
+                                "address": inst.address,
+                                "section": section_name
+                            })
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to disassemble section {section_name}: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"Disassembly analysis failed: {e}")
+        
+        return disassembly_info
+
+    def _extract_ml_features(self, result: Dict):
+        """Extract features for ML classification"""
+        features = []
+        
+        # Basic file features
+        features.append(result.get("size", 0) / 1024.0)  # Size in KB
+        features.append(result.get("entropy", 0))  # Shannon entropy
+        
+        # Binary analysis features
+        pe_info = result.get("pe_info", {})
+        if pe_info:
+            features.append(len(pe_info.get("sections", [])))  # Number of sections
+            features.append(len(pe_info.get("imports", [])))  # Number of imports
+            features.append(len(pe_info.get("exports", [])))  # Number of exports
+            
+            # Section entropy features
+            sections = pe_info.get("sections", [])
+            if sections:
+                entropies = [s.get("entropy", 0) for s in sections]
+                features.append(np.mean(entropies))  # Mean section entropy
+                features.append(np.max(entropies))   # Max section entropy
+                features.append(np.std(entropies))   # Std section entropy
+            else:
+                features.extend([0, 0, 0])
+            
+            # Suspicious indicators
+            features.append(1 if pe_info.get("suspicious", False) else 0)
+            features.append(len(pe_info.get("anomalies", [])))
+        else:
+            features.extend([0, 0, 0, 0, 0, 0, 0, 0])  # Default values
+        
+        # Signature features
+        signatures = result.get("signatures", [])
+        features.append(len(signatures))  # Total signatures
+        features.append(1 if any("critical" in str(s).lower() for s in signatures) else 0)
+        features.append(1 if any("high" in str(s).lower() for s in signatures) else 0)
+        
+        # Disassembly features
+        disassembly = result.get("disassembly_info", {})
+        features.append(disassembly.get("total_instructions", 0))
+        features.append(len(disassembly.get("suspicious_patterns", [])))
+        
+        # ML classification features
+        ml_result = result.get("ml_classification", {})
+        features.append(1 if ml_result.get("prediction") == "MALWARE" else 0)
+        features.append(ml_result.get("confidence", 0))
+        
+        return np.array(features).reshape(1, -1)
+
+    def _ml_classify_malware(self, features) -> Dict:
+        """Classify malware using ML model"""
+        try:
+            # Convert to numpy array if it's a list
+            if isinstance(features, list):
+                features = np.array(features).reshape(1, -1)
+            
+            # For now, we'll use a simple rule-based classifier
+            # In production, this would load a trained model
+            score = 0
+            
+            # Simple heuristic-based scoring
+            if features[0, 1] > 7.0:  # High entropy
+                score += 2
+            if features[0, 7] > 0:  # Suspicious PE
+                score += 3
+            if features[0, 8] > 2:  # Anomalies
+                score += 2
+            if features[0, 9] > 3:  # Signatures
+                score += 2
+            if features[0, 10] > 0:  # Critical signatures
+                score += 3
+            if features[0, 13] > 5:  # Suspicious disassembly
+                score += 2
+            
+            # Classification
+            if score >= 8:
+                prediction = "MALWARE"
+                confidence = min(score / 12.0, 1.0)
+            elif score >= 4:
+                prediction = "SUSPICIOUS"
+                confidence = score / 8.0
+            else:
+                prediction = "BENIGN"
+                confidence = max(0, 1.0 - score / 4.0)
+            
+            return {
+                "prediction": prediction,
+                "confidence": confidence,
+                "feature_importance": {
+                    "entropy": features[0, 1],
+                    "suspicious_indicators": features[0, 7],
+                    "anomalies": features[0, 8],
+                    "signatures": features[0, 9]
+                }
+            }
+            
+        except Exception as e:
+            logger.warning(f"ML classification failed: {e}")
+            return {"prediction": "UNKNOWN", "confidence": 0.0, "error": str(e)}
 
     def _score_risk(self, result: Dict) -> str:
         score = 0
@@ -324,9 +885,10 @@ class FileScanner:
             score += 1
         if result["extension"] in DANGEROUS_EXTENSIONS:
             score += 2
-        critical_sigs = {"EICAR", "REVERSE_SHELL", "MSFVENOM", "SHELLCODE_NOP", "CREATEREMOTETHREAD"}
+        critical_sigs = {"EICAR", "REVERSE_SHELL", "MSFVENOM", "SHELLCODE_NOP", "CREATEREMOTETHREAD",
+                          "suspicious_pe_imports", "shellcode_patterns", "ransomware_indicators", "rootkit_indicators"}
         high_sigs     = {"POWERSHELL_ENCODED", "WGET_SH", "CURL_SH", "PE_ANOMALY",
-                          "NET_USER_ADD", "SCHTASK_CREATE", "VIRTUALALLOC"}
+                          "NET_USER_ADD", "SCHTASK_CREATE", "VIRTUALALLOC", "packed_executable", "keylogger_imports"}
         for sig in result.get("signatures", []):
             if sig in critical_sigs:
                 score += 5
@@ -337,9 +899,56 @@ class FileScanner:
         score += min(len(result.get("suspicious_strings", [])), 5)
         if result.get("magic_type") == "OLE2 (Office/macro)":
             score += 2
-        if score >= 8:
-            return "CRITICAL"
-        elif score >= 5:
+        
+        # PE/ELF-specific scoring
+        binary_info = result.get("pe_info", {})
+        if binary_info:
+            # Anomalies increase score
+            anomalies = binary_info.get("anomalies", [])
+            score += min(len(anomalies) * 2, 10)  # Up to 10 points for anomalies
+            
+            # Check format-specific suspicious indicators
+            if binary_info.get("format") == "PE":
+                # PE-specific checks
+                imports = binary_info.get("imports", [])
+                suspicious_imports = 0
+                for imp in imports:
+                    dll = imp.get("dll", "").lower()
+                    if dll in ["kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll"]:
+                        functions = imp.get("functions", [])
+                        malware_funcs = ["CreateRemoteThread", "VirtualAlloc", "WriteProcessMemory", 
+                                       "CreateProcess", "ShellExecute", "WinExec", "LoadLibrary"]
+                        for func in functions:
+                            if func in malware_funcs:
+                                suspicious_imports += 1
+                score += min(suspicious_imports, 5)
+                
+                # RWX sections are highly suspicious
+                sections = binary_info.get("sections", [])
+                rwx_sections = 0
+                for section in sections:
+                    chars = section.get("characteristics", [])
+                    if ("MEM_EXECUTE" in str(chars) and "MEM_READ" in str(chars) and "MEM_WRITE" in str(chars)):
+                        rwx_sections += 1
+                score += rwx_sections * 3
+                
+                # High entropy sections
+                high_entropy_sections = sum(1 for s in sections if s.get("entropy", 0) > 7.5)
+                score += high_entropy_sections * 2
+        
+        # ML classification scoring
+        ml_result = result.get("ml_classification", {})
+        if ml_result.get("prediction") == "MALWARE":
+            score += int(ml_result.get("confidence", 0) * 5)  # Up to 5 points
+        elif ml_result.get("prediction") == "SUSPICIOUS":
+            score += int(ml_result.get("confidence", 0) * 3)  # Up to 3 points
+        
+        # Disassembly analysis scoring
+        disassembly = result.get("disassembly_info", {})
+        suspicious_disasm = len(disassembly.get("suspicious_patterns", []))
+        score += min(suspicious_disasm, 5)  # Up to 5 points for suspicious disassembly
+        
+        if score >= 5:
             return "HIGH"
         elif score >= 2:
             return "MEDIUM"

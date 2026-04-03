@@ -22,6 +22,19 @@ class ThreatAnalyzer:
     
     def __init__(self, api_keys: Dict[str, str] = None, callback=None, server_url: Optional[str] = None, request_timeout: int = 12):
         self.api_keys = self._normalize_api_keys(api_keys or {})
+        
+        # Initialize API keys
+        self.virustotal_api_key = self.api_keys.get('virustotal', '')
+        self.abuseipdb_api_key = self.api_keys.get('abuseipdb', '')
+        self.urlscan_api_key = self.api_keys.get('urlscan', '')
+        self.otx_api_key = self.api_keys.get('otx', '')
+        self.ipqualityscore_api_key = self.api_keys.get('ipqualityscore', '')
+        self.malwarebazaar_api_key = self.api_keys.get('malwarebazaar', '')
+        self.hybrid_analysis_api_key = self.api_keys.get('hybrid_analysis', '')
+        self.threatfox_api_key = self.api_keys.get('threatfox', '')
+        self.malshare_api_key = self.api_keys.get('malshare', '')
+        self.triage_api_key = self.api_keys.get('triage', '')
+        
         self.callback = callback
         self.server_url = server_url.rstrip("/") if server_url else None
         self.request_timeout = request_timeout
@@ -48,8 +61,11 @@ class ThreatAnalyzer:
             'urlscan': 'https://urlscan.io/api/v1',
             'otx': 'https://otx.alienvault.com/api/v1',
             'ipqualityscore': 'https://ipqualityscore.com/api/json',
-            'shodan': 'https://api.shodan.io',
-            'hybrid_analysis': 'https://www.hybrid-analysis.com/api/v2'
+            'malwarebazaar': 'https://mb-api.abuse.ch/api/v1',
+            'hybrid_analysis': 'https://www.hybrid-analysis.com/api/v2',
+            'threatfox': 'https://threatfox-api.abuse.ch/api/v1',
+            'malshare': 'https://malshare.com/api.php',
+            'triage': 'https://tria.ge/api/v0'
         }
 
         self.trusted_domains = {
@@ -639,6 +655,43 @@ class ThreatAnalyzer:
                     detections += 2
             except Exception:
                 pass
+
+        # Additional threat intelligence APIs
+        if self.malwarebazaar_api_key:
+            try:
+                mb_result = self._scan_malwarebazaar(file_hash)
+                sources.append('malwarebazaar')
+                if mb_result.get('is_malicious'):
+                    detections += 2
+            except Exception:
+                pass
+
+        if self.threatfox_api_key:
+            try:
+                tf_result = self._scan_threatfox(file_hash)
+                sources.append('threatfox')
+                if tf_result.get('is_malicious'):
+                    detections += 2
+            except Exception:
+                pass
+
+        if self.malshare_api_key:
+            try:
+                ms_result = self._scan_malshare(file_hash)
+                sources.append('malshare')
+                if ms_result.get('is_malicious'):
+                    detections += 2
+            except Exception:
+                pass
+
+        if self.triage_api_key:
+            try:
+                tr_result = self._scan_triage(file_hash)
+                sources.append('triage')
+                if tr_result.get('is_malicious'):
+                    detections += 2
+            except Exception:
+                pass
         
         # API 2-5: Other sources
         sources.extend(['otx', 'urlscan', 'abuseipdb', 'ipqualityscore'])
@@ -887,6 +940,94 @@ class ThreatAnalyzer:
                 if isinstance(data, list) and data:
                     max_score = max([int(item.get('threat_score', 0)) for item in data])
                     return {'is_malicious': max_score >= 70}
+        except Exception:
+            pass
+        return {'is_malicious': False}
+
+    def _scan_malwarebazaar(self, file_hash: str) -> Dict:
+        """MalwareBazaar hash lookup"""
+        try:
+            if not self.malwarebazaar_api_key:
+                return {'is_malicious': False}
+            
+            data = {
+                'query': 'get_info',
+                'hash': file_hash
+            }
+            response = requests.post(
+                self.apis['malwarebazaar'],
+                data=data,
+                timeout=self.request_timeout
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('query_status') == 'ok':
+                    return {'is_malicious': True, 'details': result.get('data', [])}
+        except Exception:
+            pass
+        return {'is_malicious': False}
+
+    def _scan_threatfox(self, file_hash: str) -> Dict:
+        """ThreatFox hash lookup"""
+        try:
+            data = {
+                'query': 'search_hash',
+                'hash': file_hash
+            }
+            response = requests.post(
+                self.apis['threatfox'],
+                data=data,
+                timeout=self.request_timeout
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('query_status') == 'ok' and result.get('data'):
+                    return {'is_malicious': True, 'details': result.get('data', [])}
+        except Exception:
+            pass
+        return {'is_malicious': False}
+
+    def _scan_malshare(self, file_hash: str) -> Dict:
+        """MalShare hash lookup"""
+        try:
+            if not self.malshare_api_key:
+                return {'is_malicious': False}
+            
+            params = {
+                'api_key': self.malshare_api_key,
+                'action': 'details',
+                'hash': file_hash
+            }
+            response = requests.get(
+                self.apis['malshare'],
+                params=params,
+                timeout=self.request_timeout
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result and isinstance(result, list) and len(result) > 0:
+                    return {'is_malicious': True, 'details': result}
+        except Exception:
+            pass
+        return {'is_malicious': False}
+
+    def _scan_triage(self, file_hash: str) -> Dict:
+        """Triage hash lookup"""
+        try:
+            if not self.triage_api_key:
+                return {'is_malicious': False}
+            
+            headers = {'Authorization': f'Bearer {self.triage_api_key}'}
+            response = requests.get(
+                f"{self.apis['triage']}/search",
+                headers=headers,
+                params={'query': file_hash},
+                timeout=self.request_timeout
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('data') and len(result['data']) > 0:
+                    return {'is_malicious': True, 'details': result.get('data', [])}
         except Exception:
             pass
         return {'is_malicious': False}
