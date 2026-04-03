@@ -2129,6 +2129,8 @@
             .posture-metrics-grid { grid-template-columns: 1fr; }
         }
     </style>
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/dashboard.js"></script>
 </head>
 <body>
     <div class="toast-container" id="toastContainer"></div>
@@ -2432,7 +2434,6 @@
                     <button class="filter-btn btn btn-outline active" data-filter="all" onclick="window.dashboard.filterByStatus('all')">All (<span id="threat-count">0/0</span>)</button>
                     <button class="filter-btn btn btn-outline" data-filter="critical" onclick="window.dashboard.filterByStatus('critical')">Critical</button>
                     <button class="filter-btn btn btn-outline" data-filter="high" onclick="window.dashboard.filterByStatus('high')">High</button>
-                    <button class="filter-btn btn btn-outline" data-filter="medium" onclick="window.dashboard.filterByStatus('medium')">Medium</button>
                     <button class="filter-btn btn btn-outline" data-filter="low" onclick="window.dashboard.filterByStatus('low')">Low</button>
                 </div>
                 

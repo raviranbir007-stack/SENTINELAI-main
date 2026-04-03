@@ -1131,11 +1131,19 @@ class Dashboard {
     const rows = document.querySelectorAll('#threatsTableBody tr');
     rows.forEach(row => {
       const severity = row.getAttribute('data-severity') || '';
-      if (statusType === 'all' || severity.includes(statusType.toLowerCase())) {
-        row.style.display = '';
-      } else {
-        row.style.display = 'none';
+      let shouldShow = false;
+      
+      if (statusType === 'all') {
+        shouldShow = true;
+      } else if (statusType === 'critical') {
+        shouldShow = severity.includes('critical');
+      } else if (statusType === 'high') {
+        shouldShow = severity.includes('high') || severity.includes('medium');
+      } else if (statusType === 'low') {
+        shouldShow = severity.includes('low');
       }
+      
+      row.style.display = shouldShow ? '' : 'none';
     });
     
     // Update visible count

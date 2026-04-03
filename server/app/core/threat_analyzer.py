@@ -1723,9 +1723,9 @@ class ThreatAnalyzer:
                             if malicious >= 5:
                                 threats.append({"source": api_name, "severity": "critical", "indicator": f"Malicious detection: {malicious}/{total_engines} vendor(s)", "count": malicious})
                             elif malicious >= 2:
-                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Possible threat: {malicious}/{total_engines} vendor(s)", "count": malicious})
+                                threats.append({"source": api_name, "severity": "high", "indicator": f"Possible threat: {malicious}/{total_engines} vendor(s)", "count": malicious})
                             elif suspicious >= 3:
-                                threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)", "count": suspicious})
+                                threats.append({"source": api_name, "severity": "high", "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)", "count": suspicious})
                 elif api_key == "urlscan":
                     urlscan_result = await self.urlscan.scan_url(url)
                     self._track_api_result(result, api_key, api_name, urlscan_result, warnings)
@@ -2042,7 +2042,7 @@ class ThreatAnalyzer:
                         if malicious >= 3:
                             threats.append({"source": api_name, "severity": "critical", "indicator": f"Malicious domain detection: {malicious}/{total_engines} vendor(s)", "count": malicious})
                         elif malicious >= 1 or suspicious >= 2:
-                            threats.append({"source": api_name, "severity": "medium", "indicator": f"Suspicious domain reputation ({malicious} malicious, {suspicious} suspicious)", "count": malicious + suspicious})
+                            threats.append({"source": api_name, "severity": "high", "indicator": f"Suspicious domain reputation ({malicious} malicious, {suspicious} suspicious)", "count": malicious + suspicious})
                 elif api_key == "urlscan":
                     urlscan_result = await self.urlscan.search_domain(domain)
                     self._track_api_result(result, api_key, api_name, urlscan_result, warnings)
@@ -2063,7 +2063,7 @@ class ThreatAnalyzer:
                         if malicious_hits > 0:
                             threats.append({"source": api_name, "severity": "critical", "indicator": f"Historical malicious URLScan verdict(s): {malicious_hits}", "count": malicious_hits})
                         elif suspicious_hits > 0:
-                            threats.append({"source": api_name, "severity": "medium", "indicator": f"Historical suspicious URLScan signal(s): {suspicious_hits}", "count": suspicious_hits})
+                            threats.append({"source": api_name, "severity": "high", "indicator": f"Historical suspicious URLScan signal(s): {suspicious_hits}", "count": suspicious_hits})
                 elif api_key == "abuseipdb":
                     enrichment_ip = self._resolve_public_ip(domain, "domain")
                     if enrichment_ip:
