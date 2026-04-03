@@ -54,6 +54,10 @@ class ThreatAnalyzer:
         # Cache (avoid re-scanning same artifact within 1 hour)
         self.cache_ttl = 3600  # seconds
         
+        # Deduplication for queued scans (prevent duplicate scans within short time)
+        self._recent_queue_entries = {}  # cache_key -> last_queued_time
+        self._queue_dedup_window = 10  # seconds
+        
         # API endpoints
         self.apis = {
             'virustotal': 'https://www.virustotal.com/api/v3',
@@ -301,13 +305,29 @@ class ThreatAnalyzer:
                         })
                     return
         
+        # Check for recent duplicate queue entries (prevent spam)
+        now = datetime.now()
+        if cache_key in self._recent_queue_entries:
+            last_queued = self._recent_queue_entries[cache_key]
+            if (now - last_queued).total_seconds() < self._queue_dedup_window:
+                return  # Skip duplicate
+        
         # Add to queue
         self.scan_queue.append({
             'type': artifact_type,
             'value': artifact_value,
             'metadata': metadata,
-            'queued_at': datetime.now()
+            'queued_at': now
         })
+        
+        # Mark as recently queued
+        self._recent_queue_entries[cache_key] = now
+        
+        # Clean up old entries
+        expired_keys = [k for k, t in self._recent_queue_entries.items() 
+                       if (now - t).total_seconds() > self._queue_dedup_window]
+        for k in expired_keys:
+            del self._recent_queue_entries[k]
     
     def _scan_loop(self):
         """Background scanning loop"""

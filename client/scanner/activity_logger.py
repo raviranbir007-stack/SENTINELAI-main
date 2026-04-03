@@ -699,23 +699,15 @@ class ActivityLogger:
             ''', (last_check_microsec,))
             
             rows = cursor.fetchall()
-            # Fallback: if no rows, try last 5 seconds window (to catch entries missed due to clock drift)
-            # but NOT 5 minutes, which would create duplicates
-            if not rows:
-                five_sec_ago = time.time() - 5
-                fallback_microsec = self._chrome_time_from_unix(five_sec_ago)
-                cursor.execute('''
-                    SELECT url, title, last_visit_time
-                    FROM urls
-                    WHERE last_visit_time > ?
-                    AND url LIKE 'http%'
-                    ORDER BY last_visit_time DESC
-                    LIMIT 50
-                ''', (fallback_microsec,))
-                rows = cursor.fetchall()
-
+            
+            # Process the found URLs
+            processed_urls = set()
             for row in rows:
                 url, title, visit_time = row
+                # Skip if we already processed this URL in this batch
+                if url in processed_urls:
+                    continue
+                processed_urls.add(url)
                 self._log_website(url, title, browser_name)
             
             conn.close()

@@ -5,6 +5,7 @@ Shows only critical information with emoji indicators
 
 import logging
 import sys
+import time
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -18,28 +19,45 @@ class MinimalCLI:
     def __init__(self):
         self.active_alerts = {}
         self.prompt_history = []
+        # Deduplication cache: key -> last_shown_time
+        self._prompt_cache: Dict[str, float] = {}
+        self._dedup_window = 30  # seconds - prevent duplicate prompts within 30 seconds
+    
+    def _should_show_prompt(self, key: str) -> bool:
+        """Check if prompt should be shown (not recently shown)"""
+        now = time.time()
+        if key in self._prompt_cache:
+            last_shown = self._prompt_cache[key]
+            if now - last_shown < self._dedup_window:
+                return False
+        self._prompt_cache[key] = now
+        return True
     
     # ===== PROMPTS (Single-line messages) =====
     
-    @staticmethod
-    def prompt_website(domain: str):
+    def prompt_website(self, domain: str):
         """Prompt for website visit"""
-        logger.info(f"🌐 {domain}")
+        key = f"website_{domain}"
+        if self._should_show_prompt(key):
+            logger.info(f"🌐 {domain}")
     
-    @staticmethod
-    def prompt_threat_safe(artifact_type: str, artifact: str):
+    def prompt_threat_safe(self, artifact_type: str, artifact: str):
         """Prompt: Safe"""
-        logger.info(f"✓ {artifact_type.upper()}: SAFE - {artifact[:40]}")
+        key = f"threat_safe_{artifact_type}_{artifact}"
+        if self._should_show_prompt(key):
+            logger.info(f"✓ {artifact_type.upper()}: SAFE - {artifact[:40]}")
     
-    @staticmethod
-    def prompt_threat_suspicious(artifact_type: str, artifact: str):
+    def prompt_threat_suspicious(self, artifact_type: str, artifact: str):
         """Prompt: Needs verification"""
-        logger.warning(f"⚠️  {artifact_type.upper()}: SUSPICIOUS - {artifact[:40]}")
+        key = f"threat_suspicious_{artifact_type}_{artifact}"
+        if self._should_show_prompt(key):
+            logger.warning(f"⚠️  {artifact_type.upper()}: SUSPICIOUS - {artifact[:40]}")
     
-    @staticmethod
-    def prompt_threat_malicious(artifact_type: str, artifact: str):
+    def prompt_threat_malicious(self, artifact_type: str, artifact: str):
         """Prompt: Malicious - action taken"""
-        logger.error(f"🚨 {artifact_type.upper()}: MALICIOUS - {artifact[:40]} [BLOCKED]")
+        key = f"threat_malicious_{artifact_type}_{artifact}"
+        if self._should_show_prompt(key):
+            logger.error(f"🚨 {artifact_type.upper()}: MALICIOUS - {artifact[:40]} [BLOCKED]")
 
     @staticmethod
     def prompt_scan_result(artifact_type: str, artifact: str, verdict: str, apis_checked: int = 0):
