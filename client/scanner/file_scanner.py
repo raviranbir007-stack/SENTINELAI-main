@@ -32,13 +32,23 @@ try:
     import lief
     import capstone
     import yara
-    import joblib
-    import numpy as np
-    from sklearn.ensemble import RandomForestClassifier
     PE_ANALYSIS_AVAILABLE = True
 except ImportError:
     PE_ANALYSIS_AVAILABLE = False
+
+# Try to import ML libraries separately
+try:
+    import joblib
+    import numpy as np
+    from sklearn.ensemble import RandomForestClassifier
+    ML_ANALYSIS_AVAILABLE = True
+except ImportError:
+    ML_ANALYSIS_AVAILABLE = False
+
+if not PE_ANALYSIS_AVAILABLE:
     logger.warning("Advanced PE analysis libraries not available. Using basic PE parsing.")
+if not ML_ANALYSIS_AVAILABLE:
+    logger.warning("ML analysis libraries not available. Using rule-based classification.")
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +274,7 @@ class FileScanner:
                         result["signatures"].append("SUSPICIOUS_DISASSEMBLY")
             
             # ML-based classification
-            if PE_ANALYSIS_AVAILABLE:
+            if ML_ANALYSIS_AVAILABLE:
                 ml_features = self._extract_ml_features(result)
                 ml_result = self._ml_classify_malware(ml_features)
                 result["ml_classification"] = ml_result

@@ -2,3 +2,8 @@
 # Includes base requirements plus client-specific dependencies
 
 -r base.txt
+
+# ML dependencies for malware classification
+scikit-learn==1.5.2
+numpy==2.3.5
+joblib==1.3.2

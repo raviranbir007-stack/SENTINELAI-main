@@ -1021,7 +1021,7 @@ class ThreatAnalyzer:
             }
 
         except Exception as e:
-            logger.error(f"Error analyzing {value}: {str(e)}")
+            logger.error(f"Error analyzing {normalized_value}: {str(e)}")
             analysis_result["verdict"] = ThreatLevel.SUSPICIOUS
             analysis_result["summary"] = f"Error during analysis: {str(e)}"
 
