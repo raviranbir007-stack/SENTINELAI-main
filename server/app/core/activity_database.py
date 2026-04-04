@@ -57,7 +57,9 @@ class ActivityDatabase:
             if not force and (now - self._last_schema_check).total_seconds() < 30:
                 return
 
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
             try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -73,13 +75,33 @@ class ActivityDatabase:
             self._last_schema_check = now
 
     def _connect(self):
-        """Return a database connection after schema verification."""
-        self._ensure_schema_ready()
-        return sqlite3.connect(self.db_path)
+        """Return a database connection after schema verification with retry logic."""
+        max_retries = 5
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                self._ensure_schema_ready()
+                conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                return conn
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5  # Exponential backoff
+                        continue
+                raise
+        return None
     
     def _init_enhanced_schema(self):
         """Initialize comprehensive database schema"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
         cursor = conn.cursor()
         
         # Enhanced websites table with full details
@@ -305,96 +327,80 @@ class ActivityDatabase:
             return -1
     
     def log_application(self, data: Dict) -> int:
-        """Log application activity with full details"""
-        try:
-            conn = self._connect()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO applications (
-                    app_name, app_path, pid, start_time, risk_level, risk_score, risk_factors,
-                    cpu_usage, memory_usage_mb, disk_io_mb, network_io_mb,
-                    file_operations_count, network_connections_count, suspicious_behaviors,
-                    parent_process, command_line, hash_md5, hash_sha256, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                data.get('app_name'),
-                data.get('app_path'),
-                data.get('pid'),
-                data.get('start_time', datetime.now(timezone.utc)),
-                data.get('risk_level', 'LOW'),
-                data.get('risk_score', 0.0),
-                json.dumps(data.get('risk_factors', [])),
-                data.get('cpu_usage'),
-                data.get('memory_usage_mb'),
-                data.get('disk_io_mb'),
-                data.get('network_io_mb'),
-                data.get('file_operations_count', 0),
-                data.get('network_connections_count', 0),
-                json.dumps(data.get('suspicious_behaviors', [])),
-                data.get('parent_process'),
-                data.get('command_line'),
-                data.get('hash_md5'),
-                data.get('hash_sha256'),
-                json.dumps(data.get('metadata', {}))
-            ))
-            
-            record_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-            
-            return record_id
-            
-        except sqlite3.OperationalError as e:
-            # Self-heal when schema/table is missing in an existing DB file
-            if "no such table: applications" in str(e).lower():
-                logger.warning("Detected missing applications table; reinitializing activity DB schema")
-                try:
-                    self._init_enhanced_schema()
-                    conn = self._connect()
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO applications (
-                            app_name, app_path, pid, start_time, risk_level, risk_score, risk_factors,
-                            cpu_usage, memory_usage_mb, disk_io_mb, network_io_mb,
-                            file_operations_count, network_connections_count, suspicious_behaviors,
-                            parent_process, command_line, hash_md5, hash_sha256, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        data.get('app_name'),
-                        data.get('app_path'),
-                        data.get('pid'),
-                        data.get('start_time', datetime.now(timezone.utc)),
-                        data.get('risk_level', 'LOW'),
-                        data.get('risk_score', 0.0),
-                        json.dumps(data.get('risk_factors', [])),
-                        data.get('cpu_usage'),
-                        data.get('memory_usage_mb'),
-                        data.get('disk_io_mb'),
-                        data.get('network_io_mb'),
-                        data.get('file_operations_count', 0),
-                        data.get('network_connections_count', 0),
-                        json.dumps(data.get('suspicious_behaviors', [])),
-                        data.get('parent_process'),
-                        data.get('command_line'),
-                        data.get('hash_md5'),
-                        data.get('hash_sha256'),
-                        json.dumps(data.get('metadata', {}))
-                    ))
-                    record_id = cursor.lastrowid
-                    conn.commit()
-                    conn.close()
-                    return record_id
-                except Exception as retry_error:
-                    logger.error(f"Error logging application after schema reinit: {retry_error}")
+        """Log application activity with full details and retry logic"""
+        max_retries = 3
+        retry_delay = 0.2
+        
+        for attempt in range(max_retries):
+            try:
+                conn = self._connect()
+                if not conn:
                     return -1
-            logger.error(f"Error logging application: {e}")
-            return -1
+                    
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    INSERT INTO applications (
+                        app_name, app_path, pid, start_time, risk_level, risk_score, risk_factors,
+                        cpu_usage, memory_usage_mb, disk_io_mb, network_io_mb,
+                        file_operations_count, network_connections_count, suspicious_behaviors,
+                        parent_process, command_line, hash_md5, hash_sha256, metadata
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    data.get('app_name'),
+                    data.get('app_path'),
+                    data.get('pid'),
+                    data.get('start_time', datetime.now(timezone.utc)),
+                    data.get('risk_level', 'LOW'),
+                    data.get('risk_score', 0.0),
+                    json.dumps(data.get('risk_factors', [])),
+                    data.get('cpu_usage'),
+                    data.get('memory_usage_mb'),
+                    data.get('disk_io_mb'),
+                    data.get('network_io_mb'),
+                    data.get('file_operations_count', 0),
+                    data.get('network_connections_count', 0),
+                    json.dumps(data.get('suspicious_behaviors', [])),
+                    data.get('parent_process'),
+                    data.get('command_line'),
+                    data.get('hash_md5'),
+                    data.get('hash_sha256'),
+                    json.dumps(data.get('metadata', {}))
+                ))
+                
+                record_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                
+                return record_id
+                
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
+                    
+                # Self-heal when schema/table is missing in an existing DB file
+                if "no such table: applications" in str(e).lower():
+                    logger.debug("Detected missing applications table; reinitializing activity DB schema")
+                    try:
+                        self._init_enhanced_schema()
+                        continue  # Retry the insert
+                    except Exception as schema_error:
+                        logger.debug(f"Error reinitializing schema: {schema_error}")
+                        return -1
+                        
+                logger.debug(f"Error logging application (suppressed): {e}")
+                return -1
 
-        except Exception as e:
-            logger.error(f"Error logging application: {e}")
-            return -1
-    
+            except Exception as e:
+                logger.debug(f"Error logging application (exception): {e}")
+                return -1
+
+        logger.debug("Failed to log application after retries")
+        return -1
+
     def log_network_connection(self, data: Dict) -> int:
         """Log network connection with full details"""
         try:
@@ -883,6 +889,7 @@ class ActivityDatabase:
                     "host_ip": host_ip,
                     "title": title or "",
                     "browser": browser or "unknown",
+                    "source": meta_obj.get("source") or meta_obj.get("collector") or "browser_history_monitor",
                     "verdict": (verdict or "unknown").lower(),
                     "risk_level": (risk_level or "LOW").upper(),
                     "confidence": round(float(risk_score or 0.0), 1),

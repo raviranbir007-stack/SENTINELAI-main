@@ -23,13 +23,18 @@ from datetime import datetime, UTC
 from pathlib import Path
 from urllib.parse import urlparse
 
+LOCKFILE_PATH = Path("/tmp/sentinelai_run_server.pid")
+
 # Ensure we run with the project venv interpreter when available (important for Gemini deps)
 def _reexec_with_venv_if_needed():
     try:
         project_root = Path(__file__).parent.parent
         venv_python = project_root / ".venv" / "bin" / "python"
 
-        if venv_python.exists() and os.path.realpath(sys.executable) != os.path.realpath(venv_python):
+        if not venv_python.exists():
+            return  # Skip if venv doesn't exist
+
+        if os.path.realpath(sys.executable) != os.path.realpath(venv_python):
             os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
         # If re-exec didn't happen and venv exists, force exit to avoid using system Python
@@ -77,6 +82,7 @@ class ConsoleNoiseFilter(logging.Filter):
     # Suppress routine scan/analysis INFO lines in terminal only.
     # Warnings/errors from these loggers are still shown.
     noisy_info_only = (
+        "app.middleware",
         "app.api.compat",
         "app.api.v1.endpoints.scan",
         "app.core.threat_analyzer",
@@ -132,6 +138,44 @@ logging.getLogger('uvicorn.access').setLevel(logging.CRITICAL)  # NO access logs
 logger = logging.getLogger(__name__)
 if log_dir.exists():
     logger.info(f"Logging to file: {log_dir / 'protection.log'}")
+
+
+def _release_single_instance_lock() -> None:
+    try:
+        if LOCKFILE_PATH.exists():
+            current = str(os.getpid())
+            owner = LOCKFILE_PATH.read_text(encoding="utf-8").strip()
+            if owner == current:
+                LOCKFILE_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _acquire_single_instance_lock_or_exit() -> None:
+    current_pid = os.getpid()
+
+    try:
+        if LOCKFILE_PATH.exists():
+            raw = LOCKFILE_PATH.read_text(encoding="utf-8").strip()
+            if raw.isdigit():
+                old_pid = int(raw)
+                try:
+                    os.kill(old_pid, 0)
+                except OSError:
+                    LOCKFILE_PATH.unlink(missing_ok=True)
+                else:
+                    print(
+                        f"Another integrated server instance is already running (PID {old_pid}).\n"
+                        "Stop it first or kill the PID before starting a new one."
+                    )
+                    sys.exit(1)
+            else:
+                LOCKFILE_PATH.unlink(missing_ok=True)
+
+        LOCKFILE_PATH.write_text(str(current_pid), encoding="utf-8")
+    except Exception as exc:
+        print(f"Failed to acquire server lock: {exc}")
+        sys.exit(1)
 
 from app.config import settings
 
@@ -189,6 +233,8 @@ def signal_handler(signum, frame):
             server_process.join(timeout=5)
     except Exception as e:
         pass  # Silently handle errors during shutdown
+
+    _release_single_instance_lock()
     
     print("✅ All components stopped")
     sys.exit(0)
@@ -730,7 +776,13 @@ def run_kali_optimized():
             return
         
         # Check if we need sudo for full protection
-        if os.geteuid() != 0:
+        try:
+            is_root = os.geteuid() == 0
+        except AttributeError:
+            # Windows or other OS without geteuid
+            is_root = False
+        
+        if not is_root:
             logger.warning("")
             logger.warning("⚠️  WARNING: Not running as root!")
             logger.warning("   Some protection features may be limited:")
@@ -738,9 +790,8 @@ def run_kali_optimized():
             logger.warning("   - Packet capture for IDS")
             logger.warning("   - Domain blocking (hosts file)")
             logger.warning("")
-            logger.warning("   For FULL protection, run: sudo python run_server.py")
+            logger.warning("   For FULL protection, run: sudo /home/kali/Documents/SENTINELAI-main/.venv/bin/python server/run_server.py")
             logger.warning("")
-            time.sleep(3)
 
         if not server_process or not server_process.is_alive():
             logger.error("❌ Server process exited before protection startup completed.")
@@ -817,6 +868,7 @@ if __name__ == "__main__":
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+    _acquire_single_instance_lock_or_exit()
     
     try:
         # Check environment to determine run mode
@@ -838,3 +890,5 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"[FATAL] Server failed to start: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        _release_single_instance_lock()

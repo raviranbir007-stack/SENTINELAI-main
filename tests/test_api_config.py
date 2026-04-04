@@ -13,14 +13,14 @@ import sys
 from pathlib import Path
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.virus_total import VirusTotalService
-from app.services.urlscan import URLScanService
-from app.services.abuseipdb import AbuseIPDBService
-from app.services.shodan import ShodanService
-from app.services.hybrid_analysis import HybridAnalysisService
-from app.config import settings
+from server.app.services.virus_total import VirusTotalService
+from server.app.services.urlscan import URLScanService
+from server.app.services.abuseipdb import AbuseIPDBService
+from server.app.services.shodan import ShodanService
+from server.app.services.hybrid_analysis import HybridAnalysisService
+from server.app.config import settings
 
 
 async def test_virustotal():

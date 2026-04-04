@@ -52,7 +52,7 @@ if is_sqlite_async:
     engine_kwargs.update(
         {
             "poolclass": NullPool,
-            "connect_args": {"timeout": 60},
+            "connect_args": {"timeout": 120},  # Increased from 60 for more concurrency
         }
     )
 else:
@@ -77,8 +77,11 @@ if is_sqlite_async:
         try:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA busy_timeout=60000")
+            cursor.execute("PRAGMA busy_timeout=120000")  # Increased from 60000 for lock waits
             cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache for better performance
+            cursor.execute("PRAGMA foreign_keys=ON")  # Enable foreign key constraints
+            cursor.execute("PRAGMA wal_autocheckpoint=1000")  # Checkpoint every 1000 pages
         finally:
             cursor.close()
 

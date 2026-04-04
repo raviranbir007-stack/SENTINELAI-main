@@ -1,5 +1,6 @@
 import random
 import hashlib
+import importlib.util
 import math
 import os
 import re as _re
@@ -24,6 +25,8 @@ from ..core.threat_analyzer import threat_analyzer
 from ..database import get_db
 from ..models import AttackEvent, ScanHistory, SystemLog
 
+# Initialize the router for all compatibility endpoints
+router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Local file analysis helpers (no external API keys required)
@@ -144,6 +147,110 @@ def _identify_magic(data: bytes) -> str:
 
 def _analyse_pe(data: bytes) -> Optional[Dict]:
     if data[:2] != b"MZ":
+        return None
+
+
+def _disassembly_info(data: bytes, pe_info: Optional[Dict]) -> Optional[Dict]:
+    """Best-effort disassembly metadata for executable-like payloads."""
+    if importlib.util.find_spec("capstone") is None:
+        return None
+    if not data or len(data) < 32:
+        return None
+
+    try:
+        from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_MODE_64  # type: ignore
+
+        arch = str((pe_info or {}).get("arch") or "").lower()
+        mode = CS_MODE_64 if arch == "x64" else CS_MODE_32
+
+        md = Cs(CS_ARCH_X86, mode)
+        md.detail = False
+        instructions = list(md.disasm(data[:256], 0x1000))
+        if not instructions:
+            return None
+
+        suspicious_mnemonics = {"syscall", "sysenter", "int", "int3", "rdtsc", "cpuid"}
+        suspicious_patterns = []
+        for ins in instructions:
+            mnemonic = str(getattr(ins, "mnemonic", "") or "").lower()
+            if mnemonic in suspicious_mnemonics:
+                suspicious_patterns.append(
+                    {
+                        "mnemonic": mnemonic,
+                        "op_str": str(getattr(ins, "op_str", "") or ""),
+                    }
+                )
+            if len(suspicious_patterns) >= 8:
+                break
+
+        return {
+            "engine": "capstone",
+            "architecture": "x64" if mode == CS_MODE_64 else "x86",
+            "instruction_count": len(instructions),
+            "suspicious_patterns": suspicious_patterns,
+        }
+    except Exception:
+        return None
+
+
+def _ml_classification(entropy: float, signatures: List[Dict], ext: str, pe_info: Optional[Dict]) -> Optional[Dict]:
+    """Lightweight ML classification metadata when sklearn is available."""
+    if importlib.util.find_spec("sklearn") is None:
+        return None
+
+    try:
+        import numpy as np  # type: ignore
+        from sklearn.linear_model import LogisticRegression  # type: ignore
+
+        feature_vector = np.array(
+            [[
+                float(entropy),
+                float(len(signatures)),
+                float(1 if ext in _DANGEROUS_EXTS else 0),
+                float(1 if pe_info else 0),
+                float(1 if pe_info and pe_info.get("suspicious") else 0),
+            ]]
+        )
+
+        train_x = np.array(
+            [
+                [1.2, 0, 0, 0, 0],
+                [2.8, 0, 0, 0, 0],
+                [4.2, 1, 0, 0, 0],
+                [5.6, 1, 1, 0, 0],
+                [6.4, 2, 1, 1, 0],
+                [7.1, 3, 1, 1, 1],
+                [7.8, 4, 1, 1, 1],
+                [8.4, 5, 1, 1, 1],
+            ],
+            dtype=float,
+        )
+        train_y = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=int)
+
+        model = LogisticRegression(max_iter=200, random_state=42)
+        model.fit(train_x, train_y)
+        malicious_prob = float(model.predict_proba(feature_vector)[0][1])
+
+        if malicious_prob >= 0.65:
+            prediction = "MALICIOUS"
+        elif malicious_prob >= 0.45:
+            prediction = "SUSPICIOUS"
+        else:
+            prediction = "CLEAN"
+
+        return {
+            "model": "logistic_regression_synthetic_baseline",
+            "prediction": prediction,
+            "confidence": round(malicious_prob, 3),
+            "features": {
+                "entropy": round(float(entropy), 3),
+                "signature_count": int(len(signatures)),
+                "dangerous_extension": bool(ext in _DANGEROUS_EXTS),
+                "has_pe": bool(pe_info),
+                "pe_suspicious": bool(pe_info and pe_info.get("suspicious")),
+            },
+        }
+    except Exception:
         return None
     try:
         if len(data) < 0x40:
@@ -302,6 +409,9 @@ def _local_file_analysis(content: bytes, filename: str) -> Dict:
     else:
         risk_level = "CLEAN"
 
+    disassembly_info = _disassembly_info(sample, pe_info)
+    ml_classification = _ml_classification(entropy, matched_sigs, ext, pe_info)
+
     return {
         "local_analysis": True,
         "entropy": round(entropy, 3),
@@ -310,6 +420,8 @@ def _local_file_analysis(content: bytes, filename: str) -> Dict:
         "signatures": [s["name"] for s in matched_sigs],
         "suspicious_strings": susp_strings,
         "pe_info": pe_info,
+        "disassembly_info": disassembly_info,
+        "ml_classification": ml_classification,
         "risk_score": score,
         "risk_level": risk_level,
         "threat_indicators": threat_indicators,
@@ -850,7 +962,16 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
                 "file_extension":    local["file_extension"],
                 "signatures":        local["signatures"],
                 "pe_info":           local["pe_info"],
+                "disassembly_info":  local.get("disassembly_info"),
+                "ml_classification": local.get("ml_classification"),
                 "suspicious_strings": local["suspicious_strings"],
+            },
+            "file_analysis": {
+                "entropy": local["entropy"],
+                "signatures": local["signatures"],
+                "pe_info": local["pe_info"],
+                "disassembly_info": local.get("disassembly_info"),
+                "ml_classification": local.get("ml_classification"),
             },
             # External API results
             "api_results":       api_result.get("api_results", {}),
@@ -1415,7 +1536,7 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
             status = "rate_limited"
             live = False
         else:
-            status = "ready"
+            status = "online"
             live = True
 
         payload.append(
@@ -1425,6 +1546,7 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
                 "enabled": key_configured,
                 "status": status,
                 "live": live,
+                "is_live": live,
                 "supported_inputs": spec["supported_inputs"],
                 "daily_used": daily_used,
                 "daily_limit": daily_limit,
@@ -1457,8 +1579,11 @@ async def list_reports():
 
 class ReportRequest(BaseModel):
     target: str | None = None
+    scan_id: str | None = None
     type: str | None = None
     timeRange: str | None = None
+    report_type: str | None = None
+    intervals: list[str] | None = None
 
 
 @router.post("/reports/generate")
@@ -1482,12 +1607,71 @@ async def generate_report(req: ReportRequest):
     target = req.target or "unknown"
     scan_type = req.type or "unknown"
     time_range = req.timeRange or "24h"
+    report_type = req.report_type or "executive_summary"
+    intervals = req.intervals or [time_range]
+
+    scan_record = None
+    if req.scan_id:
+        result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == req.scan_id))
+        scan = result.scalar_one_or_none()
+        if scan:
+            analysis_data = scan.analysis_data if isinstance(scan.analysis_data, dict) else {}
+            scan_record = {
+                "input": scan.target or scan.target_type or scan.scan_id,
+                "input_type": scan.target_type or scan_type,
+                "verdict": scan.threat_level or analysis_data.get("verdict", "unknown"),
+                "confidence": scan.confidence if scan.confidence is not None else analysis_data.get("confidence", 0.5),
+                "threat_indicators": analysis_data.get("threat_indicators", []),
+                "api_results": analysis_data.get("api_results", {}),
+                "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else now.isoformat(),
+                "report_id": report_id,
+                "summary": analysis_data.get("summary", ""),
+                "threats_detected": scan.threats_detected or len(analysis_data.get("threat_indicators", [])),
+                "forensic_metadata": analysis_data.get("forensic_metadata", {}),
+                "scan_id": scan.scan_id,
+                "threat_level": scan.threat_level or analysis_data.get("threat_level", "unknown"),
+                "status": "complete",
+                "report_type": report_type,
+                "intervals": intervals,
+            }
+            target = scan_record["input"]
+            scan_type = scan_record["input_type"]
     
     # Get the most recent scan for this target from SCANS_STORE to use its full analysis
-    target_scans = [s for s in SCANS_STORE if target in s.get("target", "")]
+    target_scans = [s for s in SCANS_STORE if target and target in s.get("target", "")]
+
+    # Prefer an exact scan lookup when scan_id is provided; it carries the richest analysis payload.
+    if scan_record is not None:
+        threat_analysis = scan_record
+    elif req.scan_id:
+        stored_scan = next((s for s in SCANS_STORE if s.get("scan_id") == req.scan_id), None)
+        if stored_scan:
+            stored_analysis = stored_scan.get("analysis", {}) if isinstance(stored_scan.get("analysis"), dict) else {}
+            threat_analysis = {
+                "input": stored_scan.get("target") or stored_scan.get("target_name") or stored_scan.get("scan_id") or target,
+                "input_type": stored_scan.get("type", scan_type),
+                "verdict": stored_scan.get("verdict", stored_analysis.get("verdict", "unknown")),
+                "confidence": stored_scan.get("confidence", stored_analysis.get("confidence", 0.5)),
+                "threat_indicators": stored_scan.get("threat_indicators", stored_analysis.get("threat_indicators", [])),
+                "api_results": stored_scan.get("api_results", stored_analysis.get("api_results", {})),
+                "timestamp": stored_scan.get("timestamp", now.isoformat()),
+                "report_id": report_id,
+                "summary": stored_scan.get("summary", stored_analysis.get("summary", "")),
+                "threats_detected": stored_scan.get("threats_detected", len(stored_analysis.get("threat_indicators", []))),
+                "forensic_metadata": stored_scan.get("forensic_metadata", stored_analysis.get("forensic_metadata", {})),
+                "scan_id": stored_scan.get("scan_id", req.scan_id),
+                "threat_level": stored_scan.get("threat_level", stored_analysis.get("threat_level", "unknown")),
+                "status": stored_scan.get("status", "complete"),
+                "report_type": report_type,
+                "intervals": intervals,
+            }
+        else:
+            threat_analysis = None
     
     # If we have a recent scan with full analysis data, use it
-    if target_scans:
+    if req.scan_id and threat_analysis is not None:
+        pass
+    elif target_scans:
         # Use the most recent scan with complete data
         latest_scan = target_scans[-1]
         
@@ -1508,15 +1692,21 @@ async def generate_report(req: ReportRequest):
                 "scan_id": latest_scan.get("scan_id", ""),
                 "threat_level": latest_scan.get("threat_level", "unknown"),
                 "status": latest_scan.get("status", "complete"),
+                "report_type": report_type,
+                "intervals": intervals,
             }
         else:
             # Fallback: perform fresh analysis
             threat_analysis = await threat_analyzer.analyze(target)
             threat_analysis["report_id"] = report_id
+            threat_analysis["report_type"] = report_type
+            threat_analysis["intervals"] = intervals
     else:
         # No recent scans - perform fresh analysis
         threat_analysis = await threat_analyzer.analyze(target)
         threat_analysis["report_id"] = report_id
+        threat_analysis["report_type"] = report_type
+        threat_analysis["intervals"] = intervals
 
     # Generate PDF bytes with full analysis data
     pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)

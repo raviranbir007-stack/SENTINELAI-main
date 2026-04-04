@@ -599,10 +599,9 @@ class ThreatAnalyzer:
         """Construct enriched forensic analysis block for every scan."""
         api_results = result.get("api_results", {}) or {}
         forensic = result.get("forensic_metadata", {}) or {}
-        apis_called = api_results.get("apis_called", []) or []
-        apis_expected = api_results.get("apis_expected", []) or []
         apis_attempted = api_results.get("apis_attempted", []) or []
         api_status = api_results.get("api_status", {}) or {}
+        api_participation = self._summarize_api_participation(api_results)
 
         heuristic_count = sum(1 for t in threats if str(t.get("source", "")).lower() == "heuristic analysis")
         signature_count = sum(
@@ -626,10 +625,12 @@ class ThreatAnalyzer:
             "generated_at": datetime.utcnow().isoformat(),
             "orchestration": {
                 "engine": "SENTINEL-AI Multi-Source Orchestrator",
-                "apis_expected": len(apis_expected),
+                "apis_expected": api_participation.get("total_expected", 0),
+                "apis_expected_applicable": api_participation.get("applicable_expected", 0),
                 "apis_attempted": len(apis_attempted),
-                "apis_called": len(apis_called),
-                "coverage_percent": round((len(apis_called) / max(len(apis_expected), 1)) * 100, 1) if apis_expected else 0.0,
+                "apis_called": api_participation.get("checked_applicable", 0),
+                "coverage_percent": api_participation.get("coverage_percent", 0.0),
+                "coverage_scope": api_participation.get("coverage_scope", "applicable"),
                 "api_status": api_status,
             },
             "detection_methods": {
@@ -640,7 +641,11 @@ class ThreatAnalyzer:
             },
             "signature_based_detection": {
                 "enabled": True,
-                "sources": [s for s in ["VirusTotal", "Hybrid Analysis"] if s in (forensic.get("unique_sources") or apis_called)],
+                "sources": [
+                    s
+                    for s in ["VirusTotal", "Hybrid Analysis"]
+                    if s in (forensic.get("unique_sources") or api_results.get("apis_called", []))
+                ],
                 "notes": "Signature detections are weighted with corroboration and confidence controls.",
             },
             "mitre_attack_mapping": mitre_map,
@@ -657,6 +662,47 @@ class ThreatAnalyzer:
                 ),
             },
             "corroboration_engine": corroboration_analysis or {},
+        }
+
+    def _summarize_api_participation(self, api_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Summarize external API participation using applicability-aware coverage."""
+        api_status = api_results.get("api_status", {}) or {}
+        statuses = [meta for meta in api_status.values() if isinstance(meta, dict)]
+
+        applicable = [meta for meta in statuses if bool(meta.get("applicable"))]
+        checked_statuses = {"checked", "online", "available", "clean", "no_threat"}
+        unavailable_statuses = {"not_configured", "not_authorized", "rate_limited", "error", "skipped_local_mode"}
+
+        checked_applicable = sum(
+            1
+            for meta in applicable
+            if str(meta.get("status", "unknown")).lower() in checked_statuses
+        )
+        applicable_expected = len(applicable)
+        total_expected = len(statuses)
+
+        if applicable_expected > 0:
+            coverage_percent = round((checked_applicable / applicable_expected) * 100, 1)
+            coverage_scope = "applicable"
+        else:
+            coverage_percent = 100.0 if total_expected == 0 else 0.0
+            coverage_scope = "none_applicable"
+
+        unavailable_reasons = sorted(
+            {
+                str(meta.get("status", "unknown")).lower()
+                for meta in applicable
+                if str(meta.get("status", "unknown")).lower() in unavailable_statuses
+            }
+        )
+
+        return {
+            "total_expected": total_expected,
+            "applicable_expected": applicable_expected,
+            "checked_applicable": checked_applicable,
+            "coverage_percent": coverage_percent,
+            "coverage_scope": coverage_scope,
+            "unavailable_reasons": unavailable_reasons,
         }
 
     def _normalize_input(self, value: str) -> str:
@@ -1251,6 +1297,21 @@ class ThreatAnalyzer:
             decoded_url = unquote(full_url)
             decoded_path = unquote(path)
             decoded_query = unquote(query)
+
+            benign_developer_auth_patterns = [
+                "vscode://vscode.github-authentication/did-authenticate",
+                "vscode.github-authentication/did-authenticate",
+                "vscode.dev/redirect",
+                "vscode.dev/redirect?url=vscode%3a%2f%2fvscode.github-authentication%2fdid-authenticate",
+                "vscode.dev/redirect?url=vscode://vscode.github-authentication/did-authenticate",
+            ]
+            if (
+                parsed.scheme == "vscode"
+                or parsed.netloc.lower() == "vscode.dev"
+                or any(pattern in decoded_url for pattern in benign_developer_auth_patterns)
+            ):
+                logger.debug("Skipping heuristic analysis for benign developer auth URL: %s", url)
+                return threats
             
             # ============================================
             # 1. IP-BASED URL DETECTION (HIGH RISK)
@@ -2716,8 +2777,10 @@ class ThreatAnalyzer:
         if not threats:
             # EVEN FOR CLEAN SCANS: Show which APIs were called and checked
             apis_called = result.get("api_results", {}).get("apis_called", [])
-            apis_expected = result.get("api_results", {}).get("apis_expected", [])
             api_results = result.get("api_results", {})
+            api_participation = self._summarize_api_participation(api_results)
+            apis_applicable = int(api_participation.get("applicable_expected", 0) or 0)
+            apis_checked = int(api_participation.get("checked_applicable", 0) or 0)
             
             # Build forensic record showing all APIs checked (even if no threats)
             checked_sources = []
@@ -2756,31 +2819,32 @@ class ThreatAnalyzer:
                 
                 checked_sources.append(source_info)
             
-            coverage_ratio = (len(apis_called) / len(apis_expected)) if apis_expected else 1.0
-            if apis_expected:
+            coverage_ratio = (apis_checked / apis_applicable) if apis_applicable else 1.0
+            if apis_applicable:
                 # Keep confidence realistic when external corroboration is partial or absent.
                 base_confidence = 0.68 if result.get("use_external_apis", True) else 0.62
                 result["confidence"] = min(0.95, round(base_confidence + (0.27 * coverage_ratio), 3))
             else:
-                # Heuristic-only clean result without relevant external APIs.
+                # Heuristic-only clean result without applicable external APIs.
                 result["confidence"] = 0.8
 
             result["verdict"] = ThreatLevel.CLEAN
-            if apis_expected:
-                if apis_called:
-                    result["summary"] = f"No threats detected. Verified by {len(apis_called)}/{len(apis_expected)} relevant API(s)."
+            if apis_applicable:
+                if apis_checked:
+                    result["summary"] = f"No threats detected. Verified by {apis_checked}/{apis_applicable} applicable external API(s)."
                 else:
-                    result["summary"] = f"No confirmed threats detected, but no relevant external API completed for this scan (0/{len(apis_expected)})."
+                    result["summary"] = f"No confirmed threats detected, but no applicable external API completed for this scan (0/{apis_applicable})."
             else:
-                result["summary"] = "No threats detected."
+                result["summary"] = "No threats detected. No external API was applicable for this input type."
             result["forensic_metadata"] = {
                 "evidence_sources": apis_called,  # List of API names that were called
                 "corroboration_count": 0,  # No threats corroborated
                 "corroboration_threshold_met": False,
                 "source_details": checked_sources,  # Detailed info about what each API checked
-                "apis_checked": len(apis_called),
-                "total_apis_available": len(apis_expected),
-                "scan_coverage": f"{len(apis_called)}/{len(apis_expected) or 0} relevant APIs",
+                "apis_checked": apis_checked,
+                "total_apis_available": apis_applicable,
+                "total_apis_tracked": api_participation.get("total_expected", 0),
+                "scan_coverage": f"{apis_checked}/{apis_applicable} applicable APIs",
                 "api_status": api_results.get("api_status", {}),
             }
 
@@ -3047,8 +3111,11 @@ class ThreatAnalyzer:
 
         # Add forensic metadata for reliability tracking
         apis_called = result.get("api_results", {}).get("apis_called", [])
-        apis_expected = result.get("api_results", {}).get("apis_expected", [])
-        api_status_map = result.get("api_results", {}).get("api_status", {}) or {}
+        api_results = result.get("api_results", {})
+        api_status_map = api_results.get("api_status", {}) or {}
+        api_participation = self._summarize_api_participation(api_results)
+        apis_applicable = int(api_participation.get("applicable_expected", 0) or 0)
+        apis_checked = int(api_participation.get("checked_applicable", 0) or 0)
         api_status_counts: Dict[str, int] = {}
         for meta in api_status_map.values():
             status = str((meta or {}).get("status", "unknown") or "unknown").lower()
@@ -3080,13 +3147,14 @@ class ThreatAnalyzer:
             },
             "source_weighted_confidence": round(weighted_fusion_confidence, 3),
             "source_confidence_weights": self._source_confidence_weights,
-            "apis_checked": len(apis_called),
+            "apis_checked": apis_checked,
             "apis_called_list": apis_called,
-            "total_apis_available": len(apis_expected),
-            "scan_coverage": f"{len(apis_called)}/{len(apis_expected) or 0} relevant APIs",
+            "total_apis_available": apis_applicable,
+            "total_apis_tracked": api_participation.get("total_expected", 0),
+            "scan_coverage": f"{apis_checked}/{apis_applicable} applicable APIs",
             "api_status": api_status_map,
             "api_status_counts": api_status_counts,
-            "external_corroboration_available": (len(apis_expected) == 0) or bool(api_status_counts.get("checked", 0)),
+            "external_corroboration_available": (apis_applicable == 0) or bool(api_status_counts.get("checked", 0)),
             "external_corroboration_unavailable_reasons": [
                 status for status in unavailable_statuses if api_status_counts.get(status, 0)
             ],
@@ -3263,24 +3331,28 @@ class ThreatAnalyzer:
         result["forensic_analysis"] = advanced_forensic
 
         # Apply alert suppression for non-clean results
-        if result.get("verdict") != ThreatLevel.CLEAN:
-            should_suppress, suppression_reason = alert_suppression_engine.should_suppress_alert(result)
-            if should_suppress:
-                logger.info(f"Alert suppressed for {value}: {suppression_reason}")
-                result["suppressed"] = True
-                result["suppression_reason"] = suppression_reason
-                result["verdict"] = ThreatLevel.CLEAN
-                result["confidence"] = max(0.1, result.get("confidence", 0.0) * 0.3)  # Reduce confidence
-                result["summary"] = f"Alert suppressed: {suppression_reason}"
-                # Add suppression metadata
-                result.setdefault("forensic_metadata", {})["alert_suppression"] = {
-                    "suppressed": True,
-                    "reason": suppression_reason,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            else:
-                # Record the alert for future deduplication
-                alert_suppression_engine.record_alert(result)
+        try:
+            if result.get("verdict") != ThreatLevel.CLEAN:
+                should_suppress, suppression_reason = alert_suppression_engine.should_suppress_alert(result)
+                if should_suppress:
+                    logger.info(f"Alert suppressed for {result.get('input', '')}: {suppression_reason}")
+                    result["suppressed"] = True
+                    result["suppression_reason"] = suppression_reason
+                    result["verdict"] = ThreatLevel.CLEAN
+                    result["confidence"] = max(0.1, result.get("confidence", 0.0) * 0.3)  # Reduce confidence
+                    result["summary"] = f"Alert suppressed: {suppression_reason}"
+                    # Add suppression metadata
+                    result.setdefault("forensic_metadata", {})["alert_suppression"] = {
+                        "suppressed": True,
+                        "reason": suppression_reason,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                else:
+                    # Record the alert for future deduplication
+                    alert_suppression_engine.record_alert(result)
+        except Exception as e:
+            logger.warning(f"Alert suppression failed: {e}")
+            # Continue without suppression
 
         return result
 

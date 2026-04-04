@@ -3,7 +3,11 @@
  * Handles all communication with the FastAPI backend
  */
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+// Dynamic API configuration - use same protocol and host as current page
+const API_PROTOCOL = window.location.protocol;
+const API_HOST = window.location.hostname;
+const API_PORT = window.location.port ? `:${window.location.port}` : '';
+const API_BASE_URL = `${API_PROTOCOL}//${API_HOST}${API_PORT}/api/v1`;
 
 class SentinelAPI {
   constructor(baseURL = API_BASE_URL) {
@@ -68,10 +72,19 @@ class SentinelAPI {
   }
 
   /**
-   * Get startup security posture
+   * Get dashboard security posture
    */
   async getSecurityPosture() {
     return this.request('/dashboard/security-posture', {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Get dashboard API status
+   */
+  async getApiStatus() {
+    return this.request('/dashboard/api-status', {
       method: 'GET',
     });
   }

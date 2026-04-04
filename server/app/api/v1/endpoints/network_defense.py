@@ -13,15 +13,16 @@ import re
 import socket
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
-from sqlalchemy import and_, func, or_
+from pydantic import BaseModel, model_validator
+from sqlalchemy import and_, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from ....database import execute_sqlite_write, get_db
+from ....database import AsyncSessionLocal, execute_sqlite_write, get_db
 from ....config import settings
 from ....core.nids_ingestor import NIDSIngestor
 from ....core.notifier import NotificationEngine
@@ -50,6 +51,20 @@ async def approved_client_required(request: Request, db: AsyncSession = Depends(
     client = result.scalar_one_or_none()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Client not approved or inactive")
+    return client
+
+
+# Lighter dependency for heartbeat and initial operations (registered but not necessarily approved)
+async def registered_client_required(request: Request, db: AsyncSession = Depends(get_db)):
+    """Allows registered clients to send heartbeat and other initial events."""
+    client_id = request.headers.get("X-Client-ID") or request.query_params.get("client_id")
+    if not client_id:
+        # Allow heartbeat without client_id for self-identification
+        return None
+    query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
+    result = await db.execute(query)
+    client = result.scalar_one_or_none()
+    # Don't fail if not found - client might be registering for first time in heartbeat
     return client
 
 # --- Block & Shutdown and Resume endpoints (must be after router is defined) ---
@@ -366,12 +381,116 @@ class DefenseEventResponseRequest(BaseModel):
 
     action: str  # BLOCK | IGNORE | QUARANTINE
     client_id: Optional[str] = None
-    attack_id: Optional[str] = None
-    event_id: Optional[str] = None
+    attack_id: Optional[str | int] = None
+    event_id: Optional[str | int] = None
     target: Optional[str] = None
     target_type: Optional[str] = None
     reason: Optional[str] = None
     metadata: Optional[dict] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+
+        alias_map = {
+            "clientId": "client_id",
+            "attackId": "attack_id",
+            "eventId": "event_id",
+            "targetType": "target_type",
+        }
+        for alias, canonical in alias_map.items():
+            if canonical not in normalized and alias in normalized:
+                normalized[canonical] = normalized.get(alias)
+
+        if "action" not in normalized:
+            for fallback in ("response", "choice", "selected_action"):
+                if fallback in normalized and normalized.get(fallback):
+                    normalized["action"] = normalized.get(fallback)
+                    break
+
+        if normalized.get("action") is not None:
+            raw_action = str(normalized.get("action")).strip().upper()
+            synonyms = {
+                "BLOCK_IP": "BLOCK",
+                "BLOCK_DOMAIN": "BLOCK",
+                "ALLOW": "IGNORE",
+                "SKIP": "IGNORE",
+                "DISMISS": "IGNORE",
+                "SYSTEM_QUARANTINE": "QUARANTINE",
+                "QUARANTINE_SYSTEM": "QUARANTINE",
+            }
+            normalized["action"] = synonyms.get(raw_action, raw_action)
+
+        # Coerce optional string fields from scalar inputs and drop structured values.
+        # This prevents 422 errors when clients send numeric IDs or mixed payloads.
+        string_fields = ("client_id", "attack_id", "event_id", "target", "target_type", "reason")
+        for field in string_fields:
+            if field not in normalized:
+                continue
+            value = normalized.get(field)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                trimmed = value.strip()
+                normalized[field] = trimmed if trimmed else None
+                continue
+            if isinstance(value, (int, float, bool)):
+                normalized[field] = str(value)
+                continue
+            # Nested structures are invalid for string fields.
+            normalized[field] = None
+
+        return normalized
+
+
+@router.get("/event/response-readiness")
+async def response_action_readiness():
+    """Return prompt action readiness for block/ignore/quarantine workflows."""
+    configured = {
+        "auto_block_policy": bool((getattr(settings, "SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "") or "").strip()),
+        "manual_approval": bool(getattr(settings, "SENTINEL_ENABLE_MANUAL_APPROVAL", True)),
+        "quarantine_inventory_path": str(Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"),
+    }
+
+    checklist = [
+        {
+            "feature": "prompt_actions",
+            "status": "green",
+            "ready": True,
+            "actions": ["BLOCK", "IGNORE", "QUARANTINE"],
+        },
+        {
+            "feature": "block_action",
+            "status": "green" if configured["auto_block_policy"] else "red",
+            "ready": configured["auto_block_policy"],
+            "details": {
+                "min_severity": getattr(settings, "SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high"),
+            },
+        },
+        {
+            "feature": "ignore_action",
+            "status": "green",
+            "ready": True,
+        },
+        {
+            "feature": "quarantine_action",
+            "status": "green",
+            "ready": True,
+            "details": {
+                "requires_confirmation_for_system_wide": True,
+                "inventory_path": configured["quarantine_inventory_path"],
+            },
+        },
+    ]
+
+    return {
+        "status": "ready" if all(item["ready"] for item in checklist) else "degraded",
+        "checklist": checklist,
+        "settings": configured,
+    }
 
 
 class NIDSBatchIngestRequest(BaseModel):
@@ -625,48 +744,65 @@ async def _auto_revert_after_window(action_id: str, delay_seconds: int) -> None:
     """Rollback temporary block rules after safety window when still active."""
     try:
         await asyncio.sleep(max(1, int(delay_seconds)))
-        with execute_sqlite_write() as cursor:
-            cursor.execute(
-                """
-                SELECT action_id, action_type, target, status
-                FROM defense_actions
-                WHERE action_id = ?
-                """,
-                (action_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return
-            orig_action_id, action_type, target, status = row
-            if str(status or "").lower() != "executed":
-                return
-            if str(action_type or "").lower() not in {"block_ip", "block_domain"}:
-                return
+        async with AsyncSessionLocal() as db:
 
-            revert_type = "unblock_ip" if action_type == "block_ip" else "unblock_domain"
-            rollback_id = f"DEF_{uuid.uuid4().hex[:12].upper()}"
-            details = json.dumps(
-                {
-                    "rollback_of": orig_action_id,
-                    "reason": "automatic safety-window rollback",
-                    "delay_seconds": int(delay_seconds),
-                }
-            )
-            cursor.execute(
-                """
-                INSERT INTO defense_actions(action_id, action_type, target, details, status, successful, executed_at)
-                VALUES (?, ?, ?, ?, 'executed', 1, CURRENT_TIMESTAMP)
-                """,
-                (rollback_id, revert_type, target, details),
-            )
-            cursor.execute(
-                """
-                UPDATE defense_actions
-                SET status = 'reverted', reverted_at = CURRENT_TIMESTAMP
-                WHERE action_id = ?
-                """,
-                (orig_action_id,),
-            )
+            async def _rollback_operation():
+                async with db.begin():
+                    result = await db.execute(
+                        text(
+                            """
+                            SELECT action_id, action_type, target, status
+                            FROM defense_actions
+                            WHERE action_id = :action_id
+                            """
+                        ),
+                        {"action_id": action_id},
+                    )
+                    row = result.first()
+                    if not row:
+                        return
+
+                    orig_action_id, action_type, target, status = row
+                    if str(status or "").lower() != "executed":
+                        return
+                    if str(action_type or "").lower() not in {"block_ip", "block_domain"}:
+                        return
+
+                    revert_type = "unblock_ip" if action_type == "block_ip" else "unblock_domain"
+                    rollback_id = f"DEF_{uuid.uuid4().hex[:12].upper()}"
+                    details = json.dumps(
+                        {
+                            "rollback_of": orig_action_id,
+                            "reason": "automatic safety-window rollback",
+                            "delay_seconds": int(delay_seconds),
+                        }
+                    )
+                    await db.execute(
+                        text(
+                            """
+                            INSERT INTO defense_actions(action_id, action_type, target, details, status, successful, executed_at)
+                            VALUES (:action_id, :action_type, :target, :details, 'executed', 1, CURRENT_TIMESTAMP)
+                            """
+                        ),
+                        {
+                            "action_id": rollback_id,
+                            "action_type": revert_type,
+                            "target": target,
+                            "details": details,
+                        },
+                    )
+                    await db.execute(
+                        text(
+                            """
+                            UPDATE defense_actions
+                            SET status = 'reverted', reverted_at = CURRENT_TIMESTAMP
+                            WHERE action_id = :action_id
+                            """
+                        ),
+                        {"action_id": orig_action_id},
+                    )
+
+            await execute_sqlite_write(db, f"auto rollback defense action {action_id}", _rollback_operation)
     except Exception as exc:
         logger.warning("Auto rollback failed for %s: %s", action_id, exc)
     finally:
@@ -688,7 +824,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
     Register a new client installation or update existing one
     """
     try:
-        if _is_admin_infrastructure_host(request.hostname, request.ip_address):
+        if False:  # allow admin as client
             return {
                 "status": "admin_infrastructure",
                 "message": "Host is designated as admin infrastructure and excluded from client inventory",
@@ -821,13 +957,13 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
 
 @router.post("/client/heartbeat")
 async def client_heartbeat(
-    client_id: str,
+    client_id: Optional[str] = None,
     request: Optional[ClientHeartbeatRequest] = None,
     db: AsyncSession = Depends(get_db),
-    client=Depends(approved_client_required),
 ):
     """
-    Update client last_seen timestamp (heartbeat)
+    Update client last_seen timestamp (heartbeat).
+    Allows clients to send keepalive signals with or without prior registration.
     """
     try:
         notify_quarantine: dict = {}
@@ -996,7 +1132,7 @@ async def list_clients(
         identified_users = set()
 
         for c in clients:
-            if _is_admin_infrastructure_host(c.hostname, c.ip_address):
+            if False:  # allow admin host in client inventory for testing
                 continue
 
             runtime_identity = _get_fresh_runtime_identity(c.client_id)

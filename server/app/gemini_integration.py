@@ -20,13 +20,10 @@ except ImportError:
     HttpOptions = None
     GENAI_AVAILABLE = False
 
-# Legacy fallback: google-generativeai
-try:
-    import google.generativeai as legacy_genai
-    LEGACY_GENAI_AVAILABLE = True
-except ImportError:
-    legacy_genai = None
-    LEGACY_GENAI_AVAILABLE = False
+# Legacy fallback: google-generativeai - REMOVED to eliminate deprecation warnings
+# The system now uses google.genai exclusively
+LEGACY_GENAI_AVAILABLE = False
+legacy_genai = None
 
 try:
     from app.config import settings
@@ -70,6 +67,11 @@ class GeminiIntegration:
             logger.warning("Gemini API key not configured. AI features will be limited.")
             return
         
+        # Check if API key looks valid (basic sanity check)
+        if len(api_key) < 20:
+            logger.warning(f"⚠️ Gemini API key appears invalid (too short: {len(api_key)} chars). Please update GEMINI_API_KEY in .env")
+            return
+        
         try:
             if GENAI_AVAILABLE:
                 # Initialize with the new google.genai package
@@ -83,9 +85,19 @@ class GeminiIntegration:
                 try:
                     models = self.client.models.list()
                     self.available_models = [model.name for model in models if 'gemini' in model.name.lower()]
+                    if not self.available_models:
+                        logger.warning("⚠️ Gemini API key may be expired or invalid - no models available")
+                        self.initialized = False
+                        return
                     logger.info(f"✅ Gemini AI initialized. Available models: {self.available_models[:3]}")
+                    logger.info(f"✅ API key is valid and active")
                     self.initialized = True
                 except Exception as e:
+                    error_msg = str(e)
+                    if "expired" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+                        logger.error(f"❌ Gemini API key expired or invalid: {error_msg}")
+                        self.initialized = False
+                        return
                     logger.warning(f"Could not list models, but client created: {e}")
                     self.initialized = True
             elif LEGACY_GENAI_AVAILABLE:
@@ -98,8 +110,18 @@ class GeminiIntegration:
                 try:
                     models = self.client.list_models()
                     self.available_models = [m.name for m in models if 'gemini' in m.name.lower()]
+                    if not self.available_models:
+                        logger.warning("⚠️ Gemini API key may be expired or invalid - no models available")
+                        self.initialized = False
+                        return
                     logger.info(f"✅ Gemini AI initialized (legacy). Available models: {self.available_models[:3]}")
+                    logger.info(f"✅ API key is valid and active")
                 except Exception as e:
+                    error_msg = str(e)
+                    if "expired" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+                        logger.error(f"❌ Gemini API key expired or invalid: {error_msg}")
+                        self.initialized = False
+                        return
                     logger.warning(f"Legacy Gemini client initialized; model list unavailable: {e}")
                 self.initialized = True
                 

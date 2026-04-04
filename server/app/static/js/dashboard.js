@@ -73,6 +73,8 @@ class Dashboard {
 
     // Setup summary card actions
     setTimeout(() => this.setupSummaryCardActions(), 500);
+  }
+
   /**
    * Update or create the dynamic health panel actions
    */
@@ -178,11 +180,7 @@ class Dashboard {
     }
   }
 
-    // Add Deep Manual Scan and Harden Now buttons if not present
-    setTimeout(() => {
-      this.addSecurityControls();
-    }, 500);
-  }
+
 
   /**
    * Add Deep Manual Scan and Harden Now buttons to dashboard
@@ -449,29 +447,40 @@ class Dashboard {
    * Check API health
    */
   async checkAPIHealth() {
+    this.showLoading(true, 'Checking API health...');
+
     try {
       const response = await this.api.health();
-      this.updateAPIStatus(true);
-      console.log('✅ API Health: OK', response);
+      const isHealthy = response?.status === 'healthy';
+
+      this.updateAPIStatus(isHealthy, response?.message || (isHealthy ? 'API is operational' : 'Degraded health'));
+      console.log('✅ API Health:', response);
+      return response;
     } catch (error) {
-      this.updateAPIStatus(false);
+      this.updateAPIStatus(false, error?.message || 'Unable to reach API');
+      this.showToast('API connection failed: ' + (error?.message || error), 'error');
       console.error('❌ API Health: FAILED', error);
+      return { status: 'down', message: error?.message || 'API unreachable' };
+    } finally {
+      this.showLoading(false);
     }
   }
 
   /**
    * Update API status indicator
    */
-  updateAPIStatus(isConnected) {
+  updateAPIStatus(isConnected, message = '') {
     const statusIndicator = document.getElementById('api-status');
-    if (isConnected) {
-      statusIndicator.classList.remove('loading', 'disconnected');
-      statusIndicator.classList.add('connected');
-      statusIndicator.textContent = 'Connected';
-    } else {
-      statusIndicator.classList.remove('loading', 'connected');
-      statusIndicator.classList.add('disconnected');
-      statusIndicator.textContent = 'Disconnected';
+    const statusMessage = document.getElementById('api-status-message');
+
+    if (statusIndicator) {
+      statusIndicator.classList.remove('loading', 'connected', 'disconnected');
+      statusIndicator.classList.add(isConnected ? 'connected' : 'disconnected');
+      statusIndicator.textContent = isConnected ? 'Connected' : 'Disconnected';
+    }
+
+    if (statusMessage) {
+      statusMessage.textContent = message || (isConnected ? 'API is healthy' : 'API connection failed');
     }
   }
 
@@ -503,6 +512,8 @@ class Dashboard {
       this.showLoading(false);
     } catch (error) {
       console.error('Error loading dashboard:', error);
+      this.updateAPIStatus(false, error?.message || 'Failed to load dashboard data');
+      this.showToast('Dashboard load failed: ' + (error?.message || error), 'error');
       this.showLoading(false);
     }
   }

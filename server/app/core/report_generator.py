@@ -4,6 +4,7 @@ Generates AI-analyzed threat reports in PDF format
 """
 
 import asyncio
+import importlib.util
 import logging
 import os
 import sqlite3
@@ -201,6 +202,62 @@ class ReportGenerator:
                 lines.append(f"- {src} | {sev} | {ind} | {ts}")
         return "\n".join(lines)
 
+    def _normalize_interval(self, interval: str) -> tuple[str, int]:
+        value = str(interval or "24h").strip().lower()
+        hours_map = {"24h": 24, "7d": 168, "30d": 720}
+        return value, hours_map.get(value, 24)
+
+    def _build_interval_summaries(self, threat_analysis: Dict[str, Any]) -> list[Dict[str, Any]]:
+        intervals = threat_analysis.get("intervals") or ["24h"]
+        summaries: list[Dict[str, Any]] = []
+
+        for interval in intervals:
+            label, hours = self._normalize_interval(interval)
+            activity = {}
+            vulns = {}
+
+            try:
+                from .activity_database import activity_db
+
+                activity = activity_db.get_activity_summary(hours=hours) or {}
+            except Exception as exc:
+                logger.debug(f"Could not load activity summary for {label}: {exc}")
+
+            try:
+                vuln_summary = self._get_endpoint_vuln_summary(hours=hours)
+                vulns = vuln_summary or {}
+            except Exception as exc:
+                logger.debug(f"Could not load vuln summary for {label}: {exc}")
+
+            summaries.append(
+                {
+                    "interval": label,
+                    "hours": hours,
+                    "activity": activity,
+                    "vulns": vulns,
+                }
+            )
+
+        return summaries
+
+    def _format_interval_summary_text(self, threat_analysis: Dict[str, Any]) -> str:
+        summaries = threat_analysis.get("interval_summaries") or self._build_interval_summaries(threat_analysis)
+        if not summaries:
+            return "No interval summaries available."
+
+        lines = []
+        for summary in summaries:
+            activity = summary.get("activity") or {}
+            vulns = summary.get("vulns") or {}
+            interval = str(summary.get("interval", "24h")).upper()
+            lines.append(
+                f"{interval}: threat scans {activity.get('threat_scans', 0)}, threats detected {activity.get('threats_detected', 0)}, "
+                f"websites {activity.get('websites_visited', 0)}, applications {activity.get('applications_launched', 0)}, "
+                f"network connections {activity.get('network_connections', 0)}, endpoint vulnerabilities {vulns.get('total', 0) if isinstance(vulns, dict) else 0}."
+            )
+
+        return "\n".join(lines)
+
     async def _generate_ai_analysis(self, threat_data: Dict[str, Any]) -> str:
         """Generate AI analysis using Gemini API"""
         # Check daily limit (50 reports per day - conservative limit for free tier)
@@ -265,15 +322,22 @@ class ReportGenerator:
                         except Exception as e:
                             logger.debug(f"Could not list models, using default: {e}")
 
-                        response = client.models.generate_content(
-                            model=model_name, 
-                            contents=p, 
-                            config=GenerateContentConfig(
-                                temperature=0.7,
-                                top_p=0.9,
-                                max_output_tokens=2048
+                        # Call with timeout to prevent hanging on expired keys
+                        try:
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(lambda: client.models.generate_content(
+                                    model=model_name, 
+                                    contents=p, 
+                                    config=GenerateContentConfig(
+                                        temperature=0.7,
+                                        top_p=0.9,
+                                        max_output_tokens=2048
+                                    )
+                                )),
+                                timeout=10.0
                             )
-                        )
+                        except asyncio.TimeoutError:
+                            raise Exception("Gemini API call timed out after 10 seconds (API key likely expired)")
                         text = self._extract_text_from_genai_response(response)
                         if text:
                             # success -> reset failures and track daily usage
@@ -310,7 +374,10 @@ class ReportGenerator:
                     try:
                         loop = asyncio.get_event_loop()
                         model = genai.GenerativeModel("gemini-2.5-flash")
-                        response = await loop.run_in_executor(None, lambda: model.generate_content(p))
+                        response = await asyncio.wait_for(
+                            loop.run_in_executor(None, lambda: model.generate_content(p)),
+                            timeout=10.0
+                        )
                         text = self._extract_text_from_genai_response(response)
                         if text:
                             self._failure_count = 0
@@ -451,15 +518,20 @@ class ReportGenerator:
         if threats:
             threat_details = []
             for t in threats:
-                severity = t.get("severity", "unknown").upper()
-                source = t.get("source", "Unknown")
-                indicator = t.get("indicator", "No details")
-                # Include additional fields if present
-                extra = []
-                if "score" in t:
-                    extra.append(f"Score: {t['score']}")
-                if "count" in t:
-                    extra.append(f"Count: {t['count']}")
+                if isinstance(t, str):
+                    severity = "UNKNOWN"
+                    source = "Unknown"
+                    indicator = t
+                    extra = []
+                else:
+                    severity = t.get("severity", "unknown").upper()
+                    source = t.get("source", "Unknown")
+                    indicator = t.get("indicator", "No details")
+                    extra = []
+                    if "score" in t:
+                        extra.append(f"Score: {t['score']}")
+                    if "count" in t:
+                        extra.append(f"Count: {t['count']}")
                 extra_str = f" ({', '.join(extra)})" if extra else ""
                 threat_details.append(f"  - [{severity}] {source}: {indicator}{extra_str}")
             threats_str = "\n".join(threat_details)
@@ -543,6 +615,8 @@ Hybrid Analysis:
 
         # Format forensic metadata
         forensic_metadata = threat_data.get("forensic_metadata", {})
+        report_type = str(threat_data.get("report_type", "executive_summary")).lower()
+        interval_summary_text = self._format_interval_summary_text(threat_data)
         forensic_str = ""
         if forensic_metadata and forensic_metadata.get("corroboration_count") is not None:
             corroboration_count = forensic_metadata.get("corroboration_count", 0)
@@ -572,6 +646,9 @@ TARGET INFORMATION:
 - Target: {input_val}
 - Type: {input_type}
 - Scan Time: {threat_data.get('timestamp', 'Unknown')}
+- Report Type: {report_type}
+- Interval Coverage:
+{interval_summary_text}
 
 INITIAL VERDICT:
 - Assessment: {verdict.upper()}
@@ -588,7 +665,7 @@ APIs Used: {', '.join(apis_called) if apis_called else 'None'}
 Provide a professional security analysis with these sections:
 
 1. EXECUTIVE SUMMARY (2-3 sentences)
-   Overall risk and key findings, including forensic reliability status
+    Overall risk and key findings, including forensic reliability status and interval highlights
 
 2. FORENSIC RELIABILITY ASSESSMENT (1-2 paragraphs)
    - Discuss the corroboration status and what it means for confidence
@@ -622,13 +699,21 @@ Keep professional, cite specific data, 800-1200 words total.
         """Generate detailed fallback analysis when Gemini is unavailable"""
 
         verdict = threat_data.get("verdict", "unknown").upper()
-        confidence = threat_data.get("confidence", 0.0) * 100
+        confidence_value = threat_data.get("confidence", 0.0)
+        if confidence_value is None:
+            confidence_value = 0.0
+        try:
+            confidence = float(confidence_value) * 100
+        except (TypeError, ValueError):
+            confidence = 0.0
+
         threats = threat_data.get("threat_indicators", [])
         api_results = threat_data.get("api_results", {})
         input_val = threat_data.get("input", "Unknown")
         input_type = threat_data.get("input_type", "Unknown")
         forensic_metadata = threat_data.get("forensic_metadata", {})
         apis_called = api_results.get("apis_called", [])
+        interval_summary_text = self._format_interval_summary_text(threat_data)
 
         if apis_called:
             coverage_line = (
@@ -649,6 +734,10 @@ Confidence: {confidence:.1f}%
 Scan Date: {threat_data.get('timestamp', 'Unknown')}
 
 {coverage_line}
+
+## INTERVAL COVERAGE
+
+{interval_summary_text}
 
 ## FORENSIC RELIABILITY ASSESSMENT
 
@@ -719,6 +808,20 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         # Add API-specific findings
         if apis_called:
             analysis += f"This analysis utilized {len(apis_called)} security intelligence APIs: {', '.join(apis_called)}.\n\n"
+
+        interval_summaries = threat_data.get("interval_summaries") or []
+        if interval_summaries:
+            analysis += "## INTERVAL COMPARISON\n\n"
+            for item in interval_summaries:
+                activity = item.get("activity") or {}
+                vulns = item.get("vulns") or {}
+                label = str(item.get("interval", "24h")).upper()
+                analysis += (
+                    f"- {label}: threat scans {activity.get('threat_scans', 0)}, threats detected {activity.get('threats_detected', 0)}, "
+                    f"websites {activity.get('websites_visited', 0)}, applications {activity.get('applications_launched', 0)}, "
+                    f"network connections {activity.get('network_connections', 0)}, endpoint vulnerabilities {vulns.get('total', 0) if isinstance(vulns, dict) else 0}.\n"
+                )
+            analysis += "\n"
 
         # Analyze threat indicators
         if threats:
@@ -1032,7 +1135,13 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         input_val = threat_analysis.get("input", "Unknown")
         input_type = threat_analysis.get("input_type", "Unknown")
         verdict = threat_analysis.get("verdict", "unknown")
-        confidence = threat_analysis.get("confidence", 0.0)
+        confidence_value = threat_analysis.get("confidence", 0.0)
+        if confidence_value is None:
+            confidence_value = 0.0
+        try:
+            confidence = float(confidence_value)
+        except (TypeError, ValueError):
+            confidence = 0.0
         verdict_key = str(verdict).lower()
         
         # Forensic metadata
@@ -1272,6 +1381,42 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         elements.append(coverage_table)
         elements.append(Spacer(1, 0.2 * inch))
 
+        interval_summaries = threat_analysis.get("interval_summaries") or self._build_interval_summaries(threat_analysis)
+        if interval_summaries:
+            elements.append(Paragraph("INTERVAL COVERAGE SUMMARY", heading_style))
+            interval_rows = [["Period", "Threat Scans", "Threats", "Websites", "Apps", "Network", "Vulns"]]
+            for item in interval_summaries:
+                activity = item.get("activity") or {}
+                vulns = item.get("vulns") or {}
+                interval_rows.append([
+                    str(item.get("interval", "24h")).upper(),
+                    str(activity.get("threat_scans", 0)),
+                    str(activity.get("threats_detected", 0)),
+                    str(activity.get("websites_visited", 0)),
+                    str(activity.get("applications_launched", 0)),
+                    str(activity.get("network_connections", 0)),
+                    str(vulns.get("total", 0) if isinstance(vulns, dict) else 0),
+                ])
+
+            interval_table = Table(
+                interval_rows,
+                colWidths=[0.85 * inch, 0.9 * inch, 0.75 * inch, 0.85 * inch, 0.75 * inch, 0.8 * inch, 0.7 * inch],
+            )
+            interval_table.setStyle(
+                TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ])
+            )
+            elements.append(interval_table)
+            elements.append(Spacer(1, 0.2 * inch))
+
         # Prioritized action plan
         elements.append(Paragraph("PRIORITIZED ACTION PLAN", heading_style))
         for index, action in enumerate(action_plan, start=1):
@@ -1353,7 +1498,8 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
 
             advanced_rows = [
                 ["Orchestration Coverage", f"{orchestration.get('coverage_percent', 0)}%"],
-                ["APIs Expected/Called", f"{orchestration.get('apis_expected', 0)}/{orchestration.get('apis_called', 0)}"],
+                ["APIs Applicable/Called", f"{orchestration.get('apis_expected_applicable', orchestration.get('apis_expected', 0))}/{orchestration.get('apis_called', 0)}"],
+                ["APIs Tracked (Total)", str(orchestration.get("apis_expected", 0))],
                 ["Detection Method Mix", f"H={methods.get('heuristic_indicators', 0)} | S={methods.get('signature_based_indicators', 0)} | TI={methods.get('threat_intel_indicators', 0)}"],
                 ["Corroboration Reliability", str(cor_summary.get("reliability", "unknown")).upper()],
             ]
@@ -1466,6 +1612,14 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
         
         # Get file analysis data if available
         file_data = threat_analysis.get("file_analysis", {})
+        input_type = str(threat_analysis.get("input_type") or "").strip().lower()
+        is_file_scan = input_type in {"file", "file_hash", "hash", "artifact"} or bool(file_data)
+        lief_available = importlib.util.find_spec("lief") is not None
+        capstone_available = importlib.util.find_spec("capstone") is not None
+        sklearn_available = (
+            importlib.util.find_spec("sklearn") is not None
+            or importlib.util.find_spec("scikit_learn") is not None
+        )
         
         # 1. Signature Analysis
         signatures = file_data.get("signatures", [])
@@ -1492,11 +1646,23 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 "status": "COMPLETED",
                 "details": f"Advanced PE parsing with lief library. Sections: {len(pe_info.get('sections', []))}, Imports: {len(pe_info.get('imports', []))}"
             })
+        elif not is_file_scan:
+            methods.append({
+                "name": "PE/COFF Binary Analysis",
+                "status": "NOT APPLICABLE",
+                "details": "Scan target is not a file artifact; PE/COFF analysis only runs for executable file scans."
+            })
+        elif not lief_available:
+            methods.append({
+                "name": "PE/COFF Binary Analysis",
+                "status": "NOT APPLICABLE",
+                "details": "lief library not available in runtime; install lief to enable PE/COFF binary analysis."
+            })
         else:
             methods.append({
                 "name": "PE/COFF Binary Analysis",
                 "status": "NOT APPLICABLE",
-                "details": "File is not a PE/COFF executable or lief library not available."
+                "details": "File artifact is not a PE/COFF executable (or contains no parseable PE headers)."
             })
         
         # 4. Disassembly Analysis
@@ -1508,11 +1674,23 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 "status": "COMPLETED",
                 "details": f"Capstone-based disassembly analysis. Found {suspicious_patterns} suspicious code patterns."
             })
+        elif not is_file_scan:
+            methods.append({
+                "name": "Code Disassembly",
+                "status": "NOT APPLICABLE",
+                "details": "Scan target is not a file artifact; disassembly analysis only runs for executable file scans."
+            })
+        elif not capstone_available:
+            methods.append({
+                "name": "Code Disassembly",
+                "status": "NOT APPLICABLE",
+                "details": "Capstone library not available in runtime; install capstone to enable disassembly analysis."
+            })
         else:
             methods.append({
                 "name": "Code Disassembly",
                 "status": "NOT APPLICABLE",
-                "details": "Disassembly not applicable for this file type or Capstone not available."
+                "details": "Disassembly not applicable for this file type (no executable sections/instructions to decode)."
             })
         
         # 5. ML Classification
@@ -1525,21 +1703,84 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 "status": "COMPLETED",
                 "details": f"Scikit-learn based malware classification. Prediction: {prediction} (Confidence: {confidence:.2f})"
             })
+        elif not is_file_scan:
+            methods.append({
+                "name": "Machine Learning Classification",
+                "status": "NOT APPLICABLE",
+                "details": "Scan target is not a file artifact; ML file classifier runs only on file/hash scans."
+            })
+        elif not sklearn_available:
+            methods.append({
+                "name": "Machine Learning Classification",
+                "status": "NOT APPLICABLE",
+                "details": "scikit-learn not available in runtime; install scikit-learn to enable ML classification."
+            })
         else:
             methods.append({
                 "name": "Machine Learning Classification",
                 "status": "NOT APPLICABLE",
-                "details": "ML classification not available (scikit-learn or required libraries not installed)."
+                "details": "ML classification not produced for this artifact (unsupported type or insufficient feature data)."
             })
         
         # 6. Threat Intelligence APIs
         api_results = threat_analysis.get("api_results", {})
         apis_called = api_results.get("apis_called", [])
         apis_expected = api_results.get("apis_expected", [])
+        api_status = api_results.get("api_status", {}) if isinstance(api_results, dict) else {}
+        status_metas = [
+            meta for meta in (api_status.values() if isinstance(api_status, dict) else [])
+            if isinstance(meta, dict)
+        ]
+        applicable_metas = [meta for meta in status_metas if bool(meta.get("applicable"))]
+        applicable_status_values = [str(meta.get("status", "unknown")).lower() for meta in applicable_metas]
+
+        checked_count = sum(1 for s in applicable_status_values if s in {"checked", "online", "available", "clean", "no_threat"})
+        pending_count = sum(1 for s in applicable_status_values if s == "pending")
+        not_applicable_count = sum(1 for s in (str(meta.get("status", "unknown")).lower() for meta in status_metas) if s == "not_applicable")
+        unauthorized_count = sum(1 for s in applicable_status_values if s == "not_authorized")
+        rate_limited_count = sum(1 for s in applicable_status_values if s == "rate_limited")
+        missing_config_count = sum(1 for s in applicable_status_values if s in {"missing_key", "not_configured"})
+        expected_count = len(applicable_metas)
+        total_tracked_count = max(len(apis_expected), len(status_metas))
+
+        if expected_count == 0:
+            api_method_status = "NOT APPLICABLE"
+            api_method_details = (
+                f"No external threat intelligence APIs were applicable for this target type "
+                f"({not_applicable_count}/{total_tracked_count} marked not applicable)."
+            )
+        elif checked_count >= expected_count:
+            api_method_status = "COMPLETED"
+            api_method_details = (
+                f"Checked {checked_count}/{expected_count} applicable threat intelligence sources: "
+                f"{', '.join(apis_called) if apis_called else 'source list unavailable'}"
+            )
+        elif checked_count == 0 and rate_limited_count > 0 and (rate_limited_count + pending_count) >= expected_count:
+            api_method_status = "RATE LIMITED"
+            api_method_details = (
+                f"No applicable provider completed due to rate limiting/pending completion "
+                f"({rate_limited_count} rate-limited, {pending_count} pending of {expected_count} applicable)."
+            )
+        elif checked_count == 0 and unauthorized_count > 0:
+            api_method_status = "UNAUTHORIZED"
+            api_method_details = (
+                f"Applicable providers returned authorization failures "
+                f"({unauthorized_count}/{expected_count}); verify API plan permissions and account scope."
+            )
+        elif checked_count == 0 and missing_config_count >= max(1, expected_count):
+            api_method_status = "NOT CONFIGURED"
+            api_method_details = "Threat intelligence providers are not configured with valid API keys."
+        else:
+            api_method_status = "PARTIAL"
+            api_method_details = (
+                f"Checked {checked_count}/{expected_count} applicable threat intelligence sources "
+                f"({rate_limited_count} rate-limited, {unauthorized_count} unauthorized, {pending_count} pending)."
+            )
+
         methods.append({
             "name": "Threat Intelligence APIs",
-            "status": "COMPLETED" if apis_called else "PARTIAL",
-            "details": f"Checked {len(apis_called)}/{len(apis_expected)} threat intelligence sources: {', '.join(apis_called)}"
+            "status": api_method_status,
+            "details": api_method_details,
         })
         
         # 7. Behavioral Analysis (if available)
@@ -1559,8 +1800,17 @@ Scan Date: {threat_data.get('timestamp', 'Unknown')}
                 "status": "COMPLETED",
                 "details": f"Analyzed network connections and traffic patterns. Found {len(network.get('suspicious_connections', []))} suspicious connections."
             })
-        
-        return methods
+
+        unique_methods = []
+        seen_names = set()
+        for method in methods:
+            method_name = str(method.get("name", "")).strip()
+            if not method_name or method_name in seen_names:
+                continue
+            seen_names.add(method_name)
+            unique_methods.append(method)
+
+        return unique_methods
 
 
 # Global instance

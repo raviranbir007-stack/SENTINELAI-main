@@ -176,7 +176,7 @@ class SentinelClientV3:
             callback=self._handle_extended_monitor_event,
             poll_interval=int(self.config.get("process", {}).get("poll_interval", 5))
         )
-        self.file_scanner = FileScanner(threat_analyzer=self.threat_analyzer)
+        self.file_scanner = FileScanner(threat_analyzer=self.threat_analyzer, db_path="file_scan_results.db")
 
     def _load_config(self, config_path: Path) -> Dict:
         """Load configuration from file"""

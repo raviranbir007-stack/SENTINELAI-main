@@ -6,10 +6,9 @@ import sys
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
@@ -19,10 +18,6 @@ from datetime import datetime, timezone
 server_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if server_dir not in sys.path:
     sys.path.insert(0, server_dir)
-
-# Import custom middleware
-from .middleware import RateLimitMiddleware, RequestLoggingMiddleware
-from .health_checks import validate_startup, run_health_checks
 
 # Load environment variables from multiple sources
 load_dotenv()  # Load from .env in project root
@@ -232,15 +227,9 @@ async def lifespan(app: FastAPI):
     try:
         # Ensure models are imported so metadata is registered
         from app import models  # noqa: F401
-        from app.database import init_db, engine
+        from app.database import init_db
         await init_db()
         logger.info("✅ Database initialized")
-        
-        # Run health checks
-        is_healthy = await validate_startup(engine)
-        if not is_healthy:
-            logger.error("⚠️  Some critical health checks failed, but continuing startup...")
-        
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
     
@@ -486,17 +475,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add rate limiting middleware (before CORS to apply globally)
-# 10,000 req/min = ~166 req/sec - high enough for parallel dashboard API calls
-rate_limit_per_minute = getattr(settings, 'RATE_LIMIT_PER_MINUTE', 10000)
-app.add_middleware(
-    RateLimitMiddleware,
-    requests_per_minute=rate_limit_per_minute,
-)
-
-# Add request logging middleware for better observability
-app.add_middleware(RequestLoggingMiddleware)
-
 # Add CORS middleware with explicit OPTIONS support
 app.add_middleware(
     CORSMiddleware,
@@ -571,42 +549,22 @@ async def root():
         "gemini_status": get_system_status()["gemini"]
     }
 
-
-@app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
-    """Return no-content favicon response to avoid repeated 404 noise in logs."""
-    return Response(status_code=204)
-
 @app.get("/api/v1/health")
 async def health():
     """Enhanced health endpoint with Gemini status"""
     system_status = get_system_status()
 
-    gemini_status = {}
-    if isinstance(system_status, dict):
-        gemini_status = system_status.get("gemini", {}) or {}
-
-    # Healthy as long as API is running; Gemini can fall back without marking API dead
-    is_healthy = True
-    if isinstance(gemini_status, dict) and gemini_status.get("status") == "error":
-        is_healthy = False
+    # Determine API health state based on system health and service readiness
+    const_status = system_status.get("status", "degraded") if isinstance(system_status, dict) else "degraded"
+    is_healthy = const_status == "healthy"
 
     return {
         "status": "healthy" if is_healthy else "degraded",
         "message": "API is operational" if is_healthy else "Partial degraded functionality",
         "service": "SENTINEL-AI API",
-        "gemini": gemini_status,
+        "gemini": system_status.get("gemini", {}) if isinstance(system_status, dict) else {},
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
-
-@app.get("/api/v1/clients")
-async def legacy_clients(active_only: bool = True):
-    """Legacy compatibility alias for older frontend/client code."""
-    return RedirectResponse(
-        url=f"/api/v1/network/clients?active_only={'true' if active_only else 'false'}",
-        status_code=307
-    )
 
 @app.get("/api/v1/system/status")
 async def system_status():
@@ -1061,21 +1019,6 @@ async def http_exception_handler(request, exc):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "path": request.url.path
         }
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def request_validation_exception_handler(request, exc):
-    """Log request validation failures with enough detail to debug 422 responses."""
-    logger.warning("Request validation failed for %s %s: %s", request.method, request.url.path, exc.errors())
-    return JSONResponse(
-        status_code=422,
-        content={
-            "error": "Request validation failed",
-            "detail": exc.errors(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "path": request.url.path,
-        },
     )
 
 @app.exception_handler(Exception)

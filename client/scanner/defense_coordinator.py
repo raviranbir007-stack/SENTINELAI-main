@@ -59,8 +59,10 @@ class DefenseCoordinator:
                 # Use an event to block until user responds
                 done_event = threading.Event()
                 def thread_dialog():
-                    run_dialog()
-                    done_event.set()
+                    try:
+                        run_dialog()
+                    finally:
+                        done_event.set()
                 t = threading.Thread(target=thread_dialog)
                 t.start()
                 done_event.wait()
@@ -854,6 +856,8 @@ class DefenseCoordinator:
             if system == "Linux":
                 subprocess.run(['sudo', 'iptables', '-P', 'OUTPUT', 'ACCEPT'], check=True)
                 subprocess.run(['sudo', 'iptables', '-F'], check=True)  # Flush rules
+                subprocess.run(['sudo', 'ip6tables', '-P', 'OUTPUT', 'ACCEPT'], check=True)
+                subprocess.run(['sudo', 'ip6tables', '-F'], check=True)
                 logger.info("✓ Network restored (iptables)")
                 
             elif system == "Windows":

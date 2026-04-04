@@ -3,6 +3,9 @@ Quick Start Testing Script
 Tests the SENTINEL-AI threat detection system
 """
 
+# Utility script (not a pytest test module)
+__test__ = False
+
 import asyncio
 
 import httpx

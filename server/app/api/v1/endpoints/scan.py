@@ -71,6 +71,7 @@ def _get_system_health_status(db):
 
 import hashlib
 import asyncio
+import importlib.util
 import logging
 import math
 import os
@@ -90,6 +91,7 @@ from sqlalchemy.future import select
 from ....core.input_detector import InputDetector
 from ....core.report_generator import report_generator
 from ....core.threat_analyzer import threat_analyzer
+from ....config import settings
 from ....database import execute_sqlite_write, get_db
 from ....models import ClientInstallation, ScanHistory, SystemLog
 
@@ -165,6 +167,83 @@ _PHISHING_LURE_PATTERNS_V1 = [
 ]
 
 
+@router.get("/readiness")
+async def get_analysis_readiness():
+    """Return analysis-phase readiness checklist before scans run."""
+    deps = {
+        "lief": importlib.util.find_spec("lief") is not None,
+        "capstone": importlib.util.find_spec("capstone") is not None,
+        "sklearn": importlib.util.find_spec("sklearn") is not None,
+        "numpy": importlib.util.find_spec("numpy") is not None,
+    }
+
+    api_keys = {
+        "virustotal": bool((settings.VIRUSTOTAL_API_KEY or "").strip()),
+        "abuseipdb": bool((settings.ABUSEIPDB_API_KEY or "").strip()),
+        "shodan": bool((settings.SHODAN_API_KEY or "").strip()),
+        "hybridanalysis": bool((settings.HYBRIDANALYSIS_API_KEY or "").strip()),
+        "urlscan": bool((settings.URLSCAN_API_KEY or "").strip()),
+    }
+
+    input_type_ready = {
+        "url": True,
+        "ip": True,
+        "hash": True,
+        "file": True,
+    }
+
+    model_ready = {
+        "local_heuristics": True,
+        "ml_baseline": bool(deps["sklearn"] and deps["numpy"]),
+    }
+
+    checklist = [
+        {
+            "phase": "input_type_readiness",
+            "status": "green" if all(input_type_ready.values()) else "red",
+            "ready": all(input_type_ready.values()),
+            "details": input_type_ready,
+            "required": True,
+        },
+        {
+            "phase": "dependency_readiness",
+            "status": "green" if deps["lief"] else "red",
+            "ready": deps["lief"],
+            "details": deps,
+            "required": True,
+            "note": "lief is required for full PE analysis; capstone/sklearn are optional enrichments.",
+        },
+        {
+            "phase": "model_readiness",
+            "status": "green" if model_ready["local_heuristics"] else "red",
+            "ready": model_ready["local_heuristics"],
+            "details": model_ready,
+            "required": True,
+            "note": "ML baseline uses sklearn+numpy and degrades gracefully when unavailable.",
+        },
+        {
+            "phase": "api_key_readiness",
+            "status": "green" if any(api_keys.values()) else "red",
+            "ready": any(api_keys.values()),
+            "details": {
+                "external_apis_enabled": bool(settings.EXTERNAL_APIS_ENABLED),
+                "configured_keys": api_keys,
+                "configured_count": sum(1 for v in api_keys.values() if v),
+            },
+            "required": False,
+            "note": "External corroboration is optional; local analysis works without API keys.",
+        },
+    ]
+
+    overall_ready = all(item["ready"] for item in checklist if item.get("required"))
+
+    return {
+        "status": "ready" if overall_ready else "degraded",
+        "overall_ready": overall_ready,
+        "checklist": checklist,
+    }
+
+
 def _entropy_v1(data: bytes) -> float:
     if not data:
         return 0.0
@@ -173,6 +252,111 @@ def _entropy_v1(data: bytes) -> float:
         freq[b] += 1
     n = len(data)
     return -sum((c / n) * math.log2(c / n) for c in freq.values() if c)
+
+
+def _disassembly_info_v1(sample: bytes, pe_info: Optional[Dict]) -> Optional[Dict]:
+    """Best-effort disassembly metadata for executable-like payloads."""
+    if importlib.util.find_spec("capstone") is None:
+        return None
+    if not sample or len(sample) < 32:
+        return None
+
+    try:
+        from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_MODE_64  # type: ignore
+
+        arch = str((pe_info or {}).get("arch") or "").lower()
+        mode = CS_MODE_64 if arch == "x64" else CS_MODE_32
+
+        md = Cs(CS_ARCH_X86, mode)
+        md.detail = False
+        instructions = list(md.disasm(sample[:256], 0x1000))
+        if not instructions:
+            return None
+
+        suspicious_mnemonics = {"syscall", "sysenter", "int", "int3", "rdtsc", "cpuid"}
+        suspicious_patterns = []
+        for ins in instructions:
+            mnemonic = str(getattr(ins, "mnemonic", "") or "").lower()
+            if mnemonic in suspicious_mnemonics:
+                suspicious_patterns.append(
+                    {
+                        "mnemonic": mnemonic,
+                        "op_str": str(getattr(ins, "op_str", "") or ""),
+                    }
+                )
+            if len(suspicious_patterns) >= 8:
+                break
+
+        return {
+            "engine": "capstone",
+            "architecture": "x64" if mode == CS_MODE_64 else "x86",
+            "instruction_count": len(instructions),
+            "suspicious_patterns": suspicious_patterns,
+        }
+    except Exception:
+        return None
+
+
+def _ml_classification_v1(entropy: float, signatures: List[Dict], ext: str, pe_info: Optional[Dict]) -> Optional[Dict]:
+    """Lightweight ML classification metadata when sklearn is available."""
+    if importlib.util.find_spec("sklearn") is None:
+        return None
+
+    try:
+        import numpy as np  # type: ignore
+        from sklearn.linear_model import LogisticRegression  # type: ignore
+
+        feature_vector = np.array(
+            [[
+                float(entropy),
+                float(len(signatures)),
+                float(1 if ext in _DANGEROUS_EXTS_V1 else 0),
+                float(1 if pe_info else 0),
+                float(1 if pe_info and pe_info.get("suspicious") else 0),
+            ]]
+        )
+
+        # Synthetic baseline dataset for quick local risk calibration.
+        train_x = np.array(
+            [
+                [1.2, 0, 0, 0, 0],
+                [2.8, 0, 0, 0, 0],
+                [4.2, 1, 0, 0, 0],
+                [5.6, 1, 1, 0, 0],
+                [6.4, 2, 1, 1, 0],
+                [7.1, 3, 1, 1, 1],
+                [7.8, 4, 1, 1, 1],
+                [8.4, 5, 1, 1, 1],
+            ],
+            dtype=float,
+        )
+        train_y = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=int)
+
+        model = LogisticRegression(max_iter=200, random_state=42)
+        model.fit(train_x, train_y)
+        malicious_prob = float(model.predict_proba(feature_vector)[0][1])
+
+        if malicious_prob >= 0.65:
+            prediction = "MALICIOUS"
+        elif malicious_prob >= 0.45:
+            prediction = "SUSPICIOUS"
+        else:
+            prediction = "CLEAN"
+
+        return {
+            "model": "logistic_regression_synthetic_baseline",
+            "prediction": prediction,
+            "confidence": round(malicious_prob, 3),
+            "features": {
+                "entropy": round(float(entropy), 3),
+                "signature_count": int(len(signatures)),
+                "dangerous_extension": bool(ext in _DANGEROUS_EXTS_V1),
+                "has_pe": bool(pe_info),
+                "pe_suspicious": bool(pe_info and pe_info.get("suspicious")),
+            },
+        }
+    except Exception:
+        return None
 
 
 def _local_scan_v1(content: bytes, filename: str) -> Dict:
@@ -289,6 +473,9 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
     _VERDICT = {"CRITICAL": "malicious", "HIGH": "malicious",
                 "MEDIUM": "suspicious", "LOW": "suspicious", "CLEAN": "clean"}
 
+    disassembly_info = _disassembly_info_v1(sample, pe_info)
+    ml_classification = _ml_classification_v1(entropy, matched, ext, pe_info)
+
     return {
         "risk_level": risk,
         "risk_score": score,
@@ -297,6 +484,8 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
         "file_extension": ext,
         "signatures": [s["name"] for s in matched],
         "pe_info": pe_info,
+        "disassembly_info": disassembly_info,
+        "ml_classification": ml_classification,
         "threat_indicators": indicators,
         "local_verdict": _VERDICT.get(risk, "clean"),
     }
@@ -707,6 +896,13 @@ async def scan_file(
             "sha256": file_hash,
             "md5": md5_hash,
         }
+        analysis_result["file_analysis"] = {
+            "entropy": local["entropy"],
+            "signatures": local["signatures"],
+            "pe_info": local["pe_info"],
+            "disassembly_info": local.get("disassembly_info"),
+            "ml_classification": local.get("ml_classification"),
+        }
 
         scan_id = _generate_scan_id("FILE")
         
@@ -751,6 +947,8 @@ async def scan_file(
                 "file_extension": local["file_extension"],
                 "signatures":     local["signatures"],
                 "pe_info":        local["pe_info"],
+                "disassembly_info": local.get("disassembly_info"),
+                "ml_classification": local.get("ml_classification"),
             },
             "threat_indicators":  all_indicators,
             "forensic_metadata":  analysis_result.get("forensic_metadata", {}),

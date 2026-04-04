@@ -2,6 +2,7 @@
 # This file now points to the consolidated requirements structure
 # Install with: pip install -r ../../requirements/server.txt
 
+-r ../../requirements/server.txt
 
 # AI/ML (optional - heavy; moved to `server/requirements-ml.txt`)
 # scikit-learn==1.5.2

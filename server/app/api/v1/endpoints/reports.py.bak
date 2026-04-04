@@ -1,16 +1,10 @@
-from pathlib import Path
 import io
 import logging
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from ....core.report_generator import report_generator
-from ....database import get_db
-from ....models import ScanHistory
 
 # ---------- ReportLab Import Handling ----------
 try:
@@ -45,13 +39,10 @@ logger = logging.getLogger(__name__)
 
 # ---------- Request Schema ----------
 class ReportRequest(BaseModel):
-    target: str | None = None
-    scan_id: str | None = None
+    target: str
     risk_score: float | None = None
     threats: list[str] | None = None
     scan_summary: str | None = None
-    report_type: str | None = None
-    intervals: list[str] | None = None
 
 
 # ---------- AI Text Generation ----------
@@ -116,58 +107,9 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
 
 # ---------- API Endpoint ----------
 @router.post("/generate")
-async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db)):
+async def generate_report(data: ReportRequest):
     try:
-        if data.scan_id:
-            result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == data.scan_id))
-            scan = result.scalar_one_or_none()
-            if scan:
-                data.target = scan.target or scan.target_type or scan.scan_id
-                analysis_data = scan.analysis_data or {}
-                data.scan_summary = data.scan_summary or analysis_data.get("summary")
-                if not data.threats and isinstance(analysis_data.get("threat_indicators"), list):
-                    data.threats = [
-                        str(item.get("indicator") or item.get("description") or item)
-                        for item in analysis_data.get("threat_indicators")
-                        if item
-                    ]
-
-                threat_analysis = {
-                    "input": data.target,
-                    "input_type": scan.target_type or "unknown",
-                    "verdict": scan.threat_level or analysis_data.get("verdict", "unknown"),
-                    "confidence": scan.confidence if scan.confidence is not None else analysis_data.get("confidence", 0.0),
-                    "threat_indicators": analysis_data.get("threat_indicators", data.threats or []),
-                    "api_results": analysis_data.get("api_results", {}),
-                    "summary": data.scan_summary or analysis_data.get("summary", ""),
-                    "threats_detected": scan.threats_detected or len(analysis_data.get("threat_indicators", [])),
-                    "forensic_metadata": analysis_data.get("forensic_metadata", {}),
-                    "scan_id": scan.scan_id,
-                    "threat_level": scan.threat_level or analysis_data.get("threat_level", "unknown"),
-                    "status": "complete",
-                    "report_type": data.report_type or "executive_summary",
-                    "intervals": data.intervals or ["24h", "7d", "30d"],
-                    "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
-                }
-
-                from ....core.report_generator import report_generator
-
-                report_bytes = await report_generator.generate_analysis_report(threat_analysis)
-                if not report_bytes:
-                    raise HTTPException(status_code=500, detail="Report generation failed")
-
-                content_type = "application/pdf" if report_bytes.startswith(b"%PDF") else "text/plain; charset=utf-8"
-                filename = f"{data.target}_security_report.pdf" if content_type == "application/pdf" else f"{data.target}_security_report.txt"
-                return StreamingResponse(
-                    io.BytesIO(report_bytes),
-                    media_type=content_type,
-                    headers={"Content-Disposition": f"attachment; filename={filename}"},
-                )
-
-        if not data.target:
-            raise HTTPException(status_code=400, detail="Report target or scan_id required")
-
-        logger.debug(f"REPORT started | target={data.target} | scan_id={data.scan_id}")
+        logger.debug(f"REPORT started | target={data.target}")
 
         report_text = generate_ai_report(data)
         # If ReportLab is not available, return the generated report text as JSON
@@ -198,38 +140,14 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 
 @router.get("/")
 async def list_reports():
+    """List all available reports."""
     try:
-        reports_dir = Path(__file__).resolve().parent.parent.parent.parent / "generated_reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-
-        reports = []
-        for f in sorted(reports_dir.glob("*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True):
-            reports.append({
-                "report_id": f.stem,
-                "filename": f.name,
-                "title": f.stem,
-                "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
-                "size_bytes": f.stat().st_size,
-                "download_url": f"/generated_reports/{f.name}"
-            })
-
-        # Return with cache headers: cache for 5 seconds to reduce rapid polling
-        response = JSONResponse(
-            {"reports": reports, "count": len(reports)},
-            headers={
-                "Cache-Control": "public, max-age=5",
-                "ETag": f'"{len(reports)}-{datetime.utcnow().timestamp():.0f}"'
-            }
-        )
-        return response
-
+        logger.debug("REPORTS list request received")
+        # Return empty list - reports are generated on-demand via /download/{report_id}
+        return {"reports": [], "count": 0}
     except Exception as e:
         logger.error(f"List reports failed: {e}")
-        response = JSONResponse(
-            {"reports": [], "count": 0},
-            headers={"Cache-Control": "public, max-age=5"}
-        )
-        return response
+        return {"reports": [], "count": 0}
 
 
 @router.get("/download/{report_id}")

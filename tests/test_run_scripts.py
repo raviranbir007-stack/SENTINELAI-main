@@ -4,9 +4,9 @@ from pathlib import Path
 
 
 SCRIPTS = [
-    Path(__file__).parents[1] / "test_api_all.py",
-    Path(__file__).parents[1] / "test_cors.py",
-    Path(__file__).parents[1] / "test_threat_detection.py",
+    Path(__file__).parent / "test_api_all.py",
+    Path(__file__).parent / "test_cors.py",
+    Path(__file__).parent / "test_threat_detection.py",
 ]
 
 

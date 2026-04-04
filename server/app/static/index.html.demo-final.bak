@@ -45,12 +45,7 @@
         }
 
         /* Scrollbar */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: var(--background); }
-        ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
-
-        /* Header */
+/* Header */
         .header {
             position: sticky;
             top: 0;
@@ -1633,32 +1628,19 @@
         }
 
         .card {
-            background:
-                linear-gradient(180deg, rgba(10, 18, 30, 0.96), rgba(5, 12, 22, 0.98));
-            border: 1px solid rgba(45, 212, 191, 0.14);
-            border-radius: 16px;
-            box-shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
-            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            transition: all 0.3s;
         }
 
         .card:hover {
-            border-color: rgba(45, 212, 191, 0.34);
-            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.3), 0 0 24px rgba(45, 212, 191, 0.08);
-            transform: translateY(-2px);
+            border-color: rgba(45, 212, 191, 0.3);
+            box-shadow: 0 0 30px rgba(45, 212, 191, 0.1);
         }
 
         .card-cyber {
             border-color: rgba(45, 212, 191, 0.2);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .card-cyber::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(135deg, rgba(45, 212, 191, 0.06), transparent 36%, rgba(59, 130, 246, 0.04));
-            pointer-events: none;
         }
 
         .card-glass {
@@ -1667,11 +1649,8 @@
         }
 
         .api-card {
-            padding: 1.25rem;
+            padding: 1.5rem;
             cursor: pointer;
-            display: flex;
-            flex-direction: column;
-            gap: 0.35rem;
         }
 
         .api-card-header {
@@ -1698,16 +1677,14 @@
         }
 
         .api-card h3 {
-            font-size: 1.02rem;
+            font-size: 1rem;
             font-weight: 600;
             margin-top: 0.75rem;
-            letter-spacing: 0.01em;
         }
 
         .api-card p {
-            font-size: 0.86rem;
-            line-height: 1.55;
-            color: rgba(198, 219, 215, 0.9);
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
             margin-top: 0.25rem;
         }
 
@@ -1765,32 +1742,26 @@
         .threats-table {
             width: 100%;
             border-collapse: collapse;
-            background: rgba(4, 10, 18, 0.6);
-            border: 1px solid rgba(45, 212, 191, 0.14);
-            border-radius: 12px;
-            overflow: hidden;
         }
 
         .threats-table th {
             text-align: left;
-            padding: 0.95rem 1rem;
+            padding: 1rem;
             font-size: 0.75rem;
             font-family: 'JetBrains Mono', monospace;
-            color: rgba(179, 225, 219, 0.88);
+            color: var(--muted-foreground);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            border-bottom: 1px solid rgba(45, 212, 191, 0.12);
-            background: rgba(8, 18, 31, 0.92);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
         }
 
         .threats-table td {
-            padding: 0.95rem 1rem;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-            color: rgba(228, 247, 243, 0.95);
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
         }
 
         .threats-table tr:hover {
-            background: rgba(45, 212, 191, 0.05);
+            background: rgba(255,255,255,0.03);
         }
 
         .threat-id {
@@ -1842,7 +1813,6 @@
 
         .report-card {
             padding: 1.5rem;
-            min-width: 0;
         }
 
         .report-header {
@@ -1866,15 +1836,11 @@
         .report-header h3 {
             font-size: 1.25rem;
             font-weight: 600;
-            overflow-wrap: anywhere;
-            word-break: break-word;
         }
 
         .report-header p {
             font-size: 0.875rem;
             color: var(--muted-foreground);
-            overflow-wrap: anywhere;
-            word-break: break-word;
         }
 
         .form-group {
@@ -1921,29 +1887,16 @@
         .btn-card-content h4 {
             font-size: 0.875rem;
             font-weight: 500;
-            overflow-wrap: anywhere;
-            word-break: break-word;
         }
 
         .btn-card-content p {
             font-size: 0.75rem;
             color: var(--muted-foreground);
-            overflow-wrap: anywhere;
-            word-break: break-word;
         }
 
         .time-buttons {
             display: flex;
             gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .time-buttons .btn {
-            flex: 1 1 220px;
-            min-width: 0;
-            white-space: normal;
-            line-height: 1.35;
-            justify-content: center;
         }
 
         .btn-sm {
@@ -1968,26 +1921,22 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem 1.05rem;
-            background: linear-gradient(180deg, rgba(8, 16, 27, 0.92), rgba(7, 13, 22, 0.96));
-            border: 1px solid rgba(45, 212, 191, 0.12);
-            border-radius: 14px;
+            padding: 1rem;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 8px;
             margin-bottom: 1rem;
-            transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+            transition: border-color 0.2s;
         }
 
         .report-item:hover {
             border-color: rgba(45, 212, 191, 0.3);
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
-            transform: translateY(-1px);
         }
 
         .report-item-left {
             display: flex;
             align-items: center;
             gap: 1rem;
-            min-width: 0;
-            flex: 1 1 auto;
         }
 
         .report-item-icon {
@@ -2002,11 +1951,8 @@
         }
 
         .report-item-title {
-            font-size: 0.96rem;
-            font-weight: 600;
-            color: rgba(242, 251, 249, 0.98);
-            overflow-wrap: anywhere;
-            word-break: break-word;
+            font-size: 0.875rem;
+            font-weight: 500;
         }
 
         .report-item-meta {
@@ -2015,27 +1961,13 @@
             gap: 0.75rem;
             margin-top: 0.25rem;
             font-size: 0.75rem;
-            color: rgba(169, 202, 199, 0.9);
-            flex-wrap: wrap;
+            color: var(--muted-foreground);
         }
 
         .report-item-right {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            flex-shrink: 0;
-        }
-
-        #recentReports {
-            max-height: 440px;
-            overflow-y: auto;
-            padding-right: 0.2rem;
-        }
-
-        #logsList {
-            max-height: 500px;
-            overflow-y: auto;
-            padding-right: 0.2rem;
         }
 
         /* Footer */
@@ -2185,11 +2117,6 @@
             .section-actions { width: 100%; justify-content: flex-start; }
             .posture-layout { grid-template-columns: 1fr; }
             .posture-metrics-grid { grid-template-columns: 1fr 1fr; }
-            .report-item { flex-direction: column; align-items: flex-start; }
-            .report-item-right { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
-            .time-buttons .btn { flex-basis: 100%; }
-            #recentReports { max-height: 380px; }
-            #logsList { max-height: 360px; }
         }
 
         @media (max-width: 480px) {
@@ -2496,7 +2423,7 @@
                     </div>
                     <div class="section-actions">
                         <button id="toggleRecentThreatsBtn" class="btn btn-outline" title="Minimize/Maximize Recent Threats">− Minimize</button>
-                        <button id="viewAllThreatsBtn" class="btn btn-outline" type="button" onclick="viewAllThreats()">View All Threats →</button>
+                        <button id="viewAllThreatsBtn" class="btn btn-outline">View All Threats →</button>
                     </div>
                 </div>
                 
@@ -2549,7 +2476,7 @@
         </section>
 
         <!-- System Health Overview Section -->
-        <section class="section section-divider" id="systemHealthSection" style="display:none;">
+        <section class="section section-divider">
             <div class="container">
                 <div class="section-header">
                     <div>
@@ -2675,7 +2602,6 @@
                                     <th>Domain</th>
                                     <th>Host IP</th>
                                     <th>Browser</th>
-                                    <th>Source</th>
                                     <th>Verdict</th>
                                     <th>Confidence</th>
                                     <th>Status</th>
@@ -2683,7 +2609,7 @@
                                 </tr>
                             </thead>
                             <tbody id="liveWebsitesBody">
-                                <tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading websites…</td></tr>
+                                <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading websites…</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -2738,7 +2664,7 @@
                     </div>
                     <div class="section-actions">
                         <button id="toggleQuarantineBtn" class="btn btn-outline" title="Minimize/Maximize Quarantine Inventory">− Minimize</button>
-                        <button id="viewAllQuarantineBtn" class="btn btn-outline" type="button" onclick="viewAllQuarantine()">View All →</button>
+                        <button id="viewAllQuarantineBtn" class="btn btn-outline">View All →</button>
                         <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
                     </div>
                 </div>
@@ -2850,7 +2776,7 @@
                     <div class="card card-glass report-card">
                         <div class="reports-header">
                             <h3>Recent Reports</h3>
-                            <button class="btn btn-ghost btn-sm" id="viewAllReportsBtn" type="button" onclick="viewAllReports()">View All →</button>
+                            <button class="btn btn-ghost btn-sm" id="viewAllReportsBtn">View All →</button>
                         </div>
                         <div id="recentReports">
                             <!-- Reports will be inserted here -->
@@ -3518,12 +3444,6 @@
         let dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
         let API_BASE_URL = '';
         let refreshTimer = null;
-        let refreshInFlight = false;
-        let backendOffline = false;
-        let backendConsecutiveFailures = 0;
-        let lastBackendFailureAt = 0;
-        let lastBackendRecoveryAt = 0;
-        let lastConnectionErrorNoticeAt = 0;
         let notifications = [];
         let previousThreatCount = null;
         let previousConfiguredApis = null;
@@ -3548,12 +3468,10 @@
         let uiState = {
             activePage: 'dashboard',
             selectedReportType: 'executive_summary',
-            selectedScanType: 'ip',
             searchQuery: '',
             scansHistoryCollapsed: false,
             threatsPageCollapsed: false,
             reportsPageCollapsed: false,
-            liveActivityCollapsed: false,
             lastThreatReviewAt: 0,
             threatReviewSuppressedUntil: 0,
         };
@@ -3642,7 +3560,7 @@
             
             // Scans
             scan: '/api/v1/scan',
-            scans: '/api/scans',
+            scans: '/api/v1/dashboard/summary',
             scanResult: (id) => `/api/v1/scan/results/${id}`,
             scanFeedback: '/api/v1/scan/feedback',
             
@@ -3663,11 +3581,11 @@
         // Static Data (Replace with API calls)
         // =============================================
         const apis = [
-            { name: "VirusTotal", description: "Multi-antivirus file and URL scanning", icon: "🛡️", status: "loading", lastCheck: "Pending", queriesUsed: null, queriesLimit: null, dailyUsed: null, dailyLimit: null, minuteUsed: null, ratePerMinute: null, isLive: false },
-            { name: "Shodan", description: "Internet-connected device intelligence", icon: "🌐", status: "loading", lastCheck: "Pending", queriesUsed: null, queriesLimit: null, dailyUsed: null, dailyLimit: null, minuteUsed: null, ratePerMinute: null, isLive: false },
-            { name: "URLScan.io", description: "Website security analysis & screenshots", icon: "🔍", status: "loading", lastCheck: "Pending", queriesUsed: null, queriesLimit: null, dailyUsed: null, dailyLimit: null, minuteUsed: null, ratePerMinute: null, isLive: false },
-            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "🚨", status: "loading", lastCheck: "Pending", queriesUsed: null, queriesLimit: null, dailyUsed: null, dailyLimit: null, minuteUsed: null, ratePerMinute: null, isLive: false },
-            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "🔬", status: "loading", lastCheck: "Pending", queriesUsed: null, queriesLimit: null, dailyUsed: null, dailyLimit: null, minuteUsed: null, ratePerMinute: null, isLive: false }
+            { name: "VirusTotal", description: "Multi-antivirus file and URL scanning", icon: "🛡️", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000, dailyUsed: 0, dailyLimit: 1000, minuteUsed: 0, ratePerMinute: 4, isLive: false },
+            { name: "Shodan", description: "Internet-connected device intelligence", icon: "🌐", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 500, dailyUsed: 0, dailyLimit: 500, minuteUsed: 0, ratePerMinute: 10, isLive: false },
+            { name: "URLScan.io", description: "Website security analysis & screenshots", icon: "🔍", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000, dailyUsed: 0, dailyLimit: 1000, minuteUsed: 0, ratePerMinute: 15, isLive: false },
+            { name: "AbuseIPDB", description: "IP address reputation & abuse reports", icon: "🚨", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 1000, dailyUsed: 0, dailyLimit: 1000, minuteUsed: 0, ratePerMinute: 20, isLive: false },
+            { name: "Hybrid Analysis", description: "Advanced malware sandbox analysis", icon: "🔬", status: "loading", lastCheck: "Pending", queriesUsed: 0, queriesLimit: 200, dailyUsed: 0, dailyLimit: 200, minuteUsed: 0, ratePerMinute: 3, isLive: false }
         ];
         window.apis = apis;
 
@@ -3678,7 +3596,6 @@
         let recentLogs = [];
         let latestScanHistory = [];
         let allReports = [];
-        let selectedScanType = 'ip';
         let selectedReportType = 'executive_summary';
         let lastToastSignature = null;
         let lastToastTimestamp = 0;
@@ -3833,46 +3750,13 @@
                     : endpoint.startsWith('/')
                         ? endpoint
                         : endpoint;
-                console.log('🌐 apiRequest calling:', targetUrl);
-                const response = await fetch(targetUrl, {
+                const response = await fetch(endpoint.startsWith('http') ? endpoint : endpoint, {
                     headers: { 'Content-Type': 'application/json', ...options.headers },
                     signal: controller.signal,
                     ...options
                 });
                 clearTimeout(timeoutId);
-                if (!response.ok) {
-                    let detail = '';
-                    try {
-                        const errJson = await response.json();
-                        if (Array.isArray(errJson?.detail)) {
-                            detail = errJson.detail
-                                .map(item => {
-                                    if (!item || typeof item !== 'object') return String(item || '').trim();
-                                    return String(item.msg || item.message || JSON.stringify(item)).trim();
-                                })
-                                .filter(Boolean)
-                                .join('; ');
-                        } else if (errJson?.detail && typeof errJson.detail === 'object') {
-                            detail = JSON.stringify(errJson.detail);
-                        } else {
-                            detail = errJson?.detail || errJson?.error || errJson?.message || '';
-                        }
-                    } catch (_) {
-                        try {
-                            detail = (await response.text() || '').trim();
-                        } catch (_) {
-                            detail = '';
-                        }
-                    }
-                    throw new Error(detail ? `HTTP ${response.status}: ${detail}` : `HTTP ${response.status}`);
-                }
-                if (backendOffline) {
-                    backendOffline = false;
-                    backendConsecutiveFailures = 0;
-                    lastBackendRecoveryAt = Date.now();
-                    setSyncStatus('ok', 'RECOVERED');
-                    addNotification('Backend Reconnected', 'Live backend connection restored.', 'info', 'backend_recovered', 30000);
-                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 setSyncStatus('ok', 'SYNCED');
                 return await response.json();
             } catch (error) {
@@ -3880,23 +3764,6 @@
                 if (error?.name === 'AbortError') {
                     setSyncStatus('warn', 'TIMEOUT');
                     throw new Error('Request timed out');
-                }
-                const msg = String(error?.message || '').toLowerCase();
-                const isConnectionIssue = msg.includes('failed to fetch')
-                    || msg.includes('networkerror')
-                    || msg.includes('network request failed')
-                    || msg.includes('err_connection_refused')
-                    || msg.includes('load failed');
-
-                if (isConnectionIssue) {
-                    backendConsecutiveFailures += 1;
-                    backendOffline = backendConsecutiveFailures >= 2;
-                    lastBackendFailureAt = Date.now();
-                    const now = Date.now();
-                    if ((now - lastConnectionErrorNoticeAt) > 30000) {
-                        lastConnectionErrorNoticeAt = now;
-                        addNotification('Backend Offline', 'API connection lost. Retrying with backoff.', 'warning', 'backend_offline', 30000);
-                    }
                 }
                 setSyncStatus('warn', 'DEGRADED');
                 console.error('API Error:', error);
@@ -3915,99 +3782,6 @@
         function toFiniteNumber(value, fallback = 0) {
             const parsed = Number(value);
             return Number.isFinite(parsed) ? parsed : fallback;
-        }
-
-        function formatConfidencePct(value) {
-            if (value === undefined || value === null || value === '') return '-';
-            let numeric = null;
-            if (typeof value === 'number' && Number.isFinite(value)) {
-                numeric = value;
-            } else if (typeof value === 'string') {
-                const cleaned = value.replace(/%/g, '').replace(/[^0-9.\-]/g, '').trim();
-                const parsed = Number(cleaned);
-                if (Number.isFinite(parsed)) numeric = parsed;
-            }
-            if (!Number.isFinite(numeric)) return '-';
-            const normalized = Number(numeric) <= 1 ? Number(numeric) * 100 : Number(numeric);
-            return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`;
-        }
-
-        function resolveActivitySource(item, fallback = 'local_monitor') {
-            if (!item || typeof item !== 'object') return fallback;
-            return String(item.source || item.component || item.actor || item.collector || fallback);
-        }
-
-        function inferDefenseTargetType(target) {
-            const value = String(target || '').trim().toLowerCase();
-            if (!value) return 'indicator';
-            if (value === 'system_all' || value === 'system:all' || value === 'all' || value === 'global') return 'system';
-            if (/^https?:\/\//.test(value)) return 'domain';
-            if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) return 'ip';
-            if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value)) return 'domain';
-            return 'indicator';
-        }
-
-        function normalizeDefenseTargetCandidate(value) {
-            const raw = String(value || '').replace(/\s+/g, ' ').trim();
-            if (!raw || raw.length > 180) return '';
-            if (/^https?:\/\/[^\s]+$/i.test(raw)) return raw;
-            if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) return raw;
-            if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw)) return raw.toLowerCase();
-            if (/^[a-f0-9]{32,128}$/i.test(raw)) return raw.toLowerCase();
-            if (!/\s/.test(raw) && /^[a-z0-9_.:@\-/]+$/i.test(raw)) return raw;
-            return '';
-        }
-
-        function extractDefenseTargetFromMessage(message) {
-            const text = String(message || '');
-            if (!text) return '';
-
-            const urlMatch = text.match(/https?:\/\/[^\s)\]}]+/i);
-            if (urlMatch && urlMatch[0]) return normalizeDefenseTargetCandidate(urlMatch[0]);
-
-            const ipMatch = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-            if (ipMatch && ipMatch[0]) return normalizeDefenseTargetCandidate(ipMatch[0]);
-
-            const domainMatch = text.match(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/i);
-            if (domainMatch && domainMatch[0]) return normalizeDefenseTargetCandidate(domainMatch[0]);
-
-            return '';
-        }
-
-        function formatDefenseActionError(action, error) {
-            const normalizedAction = String(action || 'ACTION').toUpperCase();
-            const rawMessage = String(error?.message || '').trim();
-            let detail = rawMessage.replace(/^HTTP\s+\d+\s*:\s*/i, '').trim();
-
-            if (/if you want, i can do one more pass|green\/red checklist|analysis phase/i.test(detail)) {
-                detail = 'Unexpected stale text was returned from backend logs. Refreshing the dashboard should clear it.';
-            }
-
-            if (/system-wide quarantine requires explicit user confirmation/i.test(detail)) {
-                detail = 'System-wide quarantine requires explicit confirmation.';
-            }
-
-            if (!detail) {
-                return `Failed to apply ${normalizedAction}.`;
-            }
-
-            if (detail.length > 220) {
-                detail = `${detail.slice(0, 217)}...`;
-            }
-
-            return `Failed to apply ${normalizedAction}: ${detail}`;
-        }
-
-        function asPayloadString(value) {
-            if (value === undefined || value === null) return null;
-            if (typeof value === 'string') {
-                const trimmed = value.trim();
-                return trimmed || null;
-            }
-            if (typeof value === 'number' || typeof value === 'boolean') {
-                return String(value);
-            }
-            return null;
         }
 
         function toEpochMs(value) {
@@ -4034,18 +3808,6 @@
             if (minutes < 60) return `${minutes}m ago`;
             const hours = Math.floor(minutes / 60);
             return `${hours}h ago`;
-        }
-
-        function escHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            if (!text) return '';
-            return String(text).replace(/[&<>"']/g, char => map[char]);
         }
 
         function updateSourceSignal(name, updates = {}) {
@@ -4569,52 +4331,15 @@
         function renderAPIs() {
             const grid = document.getElementById('apiGrid');
             grid.innerHTML = apis.map(api => {
-                const hasLimit = Number.isFinite(Number(api.dailyLimit ?? api.queriesLimit))
-                    && Number(api.dailyLimit ?? api.queriesLimit) > 0;
-                const hasUsed = Number.isFinite(Number(api.dailyUsed ?? api.queriesUsed));
-                const safeLimit = hasLimit ? Math.max(1, Number(api.dailyLimit ?? api.queriesLimit)) : 0;
-                const safeUsed = hasUsed ? Math.max(0, Number(api.dailyUsed ?? api.queriesUsed)) : 0;
-                const percentage = hasLimit && hasUsed
-                    ? Math.max(0, Math.min(100, (safeUsed / safeLimit) * 100))
-                    : 0;
-                const usageText = hasLimit && hasUsed
-                    ? `${safeUsed}/${safeLimit}`
-                    : hasUsed
-                        ? `${safeUsed}`
-                        : hasLimit
-                            ? `0/${safeLimit}`
-                            : 'N/A';
-                const statusBadge = (api.status === 'online' || api.isLive)
-                    ? 'badge-safe'
-                    : ['limited', 'not_configured', 'missing_key', 'rate_limited', 'quota_exceeded', 'not_authorized', 'not_applicable'].includes(String(api.status || '').toLowerCase())
-                        ? 'badge-warning'
-                        : 'badge-threat';
+                const safeLimit = Math.max(1, Number(api.dailyLimit || api.queriesLimit || 1));
+                const safeUsed = Math.max(0, Number(api.dailyUsed ?? api.queriesUsed ?? 0));
+                const percentage = Math.max(0, Math.min(100, (safeUsed / safeLimit) * 100));
+                const statusBadge = (api.status === 'online' || api.isLive) ? 'badge-safe' : api.status === 'limited' ? 'badge-warning' : 'badge-threat';
                 const progressClass = percentage > 80 ? 'danger' : percentage > 50 ? 'warning' : '';
-                const normalizedStatus = String(api.status || '').toLowerCase();
-                const pulseClass = (api.status === 'online' || api.isLive)
-                    ? ''
-                    : ['limited', 'rate_limited', 'quota_exceeded', 'missing_key', 'not_configured', 'not_authorized', 'not_applicable'].includes(normalizedStatus)
-                        ? 'warning'
-                        : 'offline';
+                const pulseClass = (api.status === 'online' || api.isLive) ? '' : api.status === 'limited' ? 'warning' : 'offline';
                 const liveLabel = (api.status === 'online' || api.isLive === true)
-                    ? 'LIVE'
-                    : normalizedStatus === 'limited'
-                        ? 'LIMITED'
-                        : normalizedStatus === 'rate_limited'
-                            ? 'RATE LIMITED'
-                            : normalizedStatus === 'quota_exceeded'
-                                ? 'QUOTA EXCEEDED'
-                                : normalizedStatus === 'missing_key' || normalizedStatus === 'not_configured'
-                                    ? 'NOT CONFIGURED'
-                                    : normalizedStatus === 'not_authorized'
-                                        ? 'UNAUTHORIZED'
-                                        : normalizedStatus === 'not_applicable'
-                                            ? 'CONDITIONAL'
-                                    : 'OFFLINE';
-                const minuteCapText = Number.isFinite(Number(api.ratePerMinute)) && Number(api.ratePerMinute) > 0
-                    ? `${Math.max(0, Number(api.minuteUsed || 0))}/${Math.max(0, Number(api.ratePerMinute || 0))}`
-                    : 'N/A';
-                const apiError = String(api.error || api.errorMessage || '').trim();
+        ? 'LIVE'
+        : (api.status === 'limited' ? 'LIMITED' : 'OFFLINE');
                 
                 const apiName = api.name || 'Unknown API';
         const apiDescription = api.description || 'Live threat intelligence source.';
@@ -4631,21 +4356,20 @@
                         </div>
                         <h3>${apiName}</h3>
                         <p>${apiDescription}</p>
-                        ${apiError ? `<div style="font-size:0.73rem;color:var(--warning);margin-bottom:0.55rem;line-height:1.35;word-break:break-word;">Reason: ${escHtml(apiError)}</div>` : ''}
                         <div style="display:grid;gap:0.35rem;margin-bottom:0.55rem;">
                             <div style="display:flex;justify-content:space-between;font-size:0.76rem;color:var(--muted-foreground);">
                                 <span>Live Status</span>
-                                <span style="font-weight:700;color:${api.isLive ? 'var(--success)' : (['limited', 'rate_limited', 'quota_exceeded', 'missing_key', 'not_configured', 'not_authorized', 'not_applicable'].includes(normalizedStatus) ? 'var(--warning)' : 'var(--destructive)')};">${liveLabel}</span>
+                                <span style="font-weight:700;color:${api.isLive ? 'var(--success)' : (api.status === 'limited' ? 'var(--warning)' : 'var(--destructive)')};">${liveLabel}</span>
                             </div>
                             <div style="display:flex;justify-content:space-between;font-size:0.76rem;color:var(--muted-foreground);">
                                 <span>Per-Min Capacity</span>
-                                <span class="font-mono">${minuteCapText}</span>
+                                <span class="font-mono">${Math.max(0, Number(api.minuteUsed || 0))}/${Math.max(0, Number(api.ratePerMinute || 0))}</span>
                             </div>
                         </div>
                         <div class="api-usage">
                             <div class="api-usage-header">
                                 <span>API Calls (24h)</span>
-                                <span>${usageText}</span>
+                                <span>${safeUsed}/${safeLimit}</span>
                             </div>
                             <div class="progress-bar">
                                 <div class="progress-fill ${progressClass}" style="width: ${percentage}%"></div>
@@ -4660,33 +4384,18 @@
             }).join('');
         }
 
-        function normalizeApiServiceName(name) {
-            return String(name || '')
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, '');
-        }
-
-        function findApiCardByName(name) {
-            const normalized = normalizeApiServiceName(name);
-            if (!normalized) return null;
-
-            return apis.find((api) => {
-                const apiName = normalizeApiServiceName(api?.name);
-                if (!apiName) return false;
-                return apiName === normalized || apiName.includes(normalized) || normalized.includes(apiName);
-            }) || null;
-        }
-
         async function fetchApiStatus() {
+            console.log('🔄 fetchApiStatus called');
             try {
-                const hasValue = (value) => value !== undefined && value !== null && value !== '';
                 const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
                 if (refreshBtn) {
                     refreshBtn.style.opacity = '0.5';
                     refreshBtn.disabled = true;
                 }
 
+                console.log('📡 Calling API:', API_ENDPOINTS.dashboardApiStatus);
                 const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus);
+                console.log('📥 API response:', status);
 
                 const statusItems = Array.isArray(status)
                     ? status
@@ -4702,12 +4411,10 @@
 
                 const normalizedServices = statusItems.map((svc) => {
                     const raw = String(svc?.status || '').toLowerCase();
-                    const onlineByStatus = ['ready', 'configured', 'healthy', 'active', 'online', 'live', 'checked', 'available'].includes(raw);
-                    const online = (typeof svc?.online === 'boolean' ? svc.online : onlineByStatus)
+                    const online = ['ready', 'configured', 'healthy', 'active', 'online', 'live'].includes(raw)
                         && (svc?.enabled !== false)
-                        && (svc?.key_configured !== false)
-                        && (svc?.configured !== false);
-                    const configured = (svc?.configured !== false) && (svc?.key_configured !== false);
+                        && (svc?.key_configured !== false);
+                    const configured = svc?.key_configured !== false;
                     return {
                         source: svc,
                         name: svc?.name || 'Unknown',
@@ -4723,80 +4430,75 @@
                 });
 
                 let configuredCount = 0;
-                let activeCount = 0;
-                let limitedCount = 0;
-                let conditionalCount = 0;
-                let unauthorizedCount = 0;
                 normalizedServices.forEach((svc) => {
-                    const item = findApiCardByName(svc.name);
+                    const item = apis.find(a => a.name === svc.name);
                     if (!item) return;
 
                     if (!svc.configured) {
-                        item.status = svc.status || 'missing_key';
+                        item.status = 'offline';
                         item.isLive = false;
                     } else {
-                        item.status = svc.online ? 'online' : (svc.status || 'limited');
+                        item.status = svc.online ? 'online' : 'limited';
                         item.isLive = svc.online || !!svc.live;
                     }
-
-                    const statusLabel = String(item.status || '').toLowerCase();
-                    if (item.isLive) activeCount += 1;
-                    else if (statusLabel === 'not_applicable') conditionalCount += 1;
-                    else if (statusLabel === 'not_authorized') unauthorizedCount += 1;
-                    else if (['limited', 'rate_limited', 'quota_exceeded', 'missing_key', 'not_configured'].includes(statusLabel)) limitedCount += 1;
 
                     item.lastCheck = svc.lastChecked
                         ? new Date(svc.lastChecked).toLocaleTimeString()
                         : 'Just now';
 
-                    const usedCandidate =
+                    const used = toFiniteNumber(
                         svc.source?.daily_used
-                        ?? svc.source?.usage_24h
                         ?? svc.source?.queries_used
                         ?? svc.source?.usage?.used
-                        ?? svc.source?.usage?.queries_used;
-                    const limitCandidate =
+                        ?? svc.source?.usage?.queries_used
+                        ?? item.queriesUsed
+                        ?? 0
+                    );
+                    const limit = Math.max(1, toFiniteNumber(
                         svc.source?.daily_limit
                         ?? svc.source?.queries_limit
-                        ?? svc.source?.daily_quota
                         ?? svc.source?.limit
                         ?? svc.source?.usage?.limit
-                        ?? svc.source?.usage?.queries_limit;
-                    const minuteUsedCandidate =
+                        ?? svc.source?.usage?.queries_limit
+                        ?? item.queriesLimit
+                        ?? 1
+                    ));
+                    const minuteUsed = toFiniteNumber(
                         svc.source?.minute_used
-                        ?? svc.source?.usage?.minute_used;
-                    const ratePerMinuteCandidate =
+                        ?? svc.source?.usage?.minute_used
+                        ?? item.minuteUsed
+                        ?? 0
+                    );
+                    const ratePerMinute = Math.max(0, toFiniteNumber(
                         svc.source?.rate_limit_per_minute
                         ?? svc.source?.rate_per_minute
-                        ?? svc.source?.usage?.rate_limit_per_minute;
-
-                    const used = hasValue(usedCandidate) ? Math.max(0, toFiniteNumber(usedCandidate, 0)) : null;
-                    const limit = hasValue(limitCandidate) ? Math.max(1, toFiniteNumber(limitCandidate, 1)) : null;
-                    const minuteUsed = hasValue(minuteUsedCandidate) ? Math.max(0, toFiniteNumber(minuteUsedCandidate, 0)) : null;
-                    const ratePerMinute = hasValue(ratePerMinuteCandidate) ? Math.max(0, toFiniteNumber(ratePerMinuteCandidate, 0)) : null;
+                        ?? svc.source?.usage?.rate_limit_per_minute
+                        ?? item.ratePerMinute
+                        ?? 0
+                    ));
 
                     item.queriesUsed = used;
                     item.queriesLimit = limit;
                     item.dailyUsed = used;
                     item.dailyLimit = limit;
-                    item.minuteUsed = minuteUsed;
+                    item.minuteUsed = Math.max(0, minuteUsed);
                     item.ratePerMinute = ratePerMinute;
-                    item.errorMessage = svc.source?.error || '';
 
                     if (svc.configured) configuredCount += 1;
+                    console.log(`🔧 Updated ${svc.name}: status=${item.status}, isLive=${item.isLive}`);
                 });
 
-                const readyCount = Number(status?.summary?.online ?? status?.ready_count ?? normalizedServices.filter(s => s.online).length);
-                const configuredCountValue = Number(status?.summary?.configured ?? status?.configured_count ?? configuredCount);
+                const readyCount = Number(status?.ready_count ?? normalizedServices.filter(s => s.online).length);
+                const configuredCountValue = Number(status?.configured_count ?? configuredCount);
                 const total = apis.length;
 
                 const top = document.getElementById('statusApisValue');
-                if (top) top.textContent = `${activeCount}/${total} Active`;
+                if (top) top.textContent = `${readyCount}/${total} Online`;
 
                 const summary = document.getElementById('apiConnectionSummary');
                 if (summary) {
                     const lastRefresh = new Date().toLocaleTimeString();
-                    summary.textContent = `${activeCount}/${total} Active · ${configuredCountValue}/${total} Configured · ${limitedCount} limited · ${unauthorizedCount} unauthorized · ${conditionalCount} conditional · Last checked: ${lastRefresh}`;
+                    summary.textContent = `${readyCount}/${total} APIs Online · ${configuredCountValue}/${total} Configured · Last checked: ${lastRefresh}`;
                 }
 
                 const readyEl = document.getElementById('readyApiCount');
@@ -4812,27 +4514,19 @@
                 if (Array.isArray(window.apis)) {
                     window.apis.length = 0;
                     normalizedServices.forEach((svc) => {
-                        const source = svc.source || {};
-                        const usedCandidate = source.daily_used ?? source.usage_24h ?? source.queries_used;
-                        const limitCandidate = source.daily_limit ?? source.queries_limit ?? source.daily_quota ?? source.limit;
-                        const used = hasValue(usedCandidate) ? Math.max(0, toFiniteNumber(usedCandidate, 0)) : null;
-                        const limit = hasValue(limitCandidate) ? Math.max(1, toFiniteNumber(limitCandidate, 1)) : null;
                         window.apis.push({
                             name: svc.name,
-                            status: svc.online ? 'online' : (svc.status || 'offline'),
+                            status: svc.online ? 'online' : 'offline',
                             live: svc.online,
                             is_live: svc.online,
                             configured: svc.configured,
                             key_configured: svc.configured,
                             enabled: svc.enabled,
                             rate_limit: svc.rateLimit,
-                            ratePerMinute: source.rate_limit_per_minute ?? source.rate_per_minute ?? source.usage?.rate_limit_per_minute ?? source.usage?.rate_per_minute ?? null,
                             supported_inputs: svc.supportedInputs,
-                            queriesUsed: used,
-                            queriesLimit: limit,
-                            dailyUsed: used,
-                            dailyLimit: limit,
-                            lastCheck: svc.lastChecked ? new Date(svc.lastChecked).toLocaleTimeString() : 'Just now'
+                            queriesUsed: 0,
+                            queriesLimit: 1,
+                            lastCheck: 'Just now'
                         });
                     });
                 }
@@ -4846,19 +4540,11 @@
                 }
 
                 updateSystemStatusPanel();
+                console.log('✅ fetchApiStatus completed successfully');
             } catch (error) {
                 console.error('❌ Failed to fetch API status:', error?.message || error);
                 updateSourceSignal('apis', { ok: false, error: error?.message || 'api_status_failed' });
                 updateSystemStatusPanel();
-                
-                // Show error to user
-                const summary = document.getElementById('apiConnectionSummary');
-                if (summary) {
-                    summary.textContent = 'API status check failed - check console for details';
-                    summary.style.color = 'var(--destructive)';
-                }
-                
-                addNotification('API Status Check Failed', `Failed to load API status: ${error?.message || 'Unknown error'}`, 'error');
             } finally {
                 const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
                 if (refreshBtn) {
@@ -4915,166 +4601,6 @@
             if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
         }
 
-        async function fetchAllReports() {
-            try {
-                const payload = await apiRequest(API_ENDPOINTS.reports, { timeoutMs: 20000 });
-                const remoteReports = Array.isArray(payload)
-                    ? payload
-                    : (Array.isArray(payload?.reports) ? payload.reports : []);
-
-                const normalizedRemote = remoteReports.map((report, index) => ({
-                    report_id: report.report_id || report.id || report.filename || `remote_${index}`,
-                    title: report.title || report.filename || 'Security Report',
-                    target: report.target || report.scan_id || 'N/A',
-                    threats_detected: Number(report.threats_detected || 0),
-                    verdict: String(report.verdict || 'unknown').toLowerCase(),
-                    created: report.created || report.created_at || report.timestamp || new Date().toISOString(),
-                    type: report.type || selectedReportType || 'report',
-                }));
-
-                const localReports = loadLocalReportsCache();
-                allReports = [...normalizedRemote, ...localReports]
-                    .filter((entry, idx, arr) => {
-                        const key = entry.report_id || `${entry.title}-${entry.created}`;
-                        return arr.findIndex(other => (other.report_id || `${other.title}-${other.created}`) === key) === idx;
-                    })
-                    .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
-
-                return allReports;
-            } catch (_error) {
-                allReports = loadLocalReportsCache();
-                return allReports;
-            }
-        }
-
-        function setScanType(type) {
-            const allowedTypes = new Set(['ip', 'domain', 'url', 'file', 'file_type', 'hash']);
-            const normalized = allowedTypes.has(String(type || '').toLowerCase()) ? String(type).toLowerCase() : 'ip';
-            selectedScanType = normalized;
-            uiState.selectedScanType = normalized;
-            persistUIState();
-
-            document.querySelectorAll('[data-scan-type]').forEach((card) => {
-                card.classList.toggle('active', card.getAttribute('data-scan-type') === normalized);
-            });
-        }
-
-        function inferScanTypeFromTarget(target) {
-            const value = String(target || '').trim();
-            if (!value) return selectedScanType || 'ip';
-
-            const hashRegex = /^([a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
-            const ipRegex = /^(?:\d{1,3}\.){3}\d{1,3}$/;
-            const urlRegex = /^https?:\/\//i;
-            const domainRegex = /^(?!https?:\/\/)(?!\d+$)(?!.*\s)([a-z0-9-]+\.)+[a-z]{2,}$/i;
-            const fileLikeRegex = /[\\/].+\.[a-z0-9]{1,8}$/i;
-
-            if (hashRegex.test(value)) return 'hash';
-            if (urlRegex.test(value)) return 'url';
-            if (ipRegex.test(value)) return 'ip';
-            if (fileLikeRegex.test(value) || /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt|md|csv|eml|zip|exe|dll|ps1|js|json|html?)$/i.test(value)) return 'file';
-            if (domainRegex.test(value)) return 'domain';
-            return selectedScanType || 'ip';
-        }
-
-        function inferScanTypeFromFile(file) {
-            if (!file) return selectedScanType || 'file';
-            const fileName = String(file.name || '').toLowerCase();
-            if (/^([a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})$/.test(fileName.replace(/\..*$/, ''))) return 'hash';
-            return 'file';
-        }
-
-        function handleFileSelected(input) {
-            const file = input?.files?.[0] || null;
-            const label = document.getElementById('fileUploadLabel');
-            const button = document.getElementById('uploadScanBtn');
-            if (label) label.textContent = file ? file.name : 'Choose file…';
-            if (button) button.disabled = !file;
-            if (file) setScanType(inferScanTypeFromFile(file));
-        }
-
-        function handleFolderSelected(input) {
-            const files = Array.from(input?.files || []);
-            const label = document.getElementById('folderUploadLabel');
-            const button = document.getElementById('folderScanBtn');
-            if (label) label.textContent = files.length ? `${files.length} file(s) selected` : 'Choose folder…';
-            if (button) button.disabled = files.length === 0;
-            if (files.length) setScanType('file');
-        }
-
-        async function scanUploadedFile(file) {
-            if (!file) {
-                showToast('Choose a file first', 'warning');
-                return;
-            }
-
-            const button = document.getElementById('uploadScanBtn');
-            const original = button ? button.innerHTML : '';
-            if (button) {
-                button.disabled = true;
-                button.innerHTML = '⏳ Scanning...';
-            }
-
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                const response = await fetch(`${API_BASE_URL}/api/v1/scan/file`, {
-                    method: 'POST',
-                    body: formData,
-                });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                const result = await response.json();
-                const isThreat = isThreatResult(result);
-                showToast(`File scan complete: ${isThreat ? '⚠️ Threat detected' : '✅ Safe'}`, isThreat ? 'error' : 'success');
-                setScanType(inferScanTypeFromFile(file));
-                await Promise.allSettled([fetchScanHistory(), fetchDashboardStats(), fetchThreats(), fetchLogs()]);
-            } catch (error) {
-                showToast(`File scan failed: ${error.message}`, 'error');
-            } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.innerHTML = original || '📤 Scan';
-                }
-            }
-        }
-
-        async function scanSelectedFolder(fileList) {
-            const files = Array.from(fileList || []);
-            if (!files.length) {
-                showToast('Choose a folder first', 'warning');
-                return;
-            }
-
-            const button = document.getElementById('folderScanBtn');
-            const original = button ? button.innerHTML : '';
-            if (button) {
-                button.disabled = true;
-                button.innerHTML = '⏳ Scanning folder...';
-            }
-
-            try {
-                const limit = Math.min(files.length, 20);
-                setScanType('file');
-                for (const file of files.slice(0, limit)) {
-                    await scanUploadedFile(file);
-                }
-                showToast(`Folder scan finished (${limit}/${files.length} files processed)`, 'success');
-            } catch (error) {
-                showToast(`Folder scan failed: ${error.message}`, 'error');
-            } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.innerHTML = original || '📂 Scan All';
-                }
-            }
-        }
-
-        async function refreshClientsPage() {
-            await fetchActiveClients();
-        }
-
         function renderRecentReports() {
             const container = document.getElementById('recentReports');
             
@@ -5092,7 +4618,7 @@
                     <div class="report-item-left">
                         <div class="report-item-icon">📄</div>
                         <div>
-                            <div class="report-item-title">${escHtml(report.title || 'Threat Analysis')}</div>
+                            <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
                             <div class="report-item-meta">
                                 <span>🕐 ${new Date(report.created).toLocaleString()}</span>
                                 <span class="badge badge-threat" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
@@ -5140,7 +4666,7 @@
             }
             
             // Fetch scan detail from API
-            resolveScanDetail(scanId)
+            apiRequest(API_ENDPOINTS.scanResult(scanId))
                 .then(scan => {
                     const scanAnalysis = scan.analysis || {};
                     const safeTarget = String(
@@ -5155,7 +4681,6 @@
                     const effectiveForensic = scan.forensic_metadata || scanAnalysis.forensic_metadata || {};
                     const effectiveThreatIndicators = scan.threat_indicators || scanAnalysis.threat_indicators || [];
                     const effectiveApiResults = scan.api_results || scanAnalysis.api_results || null;
-                    const apiCoverageText = typeof scan.api_coverage === 'string' ? scan.api_coverage.trim() : '';
                     const effectiveLocalAnalysis = scan.local_analysis || scanAnalysis.local_analysis || null;
                     const normalizedThreatLevel = normalizeThreatLevel(scan.threat_level, scan.verdict);
                     const threatColor = getThreatColor(normalizedThreatLevel);
@@ -5168,10 +4693,18 @@
                         const rawApiStatusEntries = Object.values(effectiveApiResults.api_status || {});
                         const apis = effectiveApiResults.apis_called || [];
                         const expectedApis = effectiveApiResults.apis_expected || [];
+                        const relevantApiNames = new Set(expectedApis);
                         const apiStatusEntries = rawApiStatusEntries.filter(api => {
                             const status = (api.status || '').toLowerCase();
-                            // Keep visibility for configured/not configured/rate-limited/error states.
-                            return ['checked', 'pending', 'not_configured', 'rate_limited', 'not_authorized', 'error', 'missing_key', 'quota_exceeded', 'online'].includes(status);
+                            // Keep APIs relevant to this indicator, and hide non-applicable rows
+                            if (status === 'not_applicable') {
+                                return false;
+                            }
+                            if (relevantApiNames.has(api.name)) {
+                                return true;
+                            }
+                            // Preserve visibility for APIs that were actually called or produced a result
+                            return ['checked', 'pending', 'not_configured', 'rate_limited', 'not_authorized', 'error'].includes(status);
                         });
                         if (apiStatusEntries.length > 0 || apis.length > 0) {
                             apiResultsHTML = `
@@ -5185,27 +4718,21 @@
                                     <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                                         ${(apiStatusEntries.length > 0 ? apiStatusEntries : apis.map(api => ({ name: api, status: 'checked' }))).map(api => {
                                             const status = (api.status || '').toLowerCase();
-                                            const badgeClass = status === 'checked' || status === 'online'
+                                            const badgeClass = status === 'checked'
                                                 ? 'badge-safe'
-                                                : status === 'pending' || status === 'not_configured' || status === 'rate_limited' || status === 'missing_key' || status === 'quota_exceeded'
+                                                : status === 'pending' || status === 'not_configured' || status === 'rate_limited'
                                                     ? 'badge-warning'
                                                     : status === 'not_authorized' || status === 'error'
                                                         ? 'badge-threat'
                                                         : 'badge-warning';
                                             const label = status === 'checked'
                                                 ? 'checked'
-                                                : status === 'online'
-                                                    ? 'online'
                                                 : status === 'pending'
                                                     ? 'pending'
                                                     : status === 'not_configured'
                                                         ? 'not configured'
                                                         : status === 'rate_limited'
                                                             ? 'rate limited'
-                                                            : status === 'missing_key'
-                                                                ? 'missing key'
-                                                                : status === 'quota_exceeded'
-                                                                    ? 'quota exceeded'
                                                             : status === 'not_authorized'
                                                                 ? 'unauthorized'
                                                                 : status === 'not_applicable'
@@ -5217,13 +4744,6 @@
                                 </div>
                             `;
                         }
-                    } else if (apiCoverageText) {
-                        apiResultsHTML = `
-                            <div style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(45, 212, 191, 0.05); border-radius: 8px;">
-                                <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--primary);">🔍 API Coverage</div>
-                                <pre style="white-space: pre-wrap; font-size: 0.78rem; line-height: 1.4; margin: 0; color: var(--muted-foreground);">${escHtml(apiCoverageText)}</pre>
-                            </div>
-                        `;
                     }
                     
                     // Build threat indicators section
@@ -5463,50 +4983,6 @@
                 });
         }
 
-        async function resolveScanDetail(scanId) {
-            const id = String(scanId || '').trim();
-            if (!id) {
-                throw new Error('Invalid scan id');
-            }
-
-            const cachedScan = latestScanHistory.find((entry) => String(entry?.scan_id || entry?.scanId || '') === id) || {};
-            const candidates = [
-                `/api/scans/${encodeURIComponent(id)}`,
-                API_ENDPOINTS.scanResult(id),
-            ];
-
-            let lastError = null;
-            for (const path of candidates) {
-                try {
-                    const payload = await apiRequest(path, { timeoutMs: 15000 });
-                    const merged = { ...cachedScan, ...(payload || {}) };
-                    const hasUsefulAnalysis = !!(
-                        merged?.api_results ||
-                        merged?.analysis?.api_results ||
-                        merged?.threat_indicators ||
-                        merged?.analysis?.threat_indicators ||
-                        merged?.forensic_metadata ||
-                        merged?.analysis?.forensic_metadata ||
-                        merged?.summary ||
-                        merged?.analysis?.summary ||
-                        merged?.api_coverage
-                    );
-
-                    if (hasUsefulAnalysis || merged?.scan_id) {
-                        return merged;
-                    }
-                } catch (error) {
-                    lastError = error;
-                }
-            }
-
-            if (Object.keys(cachedScan).length > 0) {
-                return cachedScan;
-            }
-
-            throw lastError || new Error('Unable to fetch scan details');
-        }
-
         function closeScanDetail() {
             const modal = document.getElementById('scanDetailModal');
             const content = document.getElementById('scanDetailContent');
@@ -5524,12 +5000,7 @@
             const modal = document.getElementById('allThreatsModal');
             const content = document.getElementById('allThreatsContent');
             
-            if (!modal) {
-                switchPage('threats');
-                renderThreats('allThreatsPageTableBody');
-                showToast('Opened full threats view', 'info');
-                return;
-            }
+            if (!modal) return;
 
             acknowledgeThreatCenterReview();
             
@@ -5783,9 +5254,9 @@
                                 <div class="report-item-left">
                                     <div class="report-item-icon">📄</div>
                                     <div style="flex: 1;">
-                                        <div class="report-item-title">${escHtml(report.title || 'Threat Analysis')}</div>
+                                        <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
                                         <div class="report-item-meta">
-                                            <span>🎯 ${escHtml(report.target || 'N/A')}</span>
+                                            <span>🎯 ${report.target || 'N/A'}</span>
                                             <span>🕐 ${new Date(report.created).toLocaleString()}</span>
                                             <span class="badge badge-${report.verdict === 'safe' ? 'safe' : 'threat'}" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
                                         </div>
@@ -5831,12 +5302,12 @@
                                 <div class="report-item-left">
                                     <div class="report-item-icon">📄</div>
                                     <div style="flex: 1;">
-                                        <div class="report-item-title">${escHtml(report.title || 'Threat Analysis')}</div>
+                                        <div class="report-item-title">${report.title || 'Threat Analysis'}</div>
                                         <div class="report-item-meta">
-                                            <span>🎯 ${escHtml(report.target || 'N/A')}</span>
+                                            <span>🎯 ${report.target || 'N/A'}</span>
                                             <span>📅 ${new Date(report.created).toLocaleString()}</span>
                                             <span class="badge badge-${report.verdict === 'safe' ? 'safe' : 'threat'}" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
-                                            <span class="badge" style="font-size: 10px;">${escHtml(report.type || 'N/A')}</span>
+                                            <span class="badge" style="font-size: 10px;">${report.type || 'N/A'}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -6488,59 +5959,6 @@
             if (modal) modal.remove();
         }
 
-        async function fetchScanHistory() {
-            const scanBody = document.getElementById('scanHistoryBody');
-            if (scanBody) {
-                scanBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading scan history…</td></tr>';
-            }
-
-            try {
-                const data = await apiRequest(API_ENDPOINTS.scans, { timeoutMs: 20000 });
-                latestScanHistory = Array.isArray(data) ? data : [];
-                renderScanHistory();
-                return latestScanHistory;
-            } catch (error) {
-                console.error('fetchScanHistory failed:', error);
-                if (scanBody) {
-                    scanBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--destructive);">Failed to load scan history.</td></tr>';
-                }
-                return [];
-            }
-        }
-
-        function renderScanHistory() {
-            const scanBody = document.getElementById('scanHistoryBody');
-            if (!scanBody) return;
-
-            const scans = Array.isArray(latestScanHistory) ? latestScanHistory : [];
-            if (scans.length === 0) {
-                scanBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No scans found.</td></tr>';
-                return;
-            }
-
-            scanBody.innerHTML = scans.map(scan => {
-                const target = String(scan.target || scan.target_name || scan.ip || scan.hash || 'unknown');
-                const verdict = String(scan.verdict || scan.threat_level || 'unknown').toUpperCase();
-                const status = String(scan.status || 'complete').toUpperCase();
-                return `
-                    <tr>
-                        <td><code>${scan.scan_id || scan.scanId || 'n/a'}</code></td>
-                        <td><code>${escHtml(target)}</code></td>
-                        <td>${escHtml(String(scan.type || scan.target_type || 'unknown')).toUpperCase()}</td>
-                        <td>${escHtml(status)}</td>
-                        <td>${escHtml(verdict)}</td>
-                        <td style="text-align:right; white-space:nowrap;">
-                            <button class="btn btn-ghost btn-sm" onclick="viewScanDetail('${scan.scan_id || scan.scanId || ''}')">View</button>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-
-            if (currentSearchQuery) {
-                applyDashboardSearch(currentSearchQuery);
-            }
-        }
-
         async function submitOverviewDefenseAction(mode, action) {
             const normalizedMode = String(mode || '').toLowerCase();
             const normalizedAction = String(action || '').toUpperCase();
@@ -6778,23 +6196,7 @@
             } catch (_) {
                 dashboardSettings = { ...DEFAULT_DASHBOARD_SETTINGS };
             }
-            
-            // Auto-detect API base URL if not set
-            if (!dashboardSettings.apiBaseUrl || dashboardSettings.apiBaseUrl.trim() === '') {
-                const protocol = window.location.protocol;
-                const hostname = window.location.hostname;
-                const port = window.location.port ? `:${window.location.port}` : '';
-                dashboardSettings.apiBaseUrl = `${protocol}//${hostname}${port}`;
-            }
-            
-            API_BASE_URL = String(dashboardSettings.apiBaseUrl || '').replace(/\/$/, '');
-
-            // Clamp refresh interval to avoid request storms caused by stale/local bad settings.
-            const interval = Number(dashboardSettings.refreshIntervalMs || DEFAULT_DASHBOARD_SETTINGS.refreshIntervalMs);
-            dashboardSettings.refreshIntervalMs = Number.isFinite(interval)
-                ? Math.min(120000, Math.max(10000, interval))
-                : DEFAULT_DASHBOARD_SETTINGS.refreshIntervalMs;
-            console.log('🔗 API_BASE_URL set to:', API_BASE_URL);
+            API_BASE_URL = String(dashboardSettings.apiBaseUrl || DEFAULT_DASHBOARD_SETTINGS.apiBaseUrl || '').replace(/\/$/, '');
         }
 
         function persistSettings() {
@@ -7071,13 +6473,6 @@
                 reportsCard.style.display = uiState.reportsPageCollapsed ? 'none' : 'block';
                 reportsBtn.textContent = uiState.reportsPageCollapsed ? '🗖 Maximize' : '🗕 Minimize';
             }
-
-            const liveActivityCard = document.getElementById('liveActivityCard');
-            const liveActivityBtn = document.getElementById('toggleLiveActivityBtn');
-            if (liveActivityCard && liveActivityBtn) {
-                liveActivityCard.style.display = uiState.liveActivityCollapsed ? 'none' : 'block';
-                liveActivityBtn.textContent = uiState.liveActivityCollapsed ? '🗖 Maximize' : '🗕 Minimize';
-            }
         }
 
         function toggleScansHistoryPanel() {
@@ -7098,22 +6493,9 @@
             applyPageSectionState();
         }
 
-        function toggleLiveActivityPanel() {
-            uiState.liveActivityCollapsed = !uiState.liveActivityCollapsed;
-            persistUIState();
-            applyPageSectionState();
-        }
-
         function viewAllQuarantine() {
             const modal = document.getElementById('allQuarantineModal');
-            if (!modal) {
-                const card = document.getElementById('quarantineCard');
-                if (card && typeof card.scrollIntoView === 'function') {
-                    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-                showToast('Opened quarantine inventory section', 'info');
-                return;
-            }
+            if (!modal) return;
             const tbody = document.getElementById('allQuarantineModalTableBody');
             const data = quarantineData;
             if (tbody) {
@@ -7160,38 +6542,17 @@
             const interval = Number(dashboardSettings.refreshIntervalMs || 0);
             if (interval > 0 && isPageVisible) {
                 refreshTimer = setInterval(() => {
-                    if (refreshInFlight) return;
-
-                    // When backend is offline, temporarily reduce pressure and retry with backoff.
-                    const now = Date.now();
-                    if (backendOffline && (now - lastBackendFailureAt) < 15000) {
-                        return;
-                    }
-
-                    refreshInFlight = true;
-                    const activePage = uiState?.activePage || 'dashboard';
-                    const refreshCalls = [
-                        fetchDashboardStats(),
-                        fetchThreats(),
-                        fetchLogs(),
-                        fetchApiStatus(),
-                        fetchSystemHealth(),
-                        fetchMonitoringStats(),
-                    ];
-
-                    if (activePage === 'dashboard') {
-                        refreshCalls.push(
-                            fetchActiveClients(),
-                            fetchSecurityPosture(),
-                            fetchQuarantineInventory(),
-                            fetchAuditTelemetry(),
-                            refreshLiveActivity(),
-                        );
-                    }
-
-                    Promise.allSettled(refreshCalls).finally(() => {
-                        refreshInFlight = false;
-                    });
+                    fetchDashboardStats();
+                    fetchThreats();
+                    fetchLogs();
+                    fetchApiStatus();
+                    fetchSystemHealth();
+                    fetchMonitoringStats();
+                    fetchActiveClients();
+                    fetchSecurityPosture();
+                    fetchQuarantineInventory();
+                    fetchAuditTelemetry();
+                    refreshLiveActivity();
                 }, interval);
             }
         }
@@ -7221,10 +6582,7 @@
 
         function saveSettings() {
             dashboardSettings.apiBaseUrl = String(document.getElementById('settingsApiBaseUrl').value || DEFAULT_DASHBOARD_SETTINGS.apiBaseUrl).trim().replace(/\/$/, '');
-            const requestedRefreshMs = Number(document.getElementById('settingsRefreshInterval').value || 30000);
-            dashboardSettings.refreshIntervalMs = Number.isFinite(requestedRefreshMs)
-                ? Math.min(120000, Math.max(10000, requestedRefreshMs))
-                : 30000;
+            dashboardSettings.refreshIntervalMs = Number(document.getElementById('settingsRefreshInterval').value || 30000);
             dashboardSettings.desktopNotifications = document.getElementById('settingsDesktopNotifications').checked;
             dashboardSettings.threatOnlyNotifications = document.getElementById('settingsThreatOnly').checked;
             dashboardSettings.layoutMode = document.getElementById('settingsCompactLayout').checked ? 'compact' : 'expanded';
@@ -7328,7 +6686,7 @@
             const promptId = String(threat.id || threat.event_id || threat.scan_id || threat.threat_id || '');
             if (!promptId) return null;
 
-            const target = threat.target || threat.source_ip || threat.source_domain || threat.source || 'unknown target';
+            const target = threat.target_display || threat.target || threat.source || 'Unknown target';
             return {
                 promptKey: `threat:${promptId}`,
                 attackId: threat.event_id || threat.id || null,
@@ -7338,94 +6696,293 @@
                 title: formatThreatTypeLabel(threat.type || threat.attack_type || 'security incident'),
                 severity,
                 source: target,
-                target,
-                targetType: inferDefenseTargetType(target),
-                targetDisplay: threat.target_display || target,
+                target: threat.target || threat.source_ip || threat.source_domain || target,
+                targetDisplay: target,
+                description: threat.short_description || threat.description || threat.details || 'Suspicious activity detected.',
+                mitigation: Array.isArray(threat.mitigation_commands) && threat.mitigation_commands.length
+                    ? threat.mitigation_commands[0]
+                    : (threat.recommended_action || 'Review and respond immediately.'),
+                eventKind: threat.event_kind || 'ATTACK_ALERT',
                 metadata: {
-                    type: threat.type || threat.attack_type || 'security incident',
-                    source: threat.source || 'live_feed',
-                    rawThreat: threat,
+                    source: threat.source || 'SENTINEL-AI',
+                    timestamp: threat.timestamp || null,
+                    severity,
+                    threat_type: threat.type || threat.attack_type || null,
+                    scan_source: threat.scan_source || null,
                 },
             };
         }
 
         function buildSecurityPromptPayloadFromLog(log) {
-            if (!log || typeof log !== 'object') return null;
+            const details = asObject(log?.details) || {};
+            const payload = asObject(details.payload) || {};
+            const component = String(log?.component || '').toLowerCase();
+            if (!['defense_event', 'defense_response', 'nids_ingestion'].includes(component)) {
+                return null;
+            }
 
-            const level = String(log.level || '').toLowerCase();
-            const component = String(log.component || '').toLowerCase();
-            const message = String(log.message || '');
-            const details = typeof log.details === 'object' && log.details ? log.details : {};
+            const severity = String(details.severity || log?.level || '').toLowerCase();
+            if (!['critical', 'high', 'warning', 'error'].includes(severity) && !['warning', 'error', 'critical'].includes(String(log?.level || '').toLowerCase())) {
+                return null;
+            }
 
-            const isSecurityLog = ['warning', 'error', 'critical'].includes(level)
-                || /defense|intrusion|attack|quarantine|threat/.test(component)
-                || /intrusion|attack|malicious|quarantine|blocked/.test(message.toLowerCase());
+            const attackId = details.attack_id || payload.attack_id || null;
+            const eventId = attackId || details.event_id || null;
+            const eventKind = details.event || payload.event_kind || 'ATTACK_ALERT';
+            if (!/attack|alert|quarantine|threat|process|ddos|intrusion/i.test(`${eventKind} ${details.attack_type || ''} ${log?.message || ''}`)) {
+                return null;
+            }
 
-            if (!isSecurityLog) return null;
-
-            const directTarget = normalizeDefenseTargetCandidate(
-                details.target || details.ip || details.source_ip || log.target
-            );
-            const inferredTarget = extractDefenseTargetFromMessage(
-                `${message} ${details.target || ''} ${details.source_ip || ''}`
-            );
-            const target = directTarget || inferredTarget || 'unknown target';
-            const promptId = String(log.id || log.event_id || log.scan_id || `${Date.now()}_${component}`);
-            const severity = level === 'critical' || level === 'error' ? 'critical' : 'high';
+            const targetDisplay = details.source_ip
+                || details.source_domain
+                || payload.source_ip
+                || payload.source_domain
+                || details.client_id
+                || 'Unknown source';
 
             return {
-                promptKey: `log:${promptId}`,
-                attackId: log.event_id || log.id || null,
-                eventId: log.event_id || log.id || null,
+                promptKey: `log:${attackId || log?.id || targetDisplay}:${eventKind}`,
+                attackId,
+                eventId,
                 clientId: details.client_id || null,
-                threatId: promptId,
-                title: formatThreatTypeLabel(component || 'security event'),
-                severity,
-                source: component || 'system',
-                target,
-                targetType: inferDefenseTargetType(target),
-                targetDisplay: target,
+                threatId: attackId || null,
+                title: formatThreatTypeLabel(details.attack_type || eventKind),
+                severity: severity === 'error' ? 'critical' : severity,
+                source: targetDisplay,
+                target: details.source_ip || details.source_domain || payload.source_ip || payload.source_domain || null,
+                targetDisplay,
+                description: details.description || log?.message || 'Security incident detected.',
+                mitigation: payload.mitigation_commands?.[0] || payload.recommended_action || 'Review and respond immediately.',
+                eventKind,
                 metadata: {
-                    level,
-                    message,
-                    details,
+                    log_id: log?.id || null,
+                    source: log?.component || 'defense_event',
+                    timestamp: log?.timestamp || null,
+                    severity,
+                    attack_type: details.attack_type || null,
                 },
             };
         }
 
-        function openSecurityPrompt(prompt) {
-            if (!prompt) return;
-            activeSecurityPrompt = prompt;
-            addNotification(
-                'Defense action requested',
-                `${prompt.title} on ${prompt.targetDisplay || prompt.target}. Choose BLOCK / IGNORE / QUARANTINE from logs or alerts.`,
-                prompt.severity === 'critical' ? 'error' : 'warning',
-                `prompt_open:${prompt.promptKey}`,
-                12000
-            );
-        }
+        function closeSecurityPrompt(recordUnanswered = false, showNext = true) {
+            const modal = document.getElementById('securityPromptModal');
+            if (modal) modal.remove();
 
-        function closeSecurityPrompt(showNext = true, markAnswered = true) {
-            if (markAnswered) {
-                securityEscalationState.unansweredPromptSignals = 0;
-            }
+            // `recordUnanswered` is intentionally kept for UX wiring (Later/close),
+            // while unanswered prompt escalation is counted when prompts are queued.
+            void recordUnanswered;
+
             activeSecurityPrompt = null;
             if (showNext && securityPromptQueue.length > 0) {
                 const next = securityPromptQueue.shift();
-                if (next) openSecurityPrompt(next);
+                window.setTimeout(() => openSecurityPrompt(next), 150);
             }
         }
 
-        function openEscalationPrompt(reason, prompt, source = 'threshold') {
-            const title = `Escalation required (${source})`;
-            const details = prompt
-                ? `${reason} | ${prompt.title} | ${prompt.targetDisplay || prompt.target || 'unknown target'}`
-                : reason;
-            addNotification(title, details, 'error', `prompt_escalation:${source}:${prompt?.promptKey || 'none'}`, 8000);
-            showToast('Escalation triggered. Review latest security prompts.', 'warning');
-            if (prompt && !activeSecurityPrompt) {
-                openSecurityPrompt(prompt);
+        function closeEscalationPrompt() {
+            const modal = document.getElementById('escalationPromptModal');
+            if (modal) modal.remove();
+            activeEscalationPrompt = null;
+        }
+
+        function openEscalationPrompt(reason, prompt = null, trigger = 'threshold_escalation') {
+            const now = Date.now();
+            if ((now - Number(securityEscalationState.lastEscalationAt || 0)) < 10000) return;
+
+            securityEscalationState.lastEscalationAt = now;
+            closeEscalationPrompt();
+            activeEscalationPrompt = { reason, prompt, trigger };
+
+            const modal = document.createElement('div');
+            modal.id = 'escalationPromptModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.74);backdrop-filter:blur(6px);z-index:1700;display:flex;align-items:center;justify-content:center;padding:1.5rem;';
+            modal.onclick = (e) => {
+                if (e.target === modal) closeEscalationPrompt();
+            };
+
+            const severityLabel = String(prompt?.severity || 'high').toUpperCase();
+            modal.innerHTML = `
+                <div style="width:min(560px,100%);background:var(--card);border:1px solid var(--destructive);border-radius:18px;box-shadow:0 28px 80px rgba(0,0,0,0.45);overflow:hidden;">
+                    <div style="padding:1rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                        <div>
+                            <div style="font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--destructive);font-family:'JetBrains Mono', monospace;">Quarantine Escalation Review</div>
+                            <div style="font-size:1.08rem;font-weight:700;margin-top:0.2rem;">Manual Confirmation Required</div>
+                        </div>
+                        <button class="icon-btn" style="border:1px solid var(--border);" onclick="closeEscalationPrompt()">✖️</button>
+                    </div>
+                    <div style="padding:1.15rem;display:grid;gap:0.85rem;">
+                        <div style="padding:0.95rem;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,0.02);line-height:1.55;">
+                            ${escHtml(reason)}
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;">
+                            <div style="padding:0.8rem;border:1px solid var(--border);border-radius:10px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Prompt Threshold</div>
+                                <div style="margin-top:0.35rem;font-weight:700;">5 reached</div>
+                            </div>
+                            <div style="padding:0.8rem;border:1px solid var(--border);border-radius:10px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Threat Severity</div>
+                                <div style="margin-top:0.35rem;font-weight:700;color:var(--warning);">${escHtml(severityLabel)}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:0.84rem;color:var(--muted-foreground);">No automatic quarantine is executed. Choose explicitly:</div>
+                        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0.7rem;">
+                            <button class="btn btn-outline" onclick="closeEscalationPrompt()">Later</button>
+                            <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); if(ctx?.prompt){ try { await submitDefenseAction(ctx.prompt, 'IGNORE'); closeSecurityPrompt(); } catch(err){ showToast('Failed to apply IGNORE: ' + (err?.message || err), 'error'); } } else { showToast('Escalation ignored for now', 'info'); } })()">Ignore</button>
+                            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); if(ctx?.prompt){ try { await submitDefenseAction(ctx.prompt, 'BLOCK'); closeSecurityPrompt(); } catch(err){ showToast('Failed to apply BLOCK: ' + (err?.message || err), 'error'); } } else { showToast('Apply BLOCK from active prompt when available', 'info'); } })()">Block</button>
+                            <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="(async()=>{ const ctx = activeEscalationPrompt; closeEscalationPrompt(); await triggerSystemWideQuarantine(ctx?.reason || 'Manual escalation confirmed', ctx?.prompt || null, ctx?.trigger || 'manual_escalation', { confirmed: true, source: 'escalation_prompt' }); })()">Quarantine Now</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            addNotification(
+                'Quarantine review required',
+                `${reason} — choose Ignore, Block, or Quarantine manually.`,
+                'warning',
+                `quarantine_review_required:${trigger}:${now}`,
+                25000
+            );
+            showToast('Threshold reached: manual quarantine confirmation required', 'warning');
+        }
+
+        async function triggerSystemWideQuarantine(reason, prompt = null, trigger = 'manual_escalation', options = {}) {
+            const now = Date.now();
+            const userConfirmed = Boolean(options && options.confirmed === true);
+            if (globalQuarantineInProgress) return;
+            if ((now - Number(securityEscalationState.lastEscalationAt || 0)) < 10000) return;
+            if (!userConfirmed) {
+                openEscalationPrompt(reason, prompt, trigger);
+                return;
             }
+
+            globalQuarantineInProgress = true;
+            promptSuppressedByQuarantine = true;
+            securityEscalationState.lastEscalationAt = now;
+
+            try {
+                addNotification(
+                    'System quarantine escalation',
+                    `${reason} — initiating system-wide quarantine immediately.`,
+                    'warning',
+                    `auto_quarantine_suggested:${trigger}`,
+                    30000
+                );
+                showToast('Escalating to system-wide quarantine...', 'warning');
+
+                const payload = {
+                    action: 'QUARANTINE',
+                    client_id: prompt?.clientId || null,
+                    attack_id: prompt?.attackId || null,
+                    event_id: prompt?.eventId || null,
+                    target: 'SYSTEM_ALL',
+                    target_type: 'system',
+                    reason,
+                    metadata: {
+                        ...(prompt?.metadata || {}),
+                        auto_global_quarantine: false,
+                        user_confirmed_quarantine: true,
+                        confirmation_source: options?.source || 'manual_prompt',
+                        escalation_trigger: trigger,
+                        escalation_state: {
+                            consecutive_blocks: securityEscalationState.consecutiveBlocks,
+                            unanswered_prompts: securityEscalationState.unansweredPromptSignals,
+                        },
+                    },
+                };
+
+                const response = await apiRequest(API_ENDPOINTS.dashboardDefenseResponse, {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                });
+
+                securityEscalationState.consecutiveBlocks = 0;
+                securityEscalationState.unansweredPromptSignals = 0;
+
+                securityPromptQueue = [];
+                if (activeSecurityPrompt) {
+                    closeSecurityPrompt(false, false);
+                }
+
+                addNotification(
+                    'System-wide quarantine activated',
+                    `Automatic quarantine has been applied. Review threats and overall system status.${response?.successful === false ? ' (backend reported partial failure)' : ''}`,
+                    'error',
+                    `auto_quarantine_applied:${trigger}`,
+                    45000
+                );
+                showToast('System-wide quarantine activated. Redirecting to dashboard.', 'success');
+
+                switchPage('dashboard');
+                scheduleIncidentRefresh(100);
+                updateSystemStatusPanel();
+                return response;
+            } catch (error) {
+                addNotification(
+                    'Automatic quarantine failed',
+                    error?.message || 'Failed to apply system-wide quarantine',
+                    'error',
+                    `auto_quarantine_failed:${trigger}`,
+                    45000
+                );
+                showToast(`Auto-quarantine failed: ${error.message}`, 'error');
+                throw error;
+            } finally {
+                globalQuarantineInProgress = false;
+            }
+        }
+
+        function openSecurityPrompt(prompt) {
+            if (!prompt) return;
+            if (activeSecurityPrompt) {
+                securityPromptQueue.push(prompt);
+                return;
+            }
+
+            activeSecurityPrompt = prompt;
+            const severityTone = prompt.severity === 'critical' ? 'var(--destructive)' : 'var(--warning)';
+            const modal = document.createElement('div');
+            modal.id = 'securityPromptModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.72);backdrop-filter:blur(6px);z-index:1400;display:flex;align-items:center;justify-content:center;padding:1.5rem;';
+            modal.innerHTML = `
+                <div style="width:min(560px,100%);background:var(--card);border:1px solid ${severityTone};border-radius:18px;box-shadow:0 28px 80px rgba(0,0,0,0.45);overflow:hidden;">
+                    <div style="padding:1.1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+                        <div>
+                            <div style="font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;color:${severityTone};font-family:'JetBrains Mono', monospace;">Realtime Security Prompt</div>
+                            <div style="font-size:1.15rem;font-weight:700;margin-top:0.2rem;">${escHtml(prompt.title)}</div>
+                        </div>
+                        <button onclick="closeSecurityPrompt(true)" class="icon-btn" style="border:1px solid var(--border);">✖️</button>
+                    </div>
+                    <div style="padding:1.25rem;display:grid;gap:0.95rem;">
+                        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.75rem;">
+                            <div style="padding:0.85rem;border:1px solid var(--border);border-radius:12px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Severity</div>
+                                <div style="margin-top:0.35rem;font-weight:700;color:${severityTone};text-transform:uppercase;">${escHtml(prompt.severity)}</div>
+                            </div>
+                            <div style="padding:0.85rem;border:1px solid var(--border);border-radius:12px;">
+                                <div style="font-size:0.72rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.06em;">Source</div>
+                                <div style="margin-top:0.35rem;font-weight:600;word-break:break-word;">${escHtml(prompt.targetDisplay || prompt.source || 'Unknown')}</div>
+                            </div>
+                        </div>
+                        <div style="padding:0.95rem;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,0.02);">
+                            <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.45rem;">Incident summary</div>
+                            <div style="font-size:0.94rem;line-height:1.6;">${escHtml(prompt.description)}</div>
+                        </div>
+                        <div style="padding:0.95rem;border-left:3px solid ${severityTone};background:rgba(245,158,11,0.08);border-radius:12px;">
+                            <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.35rem;">Suggested response</div>
+                            <div style="font-size:0.92rem;line-height:1.5;">${escHtml(prompt.mitigation || 'Review and respond immediately.')}</div>
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;justify-content:flex-end;">
+                            <button class="btn btn-outline" onclick="closeSecurityPrompt(true)">Later</button>
+                            <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="respondToSecurityPrompt('IGNORE')">Ignore</button>
+                            <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="respondToSecurityPrompt('BLOCK')">Block</button>
+                            <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="respondToSecurityPrompt('QUARANTINE')">Quarantine</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
         }
 
         function queueSecurityPrompt(prompt) {
@@ -7467,20 +7024,18 @@
             }
 
             const normalizedAction = String(action || '').toUpperCase();
-            const normalizedTarget = asPayloadString(prompt?.target) || 'unknown target';
-            const payload = {
-                action: normalizedAction,
-                client_id: asPayloadString(prompt?.clientId),
-                attack_id: asPayloadString(prompt?.attackId),
-                event_id: asPayloadString(prompt?.eventId),
-                target: normalizedTarget,
-                target_type: asPayloadString(prompt?.targetType) || inferDefenseTargetType(normalizedTarget),
-                reason: `Dashboard prompt response: ${normalizedAction}`,
-                metadata: (prompt && typeof prompt.metadata === 'object' && prompt.metadata) ? prompt.metadata : {},
-            };
             const response = await apiRequest(API_ENDPOINTS.dashboardDefenseResponse, {
                 method: 'POST',
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    action: normalizedAction,
+                    client_id: prompt.clientId,
+                    attack_id: prompt.attackId,
+                    event_id: prompt.eventId,
+                    target: prompt.target,
+                    target_type: prompt.target ? null : 'indicator',
+                    reason: `Dashboard prompt response: ${normalizedAction}`,
+                    metadata: prompt.metadata || {},
+                }),
             });
 
             securityEscalationState.unansweredPromptSignals = 0;
@@ -7527,7 +7082,7 @@
                     closeSecurityPrompt();
                 }
             } catch (error) {
-                showToast(formatDefenseActionError(action, error), 'error');
+                showToast(`Failed to apply ${action}: ${error.message}`, 'error');
                 addNotification('Defense response failed', error.message, 'error', `prompt_response_failed:${prompt.promptKey}:${action}`, 10000);
             }
         }
@@ -7543,7 +7098,7 @@
             try {
                 await submitDefenseAction(prompt, action);
             } catch (error) {
-                showToast(formatDefenseActionError(action, error), 'error');
+                showToast(`Failed to apply ${action}: ${error.message}`, 'error');
             }
         }
 
@@ -7853,37 +7408,54 @@
         // API Integration Functions
         // =============================================
         async function performScan() {
-            const primaryInput = document.getElementById('scanInput');
-            const secondaryInput = document.getElementById('newScanInput');
-            const input = primaryInput && primaryInput.value.trim()
-                ? primaryInput
-                : (secondaryInput || primaryInput);
-            const target = (input?.value || '').trim();
+            const input = document.getElementById('scanInput');
+            const target = input.value.trim();
             
             if (!target) {
                 showToast('Please enter a target to scan', 'error');
                 return;
             }
 
-            const btn = document.getElementById('scanBtn') || document.getElementById('newScanBtn');
+            const btn = document.getElementById('scanBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Scanning...';
 
             try {
                 // Detect scan type
-                let type = inferScanTypeFromTarget(target);
-                const activeType = String(selectedScanType || '').toLowerCase();
-                if (activeType === 'file_type' || activeType === 'file') {
-                    type = inferScanTypeFromTarget(target);
-                } else if (activeType === 'domain' && /^https?:\/\//i.test(target)) {
-                    type = 'url';
-                } else if (activeType === 'url' && !/^https?:\/\//i.test(target)) {
-                    type = inferScanTypeFromTarget(target);
+                let type = selectedScanType || 'ip';
+                const hashRegex = /^([a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
+                const extRegex = /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt|md|csv|zip|exe|dll|ps1)$/i;
+
+                if (type === 'ip') {
+                    if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    }
+                } else if (type === 'domain') {
+                    if (target.startsWith('http')) {
+                        type = 'url';
+                    }
+                } else if (type === 'url') {
+                    if (!target.startsWith('http')) {
+                        type = target.match(/^\d+\.\d+\.\d+\.\d+$/) ? 'ip' : 'domain';
+                    }
+                } else if (type === 'file_type') {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else {
+                        type = 'file';
+                    }
                 }
 
-                const scanInputEl = input || primaryInput || secondaryInput;
-                if (scanInputEl) {
-                    scanInputEl.dataset.detectedScanType = type;
+                if (!['ip','domain','url','file','hash'].includes(type)) {
+                    if (hashRegex.test(target)) {
+                        type = 'hash';
+                    } else if (extRegex.test(target) || target.includes('/') || target.includes('\\')) {
+                        type = 'file';
+                    } else if (target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+                        type = target.startsWith('http') ? 'url' : 'domain';
+                    } else {
+                        type = 'ip';
+                    }
                 }
 
                 const result = await apiRequest(API_ENDPOINTS.scan, {
@@ -7899,8 +7471,7 @@ const isThreat = isThreatResult(result);
                 } else if (!dashboardSettings.threatOnlyNotifications) {
                     addNotification('Scan Completed', `${target} - SAFE`, 'info');
                 }
-                if (primaryInput) primaryInput.value = '';
-                if (secondaryInput) secondaryInput.value = '';
+                input.value = '';
                 
                 // Refresh data
                 fetchDashboardStats();
@@ -7911,7 +7482,7 @@ const isThreat = isThreatResult(result);
                 addNotification('Scan Failed', error.message, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = btn.id === 'newScanBtn' ? '🔍 Start Scan' : '⚡ SCAN';
+                btn.innerHTML = '⚡ SCAN';
             }
         }
 
@@ -7983,13 +7554,9 @@ const isThreat = isThreatResult(result);
                 updateSystemStatusPanel();
             } catch (error) {
                 console.log('Using static dashboard stats');
-                console.error('❌ Failed to fetch dashboard stats:', error?.message || error);
                 updateSourceSignal('stats', { ok: false, error: error?.message || 'stats_failed' });
                 setSyncStatus('warn', 'STATIC');
                 updateSystemStatusPanel();
-                
-                // Show error to user
-                addNotification('Dashboard Stats Failed', `Failed to load dashboard statistics: ${error?.message || 'Unknown error'}`, 'error');
             }
         }
 
@@ -8130,24 +7697,13 @@ const isThreat = isThreatResult(result);
                 const categories = asObject(posture.categories) || {};
                 const totalFindings = Number(summary.total_findings || 0);
                 const statusText = totalFindings > 0 ? 'Attention required' : 'Healthy';
-                const severityTone = totalFindings > 0 ? 'var(--warning)' : 'var(--success)';
-                const findingsHtml = totalFindings > 0
-                    ? `<div style="margin-top:0.75rem;color:${severityTone};font-weight:600;">${summary.critical_findings || 0} critical · ${summary.high_findings || 0} high · ${summary.total_findings || 0} total findings</div>`
-                    : '<div style="margin-top:0.75rem;color:var(--success);font-weight:600;">No critical or high findings detected.</div>';
+                const findingsHtml = totalFindings > 0 ? `<div style="margin-top:0.75rem;color:var(--warning);font-weight:600;">${summary.critical_findings || 0} critical · ${summary.high_findings || 0} high · ${summary.total_findings || 0} total findings</div>` : '<div style="margin-top:0.75rem;color:var(--success);font-weight:600;">No critical or high findings detected.</div>';
                 if (contentEl) {
                     contentEl.innerHTML = `
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
-                            <div style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;">
-                                <span class="badge ${totalFindings > 0 ? 'badge-warning' : 'badge-safe'}">${statusText.toUpperCase()}</span>
-                                <strong style="font-size:1.05rem;">Security Posture</strong>
-                            </div>
-                            <div style="font-size:0.82rem;color:var(--muted-foreground);">Last assessed ${formatLiveTimestamp(posture.timestamp)}</div>
-                        </div>
-                        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0.75rem;margin-top:1rem;">
-                            <div class="task-op-card"><div class="task-op-name">Actions</div><div class="task-op-value">${summary.actions_taken ?? 0}</div><div class="task-op-note">taken</div></div>
-                            <div class="task-op-card"><div class="task-op-name">Processes</div><div class="task-op-value">${categories.processes ?? 0}</div><div class="task-op-note">issues</div></div>
-                            <div class="task-op-card"><div class="task-op-name">Files</div><div class="task-op-value">${categories.files ?? 0}</div><div class="task-op-note">issues</div></div>
-                            <div class="task-op-card"><div class="task-op-name">Firewall</div><div class="task-op-value">${categories.firewall ?? 0}</div><div class="task-op-note">signals</div></div>
+                        <div style="font-size:1.15rem;font-weight:700;">${statusText}</div>
+                        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.75rem;margin-top:0.75rem;">
+                            <div><strong>Actions taken</strong><div>${summary.actions_taken ?? 0}</div></div>
+                            <div><strong>Category issues</strong><div>${categories.processes ?? 0} processes · ${categories.files ?? 0} files · ${categories.vulnerabilities ?? 0} vulns · ${categories.firewall ?? 0} firewall</div></div>
                         </div>
                         ${findingsHtml}
                     `;
@@ -8166,16 +7722,11 @@ const isThreat = isThreatResult(result);
         async function fetchQuarantineInventory() {
             const bodyEl = document.getElementById('quarantineTableBody');
             const statsEl = document.getElementById('quarantineStats');
-            const shellEl = bodyEl?.closest('.table-shell');
             if (bodyEl) {
                 bodyEl.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Refreshing quarantine inventory...</td></tr>';
             }
             if (statsEl) {
                 statsEl.textContent = '';
-            }
-            if (shellEl) {
-                shellEl.style.maxHeight = '460px';
-                shellEl.style.overflow = 'auto';
             }
 
             try {
@@ -8184,7 +7735,7 @@ const isThreat = isThreatResult(result);
                 const items = asArray(payload.items || []);
                 const total = Number(payload.total || items.length);
                 const summary = asObject(payload.summary) || {};
-                const rows = items.map(item => {
+                const rows = items.slice(0, 8).map(item => {
                     const name = String(item.quarantine_id || item.attack_id || item.original_path || item.type || 'unknown');
                     const sizeOrType = item.size || item.severity || item.type || '-';
                     const createdAt = formatLiveTimestamp(item.timestamp || item.created_at);
@@ -8204,12 +7755,7 @@ const isThreat = isThreatResult(result);
                 }
                 if (statsEl) {
                     const severitySummary = Object.entries(asObject(summary.by_severity)).map(([name, count]) => `${name}: ${count}`).join(' · ');
-                    statsEl.innerHTML = `
-                        <span><strong>Total:</strong> ${total}</span>
-                        <span><strong>Safe to release:</strong> ${summary.releasable ?? 0}</span>
-                        <span><strong>Blocked:</strong> ${summary.blocked ?? 0}</span>
-                        <span><strong>Severity:</strong> ${severitySummary || 'n/a'}</span>
-                    `;
+                    statsEl.textContent = `Total: ${total}${severitySummary ? ` · ${severitySummary}` : ''}`;
                 }
                 updateSourceSignal('quarantine', { ok: true, dataTimestamp: Date.now() });
             } catch (error) {
@@ -8313,14 +7859,13 @@ const isThreat = isThreatResult(result);
                                     <td>${item.domain || item.url || item.host || item.target || '-'}</td>
                                     <td>${item.host_ip || item.ip_address || item.ip || '-'}</td>
                                     <td>${item.browser || item.user_agent || '-'}</td>
-                                    <td>${resolveActivitySource(item, 'browser_history_monitor')}</td>
                                     <td>${String(item.verdict || item.status || '-')}</td>
-                                    <td>${formatConfidencePct(item.confidence)}</td>
+                                    <td>${item.confidence != null ? `${Math.round(Number(item.confidence) * (Number(item.confidence) <= 1 ? 100 : 1))}%` : '-'}</td>
                                     <td>${String(item.status || item.verdict || '-')}</td>
                                     <td>${formatLiveTimestamp(item.timestamp || item.time || item.created_at || item.visited_at)}</td>
                                 </tr>
                             `).join('')
-                        : '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No websites found.</td></tr>';
+                        : '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No websites found.</td></tr>';
                 }
 
                 if (activityBody) {
@@ -8330,9 +7875,9 @@ const isThreat = isThreatResult(result);
                                     <td>${item.type || item.event_type || '-'}</td>
                                     <td>${item.value || item.target || item.client_id || '-'}</td>
                                     <td>${String(item.verdict || item.status || '-')}</td>
-                                    <td>${formatConfidencePct(item.confidence)}</td>
+                                    <td>${item.confidence != null ? `${Math.round(Number(item.confidence) * (Number(item.confidence) <= 1 ? 100 : 1))}%` : '-'}</td>
                                     <td>${String(item.indicator_count ?? item.details?.indicator_count ?? '-')}</td>
-                                    <td>${resolveActivitySource(item, 'activity_monitor')}</td>
+                                    <td>${item.source || item.component || item.actor || '-'}</td>
                                     <td>${formatLiveTimestamp(item.time || item.created_at || item.timestamp)}</td>
                                 </tr>
                             `).join('')
@@ -8529,29 +8074,22 @@ const isThreat = isThreatResult(result);
                 const badge = level === 'error' || level === 'critical' ? 'badge-threat' : level === 'warning' ? 'badge-warning' : 'badge-safe';
                 const hasDetails = Boolean(log && (log.details || extractScanIdFromLog(log)));
                 const hasDefenseActions = Boolean(buildSecurityPromptPayloadFromLog(log));
-                const summary = String(log.message || '').replace(/\s+/g, ' ').trim();
-                const detailsPreview = log.details ? (typeof log.details === 'string' ? log.details : JSON.stringify(log.details)) : '';
                 return `
-                    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:flex-start;padding:0.9rem 1rem;border-bottom:1px solid rgba(45,212,191,0.08);">
-                        <div style="min-width:0;">
-                            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-                                <span class="badge ${badge}">${level.toUpperCase()}</span>
-                                <span style="font-size:0.82rem;color:var(--muted-foreground);">${escHtml(log.component || 'system')}</span>
-                                <span style="font-size:0.76rem;color:var(--muted-foreground);">${log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}</span>
-                            </div>
-                            <div style="margin-top:0.45rem;font-weight:600;line-height:1.45;word-break:break-word;">${escHtml(summary || 'System event')}</div>
-                            ${detailsPreview ? `<div style="margin-top:0.35rem;font-size:0.8rem;color:rgba(170,199,195,0.9);word-break:break-word;">${escHtml(detailsPreview.slice(0, 180))}${detailsPreview.length > 180 ? '…' : ''}</div>` : ''}
+                    <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:0.75rem 0;border-bottom:1px solid var(--border);">
+                        <div style="flex:1;">
+                            <div style="font-weight:600;">${log.component || 'system'} - ${log.message || ''}</div>
+                            <div style="font-size:0.8rem;color:var(--muted-foreground);">${log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}</div>
                             ${hasDefenseActions ? `
-                                <div style="display:flex;gap:0.45rem;flex-wrap:wrap;margin-top:0.65rem;">
-                                    <button class="btn btn-outline btn-sm" style="padding:0.28rem 0.7rem;font-size:0.72rem;border-color:var(--primary);color:var(--primary);" onclick="respondToLogEvent(${index}, 'BLOCK')">Block</button>
-                                    <button class="btn btn-outline btn-sm" style="padding:0.28rem 0.7rem;font-size:0.72rem;border-color:var(--warning);color:var(--warning);" onclick="respondToLogEvent(${index}, 'IGNORE')">Ignore</button>
-                                    <button class="btn btn-outline btn-sm" style="padding:0.28rem 0.7rem;font-size:0.72rem;border-color:var(--destructive);color:var(--destructive);" onclick="respondToLogEvent(${index}, 'QUARANTINE')">Quarantine</button>
+                                <div style="display:flex;gap:0.45rem;flex-wrap:wrap;margin-top:0.45rem;">
+                                    <button class="btn btn-outline btn-sm" style="padding:0.2rem 0.55rem;font-size:0.72rem;border-color:var(--primary);color:var(--primary);" onclick="respondToLogEvent(${index}, 'BLOCK')">BLOCK</button>
+                                    <button class="btn btn-outline btn-sm" style="padding:0.2rem 0.55rem;font-size:0.72rem;border-color:var(--warning);color:var(--warning);" onclick="respondToLogEvent(${index}, 'IGNORE')">IGNORE</button>
+                                    <button class="btn btn-outline btn-sm" style="padding:0.2rem 0.55rem;font-size:0.72rem;border-color:var(--destructive);color:var(--destructive);" onclick="respondToLogEvent(${index}, 'QUARANTINE')">QUARANTINE</button>
                                 </div>
                             ` : ''}
                         </div>
-                        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                            <button class="btn btn-ghost btn-sm" onclick="viewLogInfo(${index})" title="Open log details">Details</button>
-                            ${hasDetails ? `<span class="badge badge-safe" style="height:fit-content;">Has details</span>` : ''}
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            ${hasDetails ? `<button class="icon-btn" title="View details" onclick="viewLogInfo(${index})" style="font-size:0.9rem;">ℹ️</button>` : ''}
+                            <span class="badge ${badge}" style="height:fit-content;">${level.toUpperCase()}</span>
                         </div>
                     </div>
                 `;
@@ -8582,41 +8120,17 @@ const isThreat = isThreatResult(result);
                 ? (typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2))
                 : 'No additional details available';
 
-            const existing = document.getElementById('logDetailModal');
-            if (existing) existing.remove();
+            const message = [
+                `Component: ${log.component || 'system'}`,
+                `Level: ${String(log.level || 'INFO').toUpperCase()}`,
+                `Time: ${log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}`,
+                `Message: ${log.message || ''}`,
+                '',
+                `Details: ${detailsText}`,
+            ].join('\n');
 
-            const modal = document.createElement('div');
-            modal.id = 'logDetailModal';
-            modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.76);z-index:1500;display:flex;align-items:center;justify-content:center;padding:1rem;';
-            modal.onclick = (e) => {
-                if (e.target === modal) modal.remove();
-            };
-
-            const level = String(log.level || 'INFO').toLowerCase();
-            const badge = level === 'error' || level === 'critical' ? 'badge-threat' : level === 'warning' ? 'badge-warning' : 'badge-safe';
-
-            modal.innerHTML = `
-                <div style="width:min(700px,96vw);max-height:88vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.48);">
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:1rem 1.2rem;border-bottom:1px solid var(--border);">
-                        <div style="font-size:1.02rem;font-weight:700;">System Log Details</div>
-                        <button class="icon-btn" onclick="document.getElementById('logDetailModal')?.remove()">✖️</button>
-                    </div>
-                    <div style="padding:1rem 1.2rem;display:grid;gap:0.8rem;">
-                        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-                            <span class="badge ${badge}">${String(log.level || 'INFO').toUpperCase()}</span>
-                            <span style="font-size:0.82rem;color:var(--muted-foreground);">${escHtml(log.component || 'system')}</span>
-                            <span style="font-size:0.82rem;color:var(--muted-foreground);">${log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</span>
-                        </div>
-                        <div style="font-size:0.98rem;font-weight:600;line-height:1.5;">${escHtml(log.message || '')}</div>
-                        <div style="padding:0.9rem;border-radius:12px;border:1px solid rgba(45,212,191,0.12);background:rgba(8,16,27,0.92);white-space:pre-wrap;word-break:break-word;font-size:0.9rem;line-height:1.55;">${escHtml(detailsText)}</div>
-                        <div style="display:flex;justify-content:flex-end;gap:0.5rem;flex-wrap:wrap;">
-                            ${scanId ? `<button class="btn btn-cyber btn-sm" onclick="document.getElementById('logDetailModal')?.remove(); viewScanDetail('${scanId}')">Open Scan</button>` : ''}
-                            <button class="btn btn-outline btn-sm" onclick="document.getElementById('logDetailModal')?.remove()">Close</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
+            showToast('Log details opened in alert dialog', 'info');
+            window.alert(message);
         }
 
         function initLogStream() {
@@ -8823,286 +8337,35 @@ const isThreat = isThreatResult(result);
         }
 
         async function generateReportForScan(scanId) {
-            try {
-                const scanContext = latestScanHistory.find((entry) => String(entry?.scan_id || entry?.scanId || '') === String(scanId)) || {};
-                const payload = {
-                    scan_id: scanId,
-                    target: scanContext.target || scanContext.target_name || scanContext.ip || scanContext.url || scanContext.hash || String(scanId),
-                    type: scanContext.type || scanContext.target_type || 'scan',
-                    timeRange: '24h',
-                    report_type: selectedReportType,
-                    intervals: ['24h', '7d', '30d'],
-                };
+    try {
+        const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                scan_id: scanId
+            })
+        });
 
-                const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!res.ok) {
-                    let detail = '';
-                    try {
-                        const errData = await res.json();
-                        detail = errData?.detail || errData?.error || '';
-                    } catch (_) {
-                        detail = '';
-                    }
-                    throw new Error(detail || `HTTP ${res.status}`);
-                }
-
-                const contentType = String(res.headers.get('content-type') || '').toLowerCase();
-                if (contentType.includes('application/pdf')) {
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `scan_${scanId}_report_${Date.now()}.pdf`;
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    URL.revokeObjectURL(url);
-                    showToast('Scan report generated', 'success');
-                    return;
-                }
-
-                if (contentType.includes('application/json')) {
-                    const data = await res.json();
-                    if (data.report_id) {
-                        const url = `${API_BASE_URL}/api/v1/reports/download/${data.report_id}`;
-                        window.open(url, '_blank');
-                        showToast('Scan report ready for download', 'success');
-                        return;
-                    }
-
-                    if (data.report_url) {
-                        window.open(data.report_url, '_blank');
-                        showToast('Scan report ready for download', 'success');
-                        return;
-                    }
-
-                    const text = JSON.stringify(data, null, 2);
-                    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `scan_${scanId}_report_${Date.now()}.json`;
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    URL.revokeObjectURL(url);
-                    showToast('Scan report generated (JSON)', 'success');
-                    return;
-                }
-
-                const fallbackText = await res.text();
-                if (fallbackText) {
-                    const blob = new Blob([fallbackText], { type: 'text/plain;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `scan_${scanId}_report_${Date.now()}.txt`;
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    URL.revokeObjectURL(url);
-                }
-
-                showToast('Scan report generated', 'success');
-            } catch (error) {
-                console.error('Report generation error:', error);
-                showToast('Failed to generate report: ' + error.message, 'error');
-            }
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
         }
 
-        // =============================================
-        // INITIALIZATION - Load data immediately on page load
-        // =============================================
-        (function initializeDashboard() {
-            try {
-                // Load user settings from localStorage
-                loadSettings();
-                applyLayoutMode(dashboardSettings.layoutMode);
-                loadUIState();
-                applyPanelState();
-                applyPageSectionState();
-                
-                console.log('🚀 Dashboard initialization started...');
-                console.log('📋 Settings loaded:', dashboardSettings);
-                
-                // =============================================
-                // SETUP EVENT LISTENERS
-                // =============================================
-                
-                // Setup navigation button click handlers
-                document.querySelectorAll('.nav-btn').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        const page = btn.dataset.page;
-                        if (page) switchPage(page);
-                    });
-                });
-                console.log('✓ Navigation buttons initialized');
-                
-                // Setup search input
-                const searchInput = document.getElementById('dashboardSearchInput');
-                if (searchInput) {
-                    searchInput.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter') {
-                            currentSearchQuery = searchInput.value.trim();
-                            const activePage = uiState.activePage || 'dashboard';
-                             applyDashboardSearch(currentSearchQuery);
-                            if (activePage === 'threats') applyDashboardSearch();
-                            if (activePage === 'scans') applyDashboardSearch();
-                        }
-                    });
-                }
-                console.log('✓ Search input initialized');
-                
-                // Setup notification dropdown
-                const notificationBtn = document.getElementById('notificationBtn');
-                const notificationDropdown = document.getElementById('notificationDropdown');
-                if (notificationBtn && notificationDropdown) {
-                    notificationBtn.addEventListener('click', () => {
-                        const isVisible = notificationDropdown.style.display === 'flex';
-                        notificationDropdown.style.display = isVisible ? 'none' : 'flex';
-                        if (!isVisible && typeof renderNotifications === 'function') {
-                            renderNotifications();
-                        }
-                    });
-                }
-                console.log('✓ Notification button initialized');
+        const data = await res.json();
 
-                const scanBtn = document.getElementById('scanBtn');
-                if (scanBtn) scanBtn.addEventListener('click', performScan);
+        if (data.report_id) {
+            const url = `${API_BASE_URL}/api/v1/reports/download/${data.report_id}`;
+            window.open(url, '_blank');
+        } else {
+            alert('Report generated but no download link returned');
+        }
 
-                const newScanBtn = document.getElementById('newScanBtn');
-                if (newScanBtn) newScanBtn.addEventListener('click', performScan);
-
-                const newScanInput = document.getElementById('newScanInput');
-                if (newScanInput) {
-                    newScanInput.addEventListener('input', () => {
-                        const inferred = inferScanTypeFromTarget(newScanInput.value);
-                        newScanInput.dataset.detectedScanType = inferred;
-                        setScanType(inferred);
-                    });
-                    newScanInput.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            performScan();
-                        }
-                    });
-                }
-
-                document.querySelectorAll('[data-scan-type]').forEach((card) => {
-                    card.addEventListener('click', () => {
-                        setScanType(card.getAttribute('data-scan-type'));
-                    });
-                });
-
-                document.querySelectorAll('.report-type-btn').forEach((btn) => {
-                    btn.addEventListener('click', () => setReportType(btn.getAttribute('data-report-type')));
-                });
-
-                const generateReportBtn = document.getElementById('generateReportBtn');
-                if (generateReportBtn) generateReportBtn.addEventListener('click', generateReport);
-
-                const viewAllReportsBtn = document.getElementById('viewAllReportsBtn');
-                if (viewAllReportsBtn) viewAllReportsBtn.addEventListener('click', viewAllReports);
-
-                const viewAllThreatsBtn = document.getElementById('viewAllThreatsBtn');
-                if (viewAllThreatsBtn) viewAllThreatsBtn.addEventListener('click', viewAllThreats);
-
-                const viewAllQuarantineBtn = document.getElementById('viewAllQuarantineBtn');
-                if (viewAllQuarantineBtn) viewAllQuarantineBtn.addEventListener('click', viewAllQuarantine);
-
-                const uploadScanBtn = document.getElementById('uploadScanBtn');
-                if (uploadScanBtn) {
-                    uploadScanBtn.addEventListener('click', async () => {
-                        const fileInput = document.getElementById('fileUploadInput');
-                        await scanUploadedFile(fileInput?.files?.[0] || null);
-                    });
-                }
-
-                const folderScanBtn = document.getElementById('folderScanBtn');
-                if (folderScanBtn) {
-                    folderScanBtn.addEventListener('click', async () => {
-                        const folderInput = document.getElementById('folderUploadInput');
-                        await scanSelectedFolder(folderInput?.files || []);
-                    });
-                }
-                
-                // Setup settings button
-                const settingsBtn = document.getElementById('settingsBtn');
-                if (settingsBtn) {
-                    settingsBtn.addEventListener('click', toggleSettings);
-                }
-                console.log('✓ Settings button initialized');
-
-                // Setup panel toggle buttons
-                const toggleBindings = [
-                    { id: 'toggleRecentThreatsBtn', fn: toggleRecentThreatsPanel },
-                    { id: 'toggleRecentLogsBtn', fn: toggleRecentLogsPanel },
-                    { id: 'toggleQuarantineBtn', fn: toggleQuarantinePanel },
-                    { id: 'toggleLiveActivityBtn', fn: toggleLiveActivityPanel },
-                    { id: 'toggleScansHistoryBtn', fn: toggleScansHistoryPanel },
-                    { id: 'toggleThreatsPageBtn', fn: toggleThreatsPagePanel },
-                    { id: 'toggleReportsPageBtn', fn: toggleReportsPagePanel },
-                ];
-
-                toggleBindings.forEach(binding => {
-                    const btn = document.getElementById(binding.id);
-                    if (btn) {
-                        btn.addEventListener('click', binding.fn);
-                    }
-                });
-                console.log('✓ Panel toggle buttons initialized');
-                
-                // Perform initial data loads immediately
-                Promise.allSettled([
-                    fetchDashboardStats(),
-                    fetchThreats(),
-                    fetchLogs(),
-                    fetchApiStatus(),
-                    fetchSystemHealth(),
-                    fetchMonitoringStats(),
-                    fetchSecurityPosture(),
-                    fetchAuditTelemetry(),
-                    fetchAllReports(),
-                ]).then(() => {
-                    console.log('✅ Initial data load complete');
-                    // Render the initial page
-                    const initialPage = uiState.activePage || 'dashboard';
-                    switchPage(initialPage);
-                    setReportType(uiState.selectedReportType || 'executive_summary');
-                    setScanType(uiState.selectedScanType || 'ip');
-                    renderRecentReports();
-                }).catch(err => {
-                    console.error('⚠️ Initial data load had errors:', err);
-                });
-                
-                // Set up automatic refresh timer for background updates
-                setupRefreshScheduler();
-                
-                // Render initial UI state
-                renderLiveSignalStrip();
-                
-                // Handle visibility changes
-                document.addEventListener('visibilitychange', () => {
-                    isPageVisible = !document.hidden;
-                    if (isPageVisible) {
-                        setupRefreshScheduler();
-                    } else {
-                        if (refreshTimer) clearInterval(refreshTimer);
-                    }
-                });
-                
-                console.log('✨ Dashboard initialization complete - ready for interaction');
-            } catch (error) {
-                console.error('❌ Dashboard initialization failed:', error);
-            }
-        })();
+    } catch (error) {
+        console.error('Report generation error:', error);
+        alert('Failed to generate report: ' + error.message);
+    }
+}
 </script>
 
 <!-- Auto-added safe placeholders to prevent null DOM errors -->
@@ -9118,6 +8381,173 @@ const isThreat = isThreatResult(result);
 
 
 
+<script id="final-api-status-hotfix">
+(function () {
+  const API_STATUS_ENDPOINT = '/api/v1/dashboard/api-status';
+
+  function $(id) { return document.getElementById(id); }
+
+  function normalizeServices(payload) {
+    const services = Array.isArray(payload?.services) ? payload.services : [];
+    return services.map((svc) => {
+      const raw = String(svc?.status || '').toLowerCase();
+      const online = ['ready', 'configured', 'healthy', 'active', 'online', 'live'].includes(raw)
+        && (svc?.enabled !== false)
+        && (svc?.key_configured !== false);
+      return {
+        name: svc?.name || 'Unknown',
+        online,
+        configured: (svc?.key_configured !== false),
+        enabled: (svc?.enabled !== false),
+        status: raw || 'unknown',
+        rateLimit: svc?.rate_limit || 'N/A',
+        supportedInputs: Array.isArray(svc?.supported_inputs) ? svc.supported_inputs : []
+      };
+    });
+  }
+
+  function patchApiCards(services, payload) {
+    const ready = Number(payload?.ready_count ?? services.filter(s => s.online).length);
+    const configured = Number(payload?.configured_count ?? services.filter(s => s.configured).length);
+    const total = Number(services.length);
+
+    const top = $('statusApisValue');
+    if (top) top.textContent = `${ready}/${total} Online`;
+
+    const summary = $('apiConnectionSummary');
+    if (summary) summary.textContent = `${ready}/${total} APIs Online · ${configured}/${total} Configured`;
+
+    const readyEl = $('readyApiCount');
+    const totalEl = $('apiTotalCount');
+    const onlineEl = $('apiOnlineCount');
+    const configuredEl = $('configuredApiCount');
+
+    if (readyEl) readyEl.textContent = String(ready);
+    if (onlineEl) onlineEl.textContent = String(ready);
+    if (configuredEl) configuredEl.textContent = String(configured);
+    if (totalEl) totalEl.textContent = String(total);
+
+    if (Array.isArray(window.apis)) {
+      window.apis.length = 0;
+      services.forEach(s => {
+        const prev = apis.find(a => a.name === s.name) || {};
+        window.apis.push({
+          name: s.name,
+          icon: prev.icon || '🔗',
+          description: prev.description || 'Live API status',
+          status: s.online ? 'online' : 'offline',
+          live: s.online,
+          is_live: s.online,
+          configured: s.configured,
+          key_configured: s.configured,
+          enabled: s.enabled,
+          rate_limit: s.rateLimit,
+          supported_inputs: s.supportedInputs,
+          queriesUsed: prev.queriesUsed ?? prev.dailyUsed ?? 0,
+          queriesLimit: prev.queriesLimit ?? prev.dailyLimit ?? 1,
+          dailyUsed: prev.dailyUsed ?? prev.queriesUsed ?? 0,
+          dailyLimit: prev.dailyLimit ?? prev.queriesLimit ?? 1,
+          minuteUsed: prev.minuteUsed ?? 0,
+          ratePerMinute: prev.ratePerMinute ?? 0,
+          lastCheck: 'Just now'
+        });
+      });
+    }
+
+    if (typeof window.renderAPIs === 'function') {
+      try { window.renderAPIs(); } catch (e) { console.warn('renderAPIs hotfix failed:', e); }
+    }
+
+    if (typeof window.updateSourceSignal === 'function') {
+      try { window.updateSourceSignal('apis', { ok: true, dataTimestamp: Date.now() }); } catch (_) {}
+    }
+
+    console.log(`✅ Updated statusApisValue to: ${ready}/${total} Online`);
+  }
+
+  const originalFetchApiStatus = window.fetchApiStatus;
+  const originalFetchAllReports = window.fetchAllReports;
+
+  window.fetchApiStatus = async function fetchApiStatusFixed() {
+    if (typeof originalFetchApiStatus === 'function') {
+      return originalFetchApiStatus();
+    }
+    try {
+      const resp = await fetch(API_STATUS_ENDPOINT, { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const payload = await resp.json();
+      const services = normalizeServices(payload);
+      window.latestApiStatus = payload;
+      patchApiCards(services, payload);
+      if (typeof window.updateSystemStatusPanel === 'function') {
+        try { window.updateSystemStatusPanel(); } catch (_) {}
+      }
+      return payload;
+    } catch (error) {
+      console.warn('API status fetch failed:', error);
+      const top = $('statusApisValue');
+      if (top) top.textContent = '0/0 Offline';
+      return null;
+    }
+  };
+
+  // Reports 404 should be non-fatal
+  window.fetchAllReports = async function fetchAllReportsFixed() {
+    if (typeof originalFetchAllReports === 'function') {
+      return originalFetchAllReports();
+    }
+
+    let localReports = [];
+    try {
+      if (typeof window.loadLocalReportsCache === 'function') {
+        localReports = window.loadLocalReportsCache() || [];
+      }
+    } catch (_) {}
+
+    try {
+      if (typeof window.renderReports === 'function') {
+        window.renderReports(localReports);
+      }
+    } catch (e) {
+      console.warn('renderReports failed:', e);
+    }
+
+    console.warn('Reports endpoint unavailable; using local cache only.');
+    window.allReports = localReports;
+    return localReports;
+  };
+
+  // Old onclick compatibility
+  window.dashboard = window.dashboard || {};
+  if (typeof window.dashboard.filterByStatus !== 'function') {
+    window.dashboard.filterByStatus = function(status) {
+      if (typeof window.filterThreats === 'function') return window.filterThreats(status);
+      if (typeof window.applyDashboardSearch === 'function') return window.applyDashboardSearch(status || '');
+      return null;
+    };
+  }
+
+  // Silence selector warning cause by invalid dynamic selectors in older code
+  const originalQuerySelector = Document.prototype.querySelector;
+  Document.prototype.querySelector = function(sel) {
+    try { return originalQuerySelector.call(this, sel); }
+    catch (e) {
+      if (String(e).toLowerCase().includes('selector')) {
+        console.warn('Ignored invalid selector:', sel);
+        return null;
+      }
+      throw e;
+    }
+  };
+
+  window.addEventListener('load', () => {
+    setTimeout(() => { try { window.fetchApiStatus(); } catch (_) {} }, 0);
+    setTimeout(() => { try { window.fetchApiStatus(); } catch (_) {} }, 200);
+    setTimeout(() => { try { window.fetchApiStatus(); } catch (_) {} }, 1200);
+    setTimeout(() => { try { window.fetchAllReports(); } catch (_) {} }, 400);
+  });
+})();
+</script>
 
 
 
@@ -9126,7 +8556,124 @@ const isThreat = isThreatResult(result);
 
 
 
+<script id="demo-final-fix">
+(function () {
+  function $(id) { return document.getElementById(id); }
 
+  function safeText(id, value) {
+    const el = $(id);
+    if (el) el.textContent = value;
+  }
+
+  function normalizeServices(payload) {
+    const services = Array.isArray(payload && payload.services) ? payload.services : [];
+    return services.map((svc) => {
+      const raw = String((svc && svc.status) || '').toLowerCase();
+      const online = (svc && svc.enabled !== false && svc.key_configured !== false &&
+        ['online','ready','configured','healthy','live','active'].includes(raw));
+      return {
+        name: (svc && svc.name) || 'Unknown',
+        status: online ? 'online' : 'offline',
+        online,
+        enabled: svc && svc.enabled !== false,
+        key_configured: svc && svc.key_configured !== false,
+        rate_limit: (svc && svc.rate_limit) || 'N/A',
+        supported_inputs: Array.isArray(svc && svc.supported_inputs) ? svc.supported_inputs : []
+      };
+    });
+  }
+
+  async function refreshApiCards() {
+    try {
+      const r = await fetch('/api/v1/dashboard/api-status', { credentials: 'same-origin', cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const payload = await r.json();
+      const services = normalizeServices(payload);
+
+      const total = services.length || 5;
+      const ready = Number(payload.ready_count ?? services.filter(x => x.online).length);
+      const configured = Number(payload.configured_count ?? services.filter(x => x.key_configured).length);
+
+      safeText('statusApisValue', `${ready}/${total} Online`);
+      safeText('apiConnectionSummary', `${ready}/${total} APIs Online · ${configured}/${total} Configured`);
+      safeText('readyApiCount', String(ready));
+      safeText('apiOnlineCount', String(ready));
+      safeText('configuredApiCount', String(configured));
+      safeText('apiTotalCount', String(total));
+
+      const cards = document.querySelectorAll('.api-card, .intel-api-card, [data-api-name]');
+      cards.forEach((card) => {
+        const text = (card.innerText || '').toLowerCase();
+        const svc = services.find(s => text.includes((s.name || '').toLowerCase()));
+        if (!svc) return;
+
+        card.classList.remove('offline', 'loading');
+        card.classList.add(svc.online ? 'online' : 'offline');
+
+        const nodes = card.querySelectorAll('*');
+        nodes.forEach((n) => {
+          if ((n.textContent || '').trim() === 'LOADING') n.textContent = svc.online ? 'ONLINE' : 'OFFLINE';
+          if ((n.textContent || '').includes('Live Status')) n.textContent = `Live Status ${svc.online ? 'ONLINE' : 'OFFLINE'}`;
+          if ((n.textContent || '').includes('Last check')) n.textContent = 'Last check Just now';
+        });
+      });
+
+      return payload;
+    } catch (e) {
+      console.error('refreshApiCards failed:', e);
+      return null;
+    }
+  }
+
+  async function refreshReports() {
+    try {
+      const r = await fetch('/api/v1/reports/', { credentials: 'same-origin', cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const payload = await r.json();
+      const reports = Array.isArray(payload) ? payload : (Array.isArray(payload.reports) ? payload.reports : []);
+      window.allReports = reports;
+
+      if (typeof window.renderRecentReports === 'function') {
+        try { window.renderRecentReports(); } catch (_) {}
+      }
+      if (typeof window.renderAllReportsPage === 'function') {
+        try { window.renderAllReportsPage(); } catch (_) {}
+      }
+      return reports;
+    } catch (e) {
+      console.warn('Reports fetch failed:', e);
+      window.allReports = [];
+      return [];
+    }
+  }
+
+  window.dashboard = window.dashboard || {};
+  window.dashboard.filterByStatus = function(status) {
+    if (typeof window.filterThreats === 'function') return window.filterThreats(status);
+
+    const rows = document.querySelectorAll('#threatsTableBody tr');
+    rows.forEach((row) => {
+      const sev = String(row.getAttribute('data-severity') || '').toLowerCase();
+      let show = false;
+      if (status === 'all') show = true;
+      else if (status === 'critical') show = sev.includes('critical');
+      else if (status === 'high') show = sev.includes('high') || sev.includes('medium');
+      else if (status === 'low' || status === 'clean') show = sev.includes('low') || sev.includes('clean');
+      else if (status === 'firewall' || status === 'monitor') show = true;
+      row.style.display = show ? '' : 'none';
+    });
+  };
+  window.filterByStatus = window.dashboard.filterByStatus;
+  window.fetchAllReports = refreshReports;
+  window.fetchApiStatus = refreshApiCards;
+
+  window.addEventListener('load', function () {
+    setTimeout(refreshApiCards, 100);
+    setTimeout(refreshApiCards, 800);
+    setTimeout(refreshReports, 500);
+  });
+})();
+</script>
 
 </body>
 

@@ -206,6 +206,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -266,6 +267,37 @@ def _activity_db():
         return activity_db
     except Exception:
         return None
+
+
+def _api_capacity_profile(api_key: str) -> dict:
+    defaults = {
+        "virustotal": {
+            "daily_limit": int(os.getenv("SENTINEL_VIRUSTOTAL_DAILY_LIMIT", "500") or 500),
+            "rate_limit_per_minute": int(os.getenv("SENTINEL_VIRUSTOTAL_RPM", "4") or 4),
+        },
+        "abuseipdb": {
+            "daily_limit": int(os.getenv("SENTINEL_ABUSEIPDB_DAILY_LIMIT", "1000") or 1000),
+            "rate_limit_per_minute": int(os.getenv("SENTINEL_ABUSEIPDB_RPM", "60") or 60),
+        },
+        "shodan": {
+            "daily_limit": int(os.getenv("SENTINEL_SHODAN_DAILY_LIMIT", "100") or 100),
+            "rate_limit_per_minute": int(os.getenv("SENTINEL_SHODAN_RPM", "1") or 1),
+        },
+        "urlscan": {
+            "daily_limit": int(os.getenv("SENTINEL_URLSCAN_DAILY_LIMIT", "100") or 100),
+            "rate_limit_per_minute": int(os.getenv("SENTINEL_URLSCAN_RPM", "1") or 1),
+        },
+        "hybrid_analysis": {
+            "daily_limit": int(os.getenv("SENTINEL_HYBRID_DAILY_LIMIT", "200") or 200),
+            "rate_limit_per_minute": int(os.getenv("SENTINEL_HYBRID_RPM", "4") or 4),
+        },
+    }
+    profile = defaults.get(api_key, {"daily_limit": 0, "rate_limit_per_minute": 0})
+    return {
+        "daily_limit": max(0, int(profile.get("daily_limit", 0) or 0)),
+        "rate_limit_per_minute": max(0, int(profile.get("rate_limit_per_minute", 0) or 0)),
+        "capacity_source": "sentinel_profile",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +635,130 @@ async def get_monitoring_stats(
     except Exception as exc:
         logger.error("monitoring-stats error: %s", exc)
         return {"available": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# /api-status  — external API configuration and usage statistics
+# ---------------------------------------------------------------------------
+
+@router.get("/api-status")
+async def get_api_status(
+    time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get status and usage of all configured external threat intelligence APIs."""
+    from ....core.threat_analyzer import ALL_EXTERNAL_APIS
+    from ....core.security_telemetry import security_telemetry
+
+    def _norm(value: str) -> str:
+        return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+    hours = _hours_from_range(time_range)
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Query recent scans to get API usage
+    result = await db.execute(
+        select(ScanHistory)
+        .where(
+            and_(
+                ScanHistory.scan_timestamp >= threshold,
+                ScanHistory.scan_source.in_(["manual", None]),
+            )
+        )
+        .order_by(desc(ScanHistory.scan_timestamp))
+    )
+    scans = result.scalars().all()
+
+    api_status_map = {}
+    api_usage = defaultdict(int)
+
+    key_aliases = {}
+    for spec in ALL_EXTERNAL_APIS:
+        key = str(spec.get("key") or "")
+        name = str(spec.get("name") or key)
+        key_aliases[_norm(key)] = key
+        key_aliases[_norm(name)] = key
+
+    # Collect API usage from scans
+    for scan in scans:
+        analysis = scan.analysis_data or {}
+        api_results = analysis.get("api_results") or {}
+        api_status_dict = api_results.get("api_status") or {}
+        apis_called = api_results.get("apis_called") or []
+
+        for api_name in apis_called:
+            mapped_key = key_aliases.get(_norm(api_name), str(api_name or "").strip().lower())
+            api_usage[mapped_key] += 1
+
+        for key, meta in api_status_dict.items():
+            if isinstance(meta, dict):
+                mapped_key = key_aliases.get(_norm(key), str(key or "").strip().lower())
+                api_status_map[mapped_key] = meta
+
+    # Build response with all external APIs
+    apis = []
+    for api_spec in ALL_EXTERNAL_APIS:
+        key = api_spec.get("key")
+        name = api_spec.get("name", key)
+        meta = api_status_map.get(key, {})
+        capacity = _api_capacity_profile(key)
+
+        # Check if API is configured by checking settings directly
+        config_attr = api_spec.get("config_attr")
+        is_configured = False
+        if config_attr:
+            try:
+                from ....config import settings
+                api_key = getattr(settings, config_attr, "")
+                is_configured = bool(api_key.strip())
+            except Exception:
+                is_configured = False
+
+        telemetry_daily = 0
+        telemetry_minute = 0
+        try:
+            telemetry_daily = int(security_telemetry.api_usage_count(key, window_hours=24) or 0)
+            telemetry_minute = int(security_telemetry.api_usage_count(key, window_minutes=1) or 0)
+        except Exception:
+            telemetry_daily = 0
+            telemetry_minute = 0
+
+        usage_24h = max(int(api_usage.get(key, 0) or 0), telemetry_daily)
+
+        api_dict = {
+            "key": key,
+            "name": name,
+            "configured": is_configured,  # Use direct settings check
+            "status": meta.get("status", "unknown"),
+            "online": meta.get("status") in ["online", "available", "checked"],
+            "usage_24h": usage_24h,
+            "daily_used": usage_24h,
+            "daily_limit": capacity["daily_limit"],
+            "minute_used": telemetry_minute,
+            "rate_limit_per_minute": capacity["rate_limit_per_minute"],
+            "capacity_source": capacity["capacity_source"],
+            "supported_inputs": api_spec.get("supported_inputs", []),
+            "error": meta.get("error"),
+            "last_checked": datetime.utcnow().isoformat() + "Z",
+        }
+        apis.append(api_dict)
+
+    # Count totals
+    total_configured = sum(1 for a in apis if a["configured"])
+    total_online = sum(1 for a in apis if a["online"])
+    total_calls = sum(a["usage_24h"] for a in apis)
+
+    return {
+        "time_range": _label(time_range),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "summary": {
+            "total_apis": len(apis),
+            "configured": total_configured,
+            "online": total_online,
+            "total_calls_in_period": total_calls,
+        },
+        "apis": apis,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1033,71 +1189,6 @@ async def get_dashboard_logs(
         }
         for log in logs
     ]
-
-
-# ---------------------------------------------------------------------------
-# /api-status
-# ---------------------------------------------------------------------------
-
-@router.get("/api-status")
-async def get_api_status():
-    """External service key configuration and quota status."""
-    vt_quota_ok = True
-    try:
-        from ....services.virus_total import _vt_in_quota_cooldown
-        vt_quota_ok = not _vt_in_quota_cooldown()
-    except Exception:
-        pass
-
-    services = [
-        {
-            "name": "VirusTotal",
-            "key_configured": bool(settings.VIRUSTOTAL_API_KEY),
-            "enabled": bool(settings.VIRUSTOTAL_API_KEY),
-            "status": ("quota_cooldown" if not vt_quota_ok and settings.VIRUSTOTAL_API_KEY
-                       else ("ready" if settings.VIRUSTOTAL_API_KEY else "missing_key")),
-            "rate_limit": "4/min (free tier)",
-            "supported_inputs": ["url", "domain", "file_hash"],
-        },
-        {
-            "name": "AbuseIPDB",
-            "key_configured": bool(settings.ABUSEIPDB_API_KEY),
-            "enabled": bool(settings.ABUSEIPDB_API_KEY),
-            "status": "ready" if settings.ABUSEIPDB_API_KEY else "missing_key",
-            "rate_limit": "20/min",
-            "supported_inputs": ["ip"],
-        },
-        {
-            "name": "Shodan",
-            "key_configured": bool(settings.SHODAN_API_KEY),
-            "enabled": bool(settings.SHODAN_API_KEY),
-            "status": "ready" if settings.SHODAN_API_KEY else "missing_key",
-            "rate_limit": "10/min",
-            "supported_inputs": ["ip"],
-        },
-        {
-            "name": "URLScan.io",
-            "key_configured": bool(settings.URLSCAN_API_KEY),
-            "enabled": bool(settings.URLSCAN_API_KEY),
-            "status": "ready" if settings.URLSCAN_API_KEY else "missing_key",
-            "rate_limit": "15/min",
-            "supported_inputs": ["url", "domain"],
-        },
-        {
-            "name": "Hybrid Analysis",
-            "key_configured": bool(settings.HYBRIDANALYSIS_API_KEY),
-            "enabled": bool(settings.HYBRIDANALYSIS_API_KEY),
-            "status": "ready" if settings.HYBRIDANALYSIS_API_KEY else "missing_key",
-            "rate_limit": "3/min",
-            "supported_inputs": ["file_hash"],
-        },
-    ]
-    return {
-        "external_apis_enabled": settings.EXTERNAL_APIS_ENABLED,
-        "services": services,
-        "configured_count": sum(1 for s in services if s["key_configured"]),
-        "ready_count": sum(1 for s in services if s["status"] == "ready"),
-    }
 
 
 # ---------------------------------------------------------------------------

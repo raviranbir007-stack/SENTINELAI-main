@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Enhanced File Scanner
 Full malware detection engine with:
@@ -23,7 +24,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 logger = logging.getLogger("FileScanner")
 
@@ -34,6 +35,10 @@ try:
     import yara
     PE_ANALYSIS_AVAILABLE = True
 except ImportError:
+    pefile = None
+    lief = None
+    capstone = None
+    yara = None
     PE_ANALYSIS_AVAILABLE = False
 
 # Try to import ML libraries separately
@@ -170,7 +175,9 @@ class FileScanner:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
             c = conn.cursor()
             c.execute("""
                 CREATE TABLE IF NOT EXISTS file_scan_results (
@@ -522,7 +529,7 @@ class FileScanner:
         except Exception:
             return None
 
-    def _analyse_pe_binary(self, binary: lief.PE.Binary) -> Dict:
+    def _analyse_pe_binary(self, binary: Any) -> Dict:
         """Analyze PE binary"""
         pe_info = {
             "format": "PE",
@@ -633,7 +640,7 @@ class FileScanner:
         
         return pe_info
 
-    def _analyse_elf_binary(self, binary: lief.ELF.Binary) -> Dict:
+    def _analyse_elf_binary(self, binary: Any) -> Dict:
         """Analyze ELF binary"""
         elf_info = {
             "format": "ELF",

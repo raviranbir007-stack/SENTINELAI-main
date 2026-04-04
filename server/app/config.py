@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional
+from pathlib import Path
 
 try:
     from pydantic_settings import BaseSettings
@@ -14,14 +15,28 @@ except Exception:
 
 # Always load .env from project root (not .env.example)
 from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv('.env', raise_error_if_not_found=False))
+
+# Calculate absolute path to project root (parent of parent of this file's parent)
+# This file is at: /path/to/SENTINELAI-main/server/app/config.py
+# Project root is: /path/to/SENTINELAI-main
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # Go up 3 levels from config.py
+ENV_FILE = PROJECT_ROOT / ".env"
+
+# Load .env with absolute path (works regardless of working directory)
+if ENV_FILE.exists():
+    load_dotenv(str(ENV_FILE))
+else:
+    # Fallback: try to find .env using find_dotenv
+    env_path = find_dotenv('.env', raise_error_if_not_found=False)
+    if env_path:
+        load_dotenv(env_path)
 
 
 class Settings(BaseSettings):
     # SentinelAI Client Master Password and Admin Email
     MASTER_CLIENT_PASSWORD: str = os.getenv("MASTER_CLIENT_PASSWORD", "changeme-please")
     ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "your-admin@email.com")
-    model_config = ConfigDict(env_file=".env", extra="ignore")
+    model_config = ConfigDict(env_file=str(ENV_FILE), extra="ignore")
     # Project metadata
     PROJECT_NAME: str = "SENTINEL-AI"
     VERSION: str = "1.0.0"
@@ -134,5 +149,16 @@ class Settings(BaseSettings):
         return [h.strip() for h in self.ADMIN_INFRA_IPS.replace(";", ",").split(",") if h.strip()]
 
 
-
+# Create settings instance with validation logging
 settings = Settings()
+
+# Debug: log API key configuration status
+import logging
+_config_logger = logging.getLogger(__name__)
+_config_logger.debug(f"🔑 Settings loaded from {ENV_FILE}")
+_config_logger.debug(f"VIRUSTOTAL_API_KEY configured: {bool(settings.VIRUSTOTAL_API_KEY)}")
+_config_logger.debug(f"ABUSEIPDB_API_KEY configured: {bool(settings.ABUSEIPDB_API_KEY)}")
+_config_logger.debug(f"SHODAN_API_KEY configured: {bool(settings.SHODAN_API_KEY)}")
+_config_logger.debug(f"HYBRIDANALYSIS_API_KEY configured: {bool(settings.HYBRIDANALYSIS_API_KEY)}")
+_config_logger.debug(f"URLSCAN_API_KEY configured: {bool(settings.URLSCAN_API_KEY)}")
+_config_logger.debug(f"EXTERNAL_APIS_ENABLED: {settings.EXTERNAL_APIS_ENABLED}")

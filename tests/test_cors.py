@@ -2,6 +2,9 @@
 """
 Test script to verify CORS OPTIONS requests work properly.
 """
+# Utility script (not a pytest test module)
+__test__ = False
+
 import json
 import time
 import urllib.request

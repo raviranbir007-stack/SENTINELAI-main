@@ -42,7 +42,10 @@ class EnhancedSecurityTelemetryStore:
         self._circuit_states: Dict[str, Dict] = {}
 
     def _connect(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
 
     def _init_schema(self):
         conn = self._connect()
@@ -456,7 +459,10 @@ class EnhancedSecurityTelemetryStore:
         self._init_schema()
 
     def _connect(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
 
     def _init_schema(self):
         conn = self._connect()
@@ -618,8 +624,12 @@ class EnhancedSecurityTelemetryStore:
         score -= latency_penalty
         return max(0.0, min(1.0, score))
 
-    def api_usage_count(self, api_name: str, window_hours: int = 24) -> int:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    def api_usage_count(self, api_name: str, window_hours: int = 24, window_minutes: Optional[int] = None) -> int:
+        if window_minutes is not None:
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(minutes=max(1, int(window_minutes)))
+        else:
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=max(1, int(window_hours)))
+        cutoff = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
         conn = self._connect()
         cur = conn.cursor()
         cur.execute(
