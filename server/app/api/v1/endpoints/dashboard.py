@@ -230,6 +230,7 @@ logger = logging.getLogger(__name__)
 STARTUP_REPORT_PATH = Path.home() / ".sentinelai_startup_assessment.json"
 QUARANTINE_INDEX_PATH = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
 HEALTH_OVERRIDE_PATH = Path.home() / ".sentinelai_health_override.json"
+SECURITY_EVENT_LOG_PATH = Path(__file__).resolve().parents[5] / "logs" / "security_events.log"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -258,6 +259,84 @@ def _map_severity(threat_level: str) -> str:
     if level in ("safe", "clean", "low"):
         return "low"
     return "medium"
+
+
+def _parse_utc_timestamp(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    return None
+
+
+def _load_security_summary_logs(since=None):
+    if not SECURITY_EVENT_LOG_PATH.exists():
+        return []
+
+    since_ts = _parse_utc_timestamp(since)
+    records = []
+    try:
+        with SECURITY_EVENT_LOG_PATH.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.debug("Skipping malformed security event line %s", line_number)
+                    continue
+
+                if entry.get("event_type") != "security_summary":
+                    continue
+
+                timestamp = _parse_utc_timestamp(entry.get("timestamp"))
+                if since_ts and timestamp and timestamp <= since_ts:
+                    continue
+
+                details = entry.get("details") or {}
+                records.append(
+                    {
+                        "id": f"security-summary-{line_number}",
+                        "level": "WARNING",
+                        "component": "security_summary",
+                        "message": "Hourly security summary",
+                        "details": details,
+                        "timestamp": timestamp.isoformat() + "Z" if timestamp else entry.get("timestamp"),
+                        "event_type": "security_summary",
+                        "client_ip": entry.get("client_ip"),
+                        "path": entry.get("path"),
+                        "method": entry.get("method"),
+                    }
+                )
+    except Exception:
+        logger.debug("Failed to read security summary log", exc_info=True)
+
+    return records
+
+
+def _serialize_system_log(log):
+    return {
+        "id": log.id,
+        "level": log.log_level,
+        "component": log.component,
+        "message": log.message,
+        "details": log.details,
+        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+    }
+
+
+def _merge_dashboard_logs(system_logs, security_summaries):
+    combined = [_serialize_system_log(log) for log in system_logs]
+    combined.extend(security_summaries)
+    combined.sort(key=lambda item: _parse_utc_timestamp(item.get("timestamp")) or datetime.min, reverse=True)
+    return combined
 
 
 def _activity_db():
@@ -975,7 +1054,7 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
             vm = psutil.virtual_memory()
             runtime = {
                 "available": True,
-                "cpu_percent": float(psutil.cpu_percent(interval=0.15)),
+                "cpu_percent": float(psutil.cpu_percent(interval=None)),
                 "memory_percent": float(vm.percent),
                 "process_count": len(psutil.pids()),
                 "uptime_seconds": max(0.0, float(datetime.utcnow().timestamp() - psutil.boot_time())),
@@ -1178,17 +1257,12 @@ async def get_dashboard_logs(
         query = query.where(SystemLog.component == component.lower())
     result = await db.execute(query)
     logs = result.scalars().all()
-    return [
-        {
-            "id": log.id,
-            "level": log.log_level,
-            "component": log.component,
-            "message": log.message,
-            "details": log.details,
-            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-        }
-        for log in logs
-    ]
+    security_summaries = _load_security_summary_logs()
+    if level and level.upper() != "WARNING":
+        security_summaries = []
+    if component and component.lower() != "security_summary":
+        security_summaries = []
+    return _merge_dashboard_logs(logs, security_summaries)[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -1435,16 +1509,12 @@ async def stream_logs(db: AsyncSession = Depends(get_db)):
                 .limit(100)
             )
             logs = result.scalars().all()
-            for log in logs:
-                last_ts = log.timestamp or last_ts
-                payload = {
-                    "id": log.id,
-                    "level": log.log_level,
-                    "component": log.component,
-                    "message": log.message,
-                    "details": log.details,
-                    "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-                }
+            security_summaries = _load_security_summary_logs(since=last_ts)
+            merged = _merge_dashboard_logs(logs, security_summaries)
+            for payload in merged:
+                payload_ts = _parse_utc_timestamp(payload.get("timestamp"))
+                if payload_ts and payload_ts > last_ts:
+                    last_ts = payload_ts
                 yield f"data: {json.dumps(payload)}\n\n"
             await asyncio.sleep(2)
 

@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Dict, List, Set, Optional
 import psutil
 
+from .threat_intel import enrich_ip_threat_intel
+
 logger = logging.getLogger("IntrusionDetector")
 
 # Shared quarantine index path — same file read by /dashboard/quarantine-inventory
@@ -213,6 +215,7 @@ class IntrusionDetector:
                 'description': description,
                 'timestamp': ts.isoformat(),
                 'action': 'ip_blocked',
+                'threat_intel': enrich_ip_threat_intel(ip, event_context='ids_ip_block'),
             }
             # Avoid duplicate entries for same IP within the same minute
             already = any(

@@ -36,6 +36,15 @@ try:
 except Exception:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+
+class _SuppressMiddlewareWarnings(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (record.name == "app.middleware" and record.levelno < logging.ERROR)
+
+
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_SuppressMiddlewareWarnings())
+
 # Reduce verbosity of HTTP request logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -524,6 +533,14 @@ app.add_middleware(
 @app.middleware("http")
 async def add_cache_control_headers(request, call_next):
     response = await call_next(request)
+    # Baseline browser-side hardening headers for all responses.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(), usb=()")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+
     # Force no-cache for HTML files, the root path, and frontend assets so clients always fetch the latest dashboard code.
     if (
         request.url.path in ["/", "/index.html"]

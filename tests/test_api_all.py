@@ -44,16 +44,14 @@ def test_health_check():
     print_test("Health Check")
     try:
         response = requests.get(f"{API_BASE_URL}/health", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success(f"Server is healthy: {data}")
-            return True
-        else:
-            print_error(f"Health check failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, (
+            f"Health check failed with status {response.status_code}"
+        )
+        data = response.json()
+        print_success(f"Server is healthy: {data}")
     except Exception as e:
         print_error(f"Error connecting to server: {e}")
-        return False
+        raise
 
 
 def test_threats_24h():
@@ -61,23 +59,19 @@ def test_threats_24h():
     print_test("Get Threats - Last 24 Hours")
     try:
         response = requests.get(f"{API_BASE_URL}/threats?time_range=24h", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success(
-                f"Retrieved {data.get('total_threats', 0)} threats from last 24 hours"
-            )
-            print_info(f"Time range: {data.get('time_range')}")
-            print_info(f"Start date: {data.get('start_date')}")
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(
+            f"Retrieved {data.get('total_threats', 0)} threats from last 24 hours"
+        )
+        print_info(f"Time range: {data.get('time_range')}")
+        print_info(f"Start date: {data.get('start_date')}")
 
-            if data.get("threats"):
-                print_info(f"First threat: {data['threats'][0].get('name')}")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        if data.get("threats"):
+            print_info(f"First threat: {data['threats'][0].get('name')}")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_threats_7d():
@@ -85,22 +79,18 @@ def test_threats_7d():
     print_test("Get Threats - Last 7 Days")
     try:
         response = requests.get(f"{API_BASE_URL}/threats?time_range=7d", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success(
-                f"Retrieved {data.get('total_threats', 0)} threats from last 7 days"
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(
+            f"Retrieved {data.get('total_threats', 0)} threats from last 7 days"
+        )
+        if data.get("threats"):
+            print_info(
+                f"Sample threat types: {[t.get('type') for t in data['threats'][:3]]}"
             )
-            if data.get("threats"):
-                print_info(
-                    f"Sample threat types: {[t.get('type') for t in data['threats'][:3]]}"
-                )
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_threats_30d():
@@ -108,18 +98,14 @@ def test_threats_30d():
     print_test("Get Threats - Last 30 Days")
     try:
         response = requests.get(f"{API_BASE_URL}/threats?time_range=30d", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success(
-                f"Retrieved {data.get('total_threats', 0)} threats from last 30 days"
-            )
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(
+            f"Retrieved {data.get('total_threats', 0)} threats from last 30 days"
+        )
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_threat_detail():
@@ -127,20 +113,16 @@ def test_threat_detail():
     print_test("Get Threat Details")
     try:
         response = requests.get(f"{API_BASE_URL}/threats/THR001", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success(f"Retrieved threat details: {data.get('name')}")
-            print_info(f"Severity: {data.get('severity')}")
-            print_info(f"Source: {data.get('source')}")
-            print_info(f"Location: {data.get('location')}")
-            print_info(f"Confidence: {data.get('confidence_score')}%")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(f"Retrieved threat details: {data.get('name')}")
+        print_info(f"Severity: {data.get('severity')}")
+        print_info(f"Source: {data.get('source')}")
+        print_info(f"Location: {data.get('location')}")
+        print_info(f"Confidence: {data.get('confidence_score')}%")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_scan_ip():
@@ -151,20 +133,16 @@ def test_scan_ip():
         response = requests.post(
             f"{API_BASE_URL}/threats/scan-ip", json=payload, headers=HEADERS, timeout=REQUEST_TIMEOUT
         )
-        if response.status_code == 200:
-            data = response.json()
-            print_success(f"IP scan completed for {payload['ip_address']}")
-            print_info(f"Threat level: {data.get('threat_level')}")
-            print_info(f"Reputation score: {data.get('reputation_score')}")
-            if data.get("api_results"):
-                print_info(f"API Results: {json.dumps(data['api_results'], indent=2)}")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(f"IP scan completed for {payload['ip_address']}")
+        print_info(f"Threat level: {data.get('threat_level')}")
+        print_info(f"Reputation score: {data.get('reputation_score')}")
+        if data.get("api_results"):
+            print_info(f"API Results: {json.dumps(data['api_results'], indent=2)}")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_dashboard_summary():
@@ -172,20 +150,16 @@ def test_dashboard_summary():
     print_test("Dashboard Summary")
     try:
         response = requests.get(f"{API_BASE_URL}/dashboard/summary?time_range=24h", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success("Retrieved dashboard summary")
-            print_info(f"Time range: {data.get('time_range')}")
-            print_info(f"Total scans: {data.get('total_scans')}")
-            print_info(f"Threats detected: {data.get('threats_detected')}")
-            print_info(f"Critical threats: {data.get('critical_threats')}")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success("Retrieved dashboard summary")
+        print_info(f"Time range: {data.get('time_range')}")
+        print_info(f"Total scans: {data.get('total_scans')}")
+        print_info(f"Threats detected: {data.get('threats_detected')}")
+        print_info(f"Critical threats: {data.get('critical_threats')}")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_dashboard_threats():
@@ -196,19 +170,15 @@ def test_dashboard_threats():
             f"{API_BASE_URL}/dashboard/threats?time_range=24h&severity=critical",
             timeout=REQUEST_TIMEOUT
         )
-        if response.status_code == 200:
-            data = response.json()
-            print_success(f"Retrieved {len(data)} critical threats")
-            if data:
-                for threat in data[:2]:
-                    print_info(f"  - {threat.get('name')} ({threat.get('severity')})")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success(f"Retrieved {len(data)} critical threats")
+        if data:
+            for threat in data[:2]:
+                print_info(f"  - {threat.get('name')} ({threat.get('severity')})")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_dashboard_stats():
@@ -216,23 +186,19 @@ def test_dashboard_stats():
     print_test("Dashboard Statistics")
     try:
         response = requests.get(f"{API_BASE_URL}/dashboard/stats?time_range=7d", timeout=REQUEST_TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            print_success("Retrieved dashboard statistics")
-            print_info(f"Critical threats: {data.get('critical_threats')}")
-            print_info(f"High threats: {data.get('high_threats')}")
-            print_info(f"Medium threats: {data.get('medium_threats')}")
-            print_info(f"Low threats: {data.get('low_threats')}")
-            print_info(f"Files scanned: {data.get('files_scanned')}")
-            print_info(f"URLs scanned: {data.get('urls_scanned')}")
-            print_info(f"IPs scanned: {data.get('ips_scanned')}")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success("Retrieved dashboard statistics")
+        print_info(f"Critical threats: {data.get('critical_threats')}")
+        print_info(f"High threats: {data.get('high_threats')}")
+        print_info(f"Medium threats: {data.get('medium_threats')}")
+        print_info(f"Low threats: {data.get('low_threats')}")
+        print_info(f"Files scanned: {data.get('files_scanned')}")
+        print_info(f"URLs scanned: {data.get('urls_scanned')}")
+        print_info(f"IPs scanned: {data.get('ips_scanned')}")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_get_reports():
@@ -240,22 +206,18 @@ def test_get_reports():
     print_test("Get Reports List")
     try:
         response = requests.get(f"{API_BASE_URL}/reports?time_range=24h", timeout=REQUEST_TIMEOUT)
+        assert response.status_code in {200, 404}, f"Failed with status {response.status_code}"
         if response.status_code == 200:
             data = response.json()
             print_success(f"Retrieved {data.get('total_reports', 0)} reports")
             if data.get("reports"):
                 for report in data["reports"][:2]:
                     print_info(f"  - {report.get('report_id')}: {report.get('title')}")
-            return True
         elif response.status_code == 404:
             print_info("GET /reports endpoint not yet implemented (404) - skipping")
-            return True  # Don't fail the test for missing endpoint
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_generate_report():
@@ -274,23 +236,18 @@ def test_generate_report():
             headers=HEADERS, 
             timeout=REQUEST_TIMEOUT
         )
-        if response.status_code == 200:
-            # Response is a PDF file
-            if response.headers.get("content-type") == "application/pdf":
-                print_success("PDF report generated successfully")
-                print_info(f"Content-Type: {response.headers.get('content-type')}")
-                print_info(f"File size: {len(response.content)} bytes")
-                return True
-            else:
-                data = response.json()
-                print_success(f"Report generated: {data.get('report_text', 'Generated')[:100]}...")
-                return True
+        assert response.status_code == 200, f"Failed with status {response.status_code}: {response.text}"
+        # Response is a PDF file
+        if response.headers.get("content-type") == "application/pdf":
+            print_success("PDF report generated successfully")
+            print_info(f"Content-Type: {response.headers.get('content-type')}")
+            print_info(f"File size: {len(response.content)} bytes")
         else:
-            print_error(f"Failed with status {response.status_code}: {response.text}")
-            return False
+            data = response.json()
+            print_success(f"Report generated: {data.get('report_text', 'Generated')[:100]}...")
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_download_report():
@@ -310,9 +267,7 @@ def test_download_report():
             headers=HEADERS,
             timeout=REQUEST_TIMEOUT
         )
-        if response.status_code != 200:
-            print_error(f"Failed to generate report: {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed to generate report: {response.status_code}"
         
         # The generate endpoint returns a PDF directly, not a JSON with report_id
         if response.headers.get("content-type") == "application/pdf":
@@ -325,13 +280,13 @@ def test_download_report():
             with open(filename, "wb") as f:
                 f.write(response.content)
             print_info(f"Saved to: {filename}")
-            return True
         else:
-            print_error(f"Response is not a PDF: {response.headers.get('content-type')}")
-            return False
+            raise AssertionError(
+                f"Response is not a PDF: {response.headers.get('content-type')}"
+            )
     except Exception as e:
         print_error(f"Error: {e}")
-        return False
+        raise
 
 
 def test_respond_to_threat():
@@ -341,18 +296,23 @@ def test_respond_to_threat():
         response = requests.post(
             f"{API_BASE_URL}/threats/THR001/respond", headers=HEADERS, timeout=REQUEST_TIMEOUT
         )
-        if response.status_code == 200:
-            data = response.json()
-            print_success("Response action executed")
-            print_info(f"Threat ID: {data.get('threat_id')}")
-            print_info(f"Status: {data.get('status')}")
-            print_info(f"Action: {data.get('action')}")
-            return True
-        else:
-            print_error(f"Failed with status {response.status_code}")
-            return False
+        assert response.status_code == 200, f"Failed with status {response.status_code}"
+        data = response.json()
+        print_success("Response action executed")
+        print_info(f"Threat ID: {data.get('threat_id')}")
+        print_info(f"Status: {data.get('status')}")
+        print_info(f"Action: {data.get('action')}")
     except Exception as e:
         print_error(f"Error: {e}")
+        raise
+
+
+def _run_test_safely(test_func):
+    """Run a test function for CLI mode and return pass/fail without raising."""
+    try:
+        test_func()
+        return True
+    except Exception:
         return False
 
 
@@ -375,27 +335,27 @@ def run_all_tests():
     results = {}
 
     # Health check first
-    if not test_health_check():
+    if not _run_test_safely(test_health_check):
         print_error("Cannot proceed - server is not responding")
         return
 
     # Threat endpoints
-    results["threats_24h"] = test_threats_24h()
-    results["threats_7d"] = test_threats_7d()
-    results["threats_30d"] = test_threats_30d()
-    results["threat_detail"] = test_threat_detail()
-    results["scan_ip"] = test_scan_ip()
-    results["respond_threat"] = test_respond_to_threat()
+    results["threats_24h"] = _run_test_safely(test_threats_24h)
+    results["threats_7d"] = _run_test_safely(test_threats_7d)
+    results["threats_30d"] = _run_test_safely(test_threats_30d)
+    results["threat_detail"] = _run_test_safely(test_threat_detail)
+    results["scan_ip"] = _run_test_safely(test_scan_ip)
+    results["respond_threat"] = _run_test_safely(test_respond_to_threat)
 
     # Dashboard endpoints
-    results["dashboard_summary"] = test_dashboard_summary()
-    results["dashboard_threats"] = test_dashboard_threats()
-    results["dashboard_stats"] = test_dashboard_stats()
+    results["dashboard_summary"] = _run_test_safely(test_dashboard_summary)
+    results["dashboard_threats"] = _run_test_safely(test_dashboard_threats)
+    results["dashboard_stats"] = _run_test_safely(test_dashboard_stats)
 
     # Report endpoints
-    results["get_reports"] = test_get_reports()
-    results["generate_report"] = test_generate_report()
-    results["download_report"] = test_download_report()
+    results["get_reports"] = _run_test_safely(test_get_reports)
+    results["generate_report"] = _run_test_safely(test_generate_report)
+    results["download_report"] = _run_test_safely(test_download_report)
 
     # Summary
     print(f"\n{Colors.BLUE}=== Test Summary ==={Colors.END}")

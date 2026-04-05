@@ -17,6 +17,7 @@ import math
 import os
 import platform
 import re
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -330,6 +331,10 @@ class ProcessScanner:
             self._alert_cooldown[cooldown_key] = now
             logger.warning(f"⚙️  [{severity}] {alert_type}: {desc}")
             self._save_alert(pid, name, cmdline, exe, user, alert_type, severity, desc)
+            source_ip = self._resolve_process_source_ip(pid)
+            source_location = "Private/local network"
+            if source_ip in {"127.0.0.1", "::1"}:
+                source_location = "Loopback/local host"
             if self.callback:
                 self.callback({
                     "type": "process_alert",
@@ -338,8 +343,24 @@ class ProcessScanner:
                     "description": desc,
                     "pid": pid, "name": name,
                     "exe": exe, "user": user,
+                    "source_ip": source_ip,
+                    "source_hostname": socket.gethostname(),
+                    "source_location": source_location,
                     "timestamp": datetime.now().isoformat(),
                 })
+
+    @staticmethod
+    def _resolve_process_source_ip(pid: int) -> str:
+        """Best-effort source IP extraction for process-based alerts."""
+        try:
+            proc = psutil.Process(pid)
+            for conn in proc.connections(kind='inet'):
+                raddr = getattr(conn, 'raddr', None)
+                if raddr and getattr(raddr, 'ip', None):
+                    return str(raddr.ip)
+        except Exception:
+            pass
+        return "127.0.0.1"
 
     # ------------------------------------------------------------------
     # Static / backward-compat helpers

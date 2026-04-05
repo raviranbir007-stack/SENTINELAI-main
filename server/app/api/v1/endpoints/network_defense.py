@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, model_validator
-from sqlalchemy import and_, func, or_, text
+from sqlalchemy import and_, desc, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -2099,6 +2099,221 @@ async def list_attacks(
 
     except Exception as e:
         logger.error(f"Failed to list attacks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/incidents")
+async def list_incidents(
+    hours: int = 72,
+    limit: int = 500,
+    client_id: Optional[str] = None,
+    blocked_only: bool = False,
+    quarantined_only: bool = False,
+    ignored_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return merged incident records for the dashboard incident console."""
+    try:
+        since_time = datetime.utcnow() - timedelta(hours=hours)
+        max_items = max(1, min(int(limit or 500), 1000))
+
+        attack_query = select(AttackEvent).where(AttackEvent.detected_at >= since_time)
+        if blocked_only:
+            attack_query = attack_query.where(AttackEvent.blocked == True)
+        if client_id:
+            attack_query = attack_query.join(ClientInstallation).where(ClientInstallation.client_id == client_id)
+        attack_query = attack_query.order_by(AttackEvent.detected_at.desc()).limit(max_items)
+
+        action_query = select(DefenseAction).order_by(desc(DefenseAction.created_at)).limit(max_items)
+        client_fk = None
+        if client_id:
+            client_fk_res = await db.execute(select(ClientInstallation.id).where(ClientInstallation.client_id == client_id))
+            client_fk = client_fk_res.scalar_one_or_none()
+            if client_fk is not None:
+                action_query = action_query.where(DefenseAction.client_id == client_fk)
+
+        attack_result = await db.execute(attack_query)
+        attacks = attack_result.scalars().all()
+
+        action_result = await db.execute(action_query)
+        actions = action_result.scalars().all()
+
+        client_ids = set()
+        for attack in attacks:
+            if attack.target_client_id:
+                client_ids.add(int(attack.target_client_id))
+        for action in actions:
+            if action.client_id:
+                client_ids.add(int(action.client_id))
+
+        client_map: dict[int, ClientInstallation] = {}
+        if client_ids:
+            clients_result = await db.execute(select(ClientInstallation).where(ClientInstallation.id.in_(sorted(client_ids))))
+            client_map = {client.id: client for client in clients_result.scalars().all() if client}
+
+        def _client_payload(client_row: ClientInstallation | None) -> dict:
+            if not client_row:
+                return {}
+            return {
+                "client_id": client_row.client_id,
+                "hostname": client_row.hostname,
+                "ip_address": client_row.ip_address,
+                "os_type": client_row.os_type,
+                "os_version": client_row.os_version,
+                "version": client_row.version,
+                "network_segment": client_row.network_segment,
+                "gateway": client_row.gateway,
+                "is_active": bool(client_row.is_active),
+            }
+
+        incidents: list[dict] = []
+
+        for attack in attacks:
+            indicators = attack.indicators if isinstance(attack.indicators, dict) else {}
+            status = str(attack.status or "detected").lower()
+            if quarantined_only and status != "quarantined":
+                continue
+            if ignored_only and status != "ignored":
+                continue
+
+            client_row = client_map.get(int(attack.target_client_id)) if attack.target_client_id else None
+            client_payload = _client_payload(client_row)
+            source_ip = attack.source_ip or indicators.get("source_ip") or None
+            source_domain = attack.source_domain or indicators.get("source_domain") or None
+            source_country = indicators.get("source_country") or indicators.get("country") or indicators.get("geo_country") or None
+            api_sources = []
+            if isinstance(indicators.get("api_sources"), list):
+                api_sources = [str(source) for source in indicators.get("api_sources", []) if source]
+
+            incidents.append({
+                "incident_id": attack.event_id,
+                "incident_kind": "attack_event",
+                "incident_type": attack.attack_type,
+                "title": attack.attack_type,
+                "target": attack.destination_ip or source_ip or source_domain or (client_payload.get("client_id") if client_payload else None) or "unknown",
+                "source_ip": source_ip,
+                "source_domain": source_domain,
+                "source_country": source_country,
+                "severity": attack.severity.value if attack.severity else "unknown",
+                "status": status,
+                "blocked": bool(attack.blocked),
+                "quarantined": status == "quarantined",
+                "ignored": status == "ignored",
+                "action": status.upper(),
+                "detected_at": attack.detected_at.isoformat() if attack.detected_at else None,
+                "client": client_payload,
+                "source": "Intrusion Monitor",
+                "description": attack.description,
+                "short_description": indicators.get("short_description") or attack.description or "Attack detected",
+                "api_sources": api_sources,
+                "evidence_sources": attack.evidence_sources or [],
+                "corroboration_count": int(attack.corroboration_count or 0),
+                "blocked_at": attack.blocked_at.isoformat() if attack.blocked_at else None,
+                "raw_details": {
+                    "attack": {
+                        "event_id": attack.event_id,
+                        "attack_type": attack.attack_type,
+                        "source_ip": attack.source_ip,
+                        "source_domain": attack.source_domain,
+                        "destination_ip": attack.destination_ip,
+                        "destination_port": attack.destination_port,
+                        "severity": attack.severity.value if attack.severity else None,
+                        "confidence": attack.confidence,
+                        "description": attack.description,
+                        "indicators": indicators,
+                        "status": status,
+                        "blocked": bool(attack.blocked),
+                        "blocked_at": attack.blocked_at.isoformat() if attack.blocked_at else None,
+                        "detected_at": attack.detected_at.isoformat() if attack.detected_at else None,
+                    },
+                    "client": client_payload,
+                    "evidence_sources": attack.evidence_sources or [],
+                    "corroboration_count": int(attack.corroboration_count or 0),
+                    "analyst_verified": bool(attack.analyst_verified),
+                    "analyst_notes": attack.analyst_notes,
+                },
+            })
+
+        for action in actions:
+            details = action.details if isinstance(action.details, dict) else {}
+            raw_action_type = str(action.action_type or "").strip().lower()
+            requested_action = str(details.get("requested_action") or "").strip().upper()
+            if not requested_action:
+                if raw_action_type in {"block_ip", "block_domain", "block_indicator"}:
+                    requested_action = "BLOCK"
+                elif raw_action_type in {"ignore"}:
+                    requested_action = "IGNORE"
+                elif raw_action_type in {"quarantine", "quarantine_system"}:
+                    requested_action = "QUARANTINE"
+                else:
+                    requested_action = str(action.action_type or "UNKNOWN").upper()
+            normalized_status = str(action.status or "pending").lower()
+            if blocked_only and requested_action != "BLOCK":
+                continue
+            if quarantined_only and requested_action != "QUARANTINE":
+                continue
+            if ignored_only and requested_action != "IGNORE":
+                continue
+
+            client_row = client_map.get(int(action.client_id)) if action.client_id else None
+            client_payload = _client_payload(client_row)
+            severity = "critical" if requested_action == "QUARANTINE" else "high" if requested_action == "BLOCK" else "medium"
+            metadata = details.get("metadata") if isinstance(details.get("metadata"), dict) else {}
+
+            incidents.append({
+                "incident_id": action.action_id,
+                "incident_kind": "defense_action",
+                "incident_type": requested_action,
+                "title": f"{requested_action} Action",
+                "target": action.target,
+                "source_ip": details.get("source_ip") or metadata.get("source_ip"),
+                "source_domain": details.get("source_domain") or metadata.get("source_domain"),
+                "source_country": details.get("source_country") or metadata.get("source_country"),
+                "severity": severity,
+                "status": normalized_status,
+                "blocked": requested_action == "BLOCK" and normalized_status == "executed",
+                "quarantined": requested_action == "QUARANTINE",
+                "ignored": requested_action == "IGNORE",
+                "action": requested_action,
+                "detected_at": action.executed_at.isoformat() if action.executed_at else (action.created_at.isoformat() if action.created_at else None),
+                "client": client_payload,
+                "source": "Dashboard Response",
+                "description": details.get("reason") or f"Dashboard action: {requested_action}",
+                "short_description": details.get("reason") or f"Dashboard action: {requested_action}",
+                "affected_attack_events": int(details.get("affected_attack_events") or 0),
+                "affected_clients": details.get("affected_clients") or [],
+                "blocked_at": action.executed_at.isoformat() if action.executed_at else None,
+                "action_scope": details.get("scope") or "targeted",
+                "raw_details": {
+                    "defense_action": {
+                        "action_id": action.action_id,
+                        "action_type": action.action_type,
+                        "target": action.target,
+                        "status": normalized_status,
+                        "successful": bool(action.successful),
+                        "executed_at": action.executed_at.isoformat() if action.executed_at else None,
+                        "reverted_at": action.reverted_at.isoformat() if action.reverted_at else None,
+                        "created_at": action.created_at.isoformat() if action.created_at else None,
+                        "client_id": client_payload.get("client_id") if client_payload else None,
+                        "attack_event_id": action.attack_event.event_id if action.attack_event else None,
+                    },
+                    "details": details,
+                    "client": client_payload,
+                },
+            })
+
+        incidents.sort(key=lambda item: item.get("detected_at") or "", reverse=True)
+
+        return {
+            "hours": hours,
+            "total": len(incidents),
+            "blocked_count": sum(1 for item in incidents if item.get("blocked")),
+            "quarantined_count": sum(1 for item in incidents if item.get("quarantined")),
+            "ignored_count": sum(1 for item in incidents if item.get("ignored")),
+            "items": incidents,
+        }
+    except Exception as e:
+        logger.error(f"Failed to list incidents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

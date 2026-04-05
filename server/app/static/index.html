@@ -375,6 +375,35 @@
             background: var(--secondary);
             border-color: var(--primary);
         }
+
+        .incident-filter-scroll {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding-bottom: 0.2rem;
+            scrollbar-width: thin;
+        }
+
+        .incident-filter-scroll .filter-btn {
+            flex: 0 0 auto;
+        }
+
+        .incident-stats-inline {
+            margin-left: auto;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            color: var(--muted-foreground);
+            font-size: 0.85rem;
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+
+        .incident-table-shell {
+            max-height: 440px;
+            overflow: auto;
+        }
         
         /* Tooltip styles */
         .tooltip {
@@ -648,6 +677,38 @@
 
         .table-shell .threats-table {
             min-width: 760px;
+        }
+
+        .scroll-table-shell {
+            max-height: 460px;
+            overflow: auto;
+        }
+
+        .scroll-table-shell .threats-table {
+            min-width: 860px;
+        }
+
+        .scroll-table-shell .threats-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--card);
+        }
+
+        .live-activity-scroll {
+            max-height: 460px;
+            overflow: auto;
+        }
+
+        .live-activity-scroll .threats-table {
+            min-width: 900px;
+        }
+
+        .live-activity-scroll .threats-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--card);
         }
 
         .scan-line {
@@ -1783,6 +1844,7 @@
             background: rgba(8, 18, 31, 0.92);
         }
 
+
         .threats-table td {
             padding: 0.95rem 1rem;
             border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -2499,17 +2561,17 @@
                         <button id="viewAllThreatsBtn" class="btn btn-outline" type="button" onclick="viewAllThreats()">View All Threats →</button>
                     </div>
                 </div>
-                
+
                 <!-- Threat Filter Buttons -->
                 <div class="filter-buttons" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <button class="filter-btn btn btn-outline active" data-filter="all" onclick="window.dashboard.filterByStatus('all')">All (<span id="threat-count">0/0</span>)</button>
-                    <button class="filter-btn btn btn-outline" data-filter="critical" onclick="window.dashboard.filterByStatus('critical')">Critical</button>
-                    <button class="filter-btn btn btn-outline" data-filter="high" onclick="window.dashboard.filterByStatus('high')">High</button>
-                    <button class="filter-btn btn btn-outline" data-filter="low" onclick="window.dashboard.filterByStatus('low')">Low</button>
+                    <button class="filter-btn btn btn-outline active" data-filter="all" onclick="window.dashboard.filterByStatus('all')">All (<span id="threat-count">0</span>)</button>
+                    <button class="filter-btn btn btn-outline" data-filter="critical" onclick="window.dashboard.filterByStatus('critical')">Critical (<span id="threat-count-critical">0</span>)</button>
+                    <button class="filter-btn btn btn-outline" data-filter="high" onclick="window.dashboard.filterByStatus('high')">High (<span id="threat-count-high">0</span>)</button>
+                    <button class="filter-btn btn btn-outline" data-filter="low" onclick="window.dashboard.filterByStatus('low')">Low (<span id="threat-count-low">0</span>)</button>
                 </div>
                 
                 <div class="card card-glass dashboard-card" id="recentThreatsCard">
-                    <div class="table-shell">
+                    <div class="table-shell scroll-table-shell">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -2527,6 +2589,53 @@
                             <!-- Threats will be inserted here -->
                         </tbody>
                     </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Incident Response Section -->
+        <section class="section section-divider">
+            <div class="container">
+                <div class="section-header">
+                    <div>
+                        <h2>🚨 Incident Response Console</h2>
+                        <p>Unified feed of blocked, ignored, and quarantined incidents</p>
+                    </div>
+                    <div class="section-actions">
+                        <button id="toggleIncidentsBtn" class="btn btn-outline" title="Minimize/Maximize Incident Console">− Minimize</button>
+                        <button id="refreshIncidentsBtn" class="btn btn-outline btn-sm" onclick="fetchIncidents(activeIncidentFilter || 'all')" title="Refresh incidents">↺ Refresh</button>
+                    </div>
+                </div>
+
+                <div class="filter-buttons incident-filter-scroll" style="margin-bottom: 1rem;">
+                    <button class="filter-btn btn btn-outline active" id="incidentFilterAll" onclick="filterIncidents('all')">All</button>
+                    <button class="filter-btn btn btn-outline" id="incidentFilterBlocked" onclick="filterIncidents('blocked')">Blocked</button>
+                    <button class="filter-btn btn btn-outline" id="incidentFilterIgnored" onclick="filterIncidents('ignored')">Ignore</button>
+                    <button class="filter-btn btn btn-outline" id="incidentFilterQuarantined" onclick="filterIncidents('quarantined')">Quarantine</button>
+                    <span id="incidentStats" class="incident-stats-inline"></span>
+                </div>
+
+                <div class="card card-glass dashboard-card" id="incidentsCard">
+                    <div class="table-shell incident-table-shell">
+                        <table class="threats-table">
+                            <thead>
+                                <tr>
+                                    <th>Incident</th>
+                                    <th>Target</th>
+                                    <th>Source IP</th>
+                                    <th>Country</th>
+                                    <th>Client / PC</th>
+                                    <th>Action</th>
+                                    <th>Status</th>
+                                    <th>Time</th>
+                                    <th style="text-align:right;">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="incidentTableBody">
+                                <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading incidents...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -2668,7 +2777,7 @@
                         <span id="liveActivityCount" style="align-self:center;padding:0 1rem;font-size:0.78rem;color:var(--muted-foreground);"></span>
                     </div>
                     <!-- Websites tab -->
-                    <div id="liveTabContentWebsites" style="overflow-x:auto;">
+                    <div id="liveTabContentWebsites" class="live-activity-scroll">
                         <table class="threats-table">
                             <thead>
                                 <tr>
@@ -2688,7 +2797,7 @@
                         </table>
                     </div>
                     <!-- Activity tab (hidden by default) -->
-                    <div id="liveTabContentActivity" style="display:none;overflow-x:auto;">
+                    <div id="liveTabContentActivity" class="live-activity-scroll" style="display:none;">
                         <table class="threats-table">
                             <thead>
                                 <tr>
@@ -2777,7 +2886,7 @@
                     </div>
                 </div>
                 <div class="card card-glass dashboard-card" id="auditTrailCard">
-                    <div class="table-shell">
+                    <div class="table-shell scroll-table-shell">
                         <table class="threats-table">
                             <thead>
                                 <tr>
@@ -2876,6 +2985,7 @@
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-bottom: 2rem;">
                     <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="ip">
                         <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
+                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
                         <div style="font-weight:600;font-size:0.875rem;">IP Address</div>
                         <div style="font-size:0.75rem;color:var(--muted-foreground);">Reputation check</div>
                     </div>
@@ -2908,7 +3018,6 @@
                         <h3 style="margin:0;font-size:1rem;">New Scan</h3>
                     </div>
 
-                    <!-- Text / IP / URL / Domain / Hash scan -->
                     <div style="margin-bottom:1.25rem;">
                         <label style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Scan Target — IP · Domain · URL · Hash</label>
                         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
@@ -2957,13 +3066,6 @@
                         </div>
                     </div>
 
-                    <!-- Scan status / progress -->
-                    <div id="scanStatus" style="margin-top:1rem;font-size:0.85rem;color:var(--muted-foreground);display:none;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:6px;border-left:3px solid var(--primary);"></div>
-
-                    <!-- Inline file scan result panel -->
-                    <div id="fileScanResultPanel" style="display:none;margin-top:1rem;padding:1rem;border-radius:8px;border:1px solid var(--border);">
-                        <div id="fileScanResultContent"></div>
-                    </div>
                 </div>
 
                 <!-- Scan History -->
@@ -2976,7 +3078,7 @@
                         <button class="btn btn-ghost btn-sm" id="toggleScansHistoryBtn" title="Minimize/Maximize scan history">🗕 Minimize</button>
                     </div>
                     <div class="card card-glass" id="scansHistoryCard">
-                        <div class="table-shell">
+                        <div class="table-shell scroll-table-shell">
                             <table class="threats-table">
                                 <thead>
                                     <tr>
@@ -3015,7 +3117,7 @@
                     </div>
                 </div>
                 <div class="card card-glass dashboard-card" id="allThreatsPageCard">
-                    <div class="table-shell">
+                    <div class="table-shell scroll-table-shell">
                     <table class="threats-table">
                         <thead>
                             <tr>
@@ -3032,6 +3134,49 @@
                             <!-- All threats will be inserted here -->
                         </tbody>
                     </table>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.25rem;">
+                    <div class="section-header" style="margin-bottom: 0.75rem;">
+                        <div>
+                            <h3 style="margin:0; font-size:1rem;">Incident Sections</h3>
+                            <p style="margin:0.25rem 0 0;">View all, blocked, ignored, and quarantined incidents with scroll support</p>
+                        </div>
+                        <div class="section-actions">
+                            <button class="btn btn-outline btn-sm" onclick="fetchIncidents(activeIncidentFilter || 'all')" title="Refresh threat-page incidents">↺ Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="filter-buttons incident-filter-scroll" style="margin-bottom: 1rem;">
+                        <button class="filter-btn btn btn-outline active" id="incidentFilterAllThreatsPage" onclick="filterIncidents('all')">All</button>
+                        <button class="filter-btn btn btn-outline" id="incidentFilterBlockedThreatsPage" onclick="filterIncidents('blocked')">Blocked</button>
+                        <button class="filter-btn btn btn-outline" id="incidentFilterIgnoredThreatsPage" onclick="filterIncidents('ignored')">Ignore</button>
+                        <button class="filter-btn btn btn-outline" id="incidentFilterQuarantinedThreatsPage" onclick="filterIncidents('quarantined')">Quarantine</button>
+                        <span id="incidentStatsThreatsPage" class="incident-stats-inline"></span>
+                    </div>
+
+                    <div class="card card-glass dashboard-card">
+                        <div class="table-shell incident-table-shell">
+                            <table class="threats-table">
+                                <thead>
+                                    <tr>
+                                        <th>Incident</th>
+                                        <th>Target</th>
+                                        <th>Source IP</th>
+                                        <th>Country</th>
+                                        <th>Client / PC</th>
+                                        <th>Action</th>
+                                        <th>Status</th>
+                                        <th>Time</th>
+                                        <th style="text-align:right;">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="incidentTableBodyThreatsPage">
+                                    <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading incidents...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3120,6 +3265,20 @@
         </div>
     </div>
 
+    <!-- Incident Detail Modal -->
+    <div id="incidentDetailModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;" onclick="if(event.target === this) closeIncidentDetail()">
+        <div class="card card-cyber" style="max-width: 980px; width: 92%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                    <h2 style="margin: 0;">Incident Details</h2>
+                    <p id="incidentDetailSubtitle" style="margin: 0.35rem 0 0; color: var(--muted-foreground); font-size: 0.85rem;"></p>
+                </div>
+                <button onclick="closeIncidentDetail()" class="icon-btn">✖️</button>
+            </div>
+            <div id="incidentDetailContent"></div>
+        </div>
+    </div>
+
     <!-- All Quarantine Modal -->
     <div id="allQuarantineModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center;">
         <div class="card card-cyber" style="max-width: 1300px; width: 95%; max-height: 90vh; overflow-y: auto; margin: 2rem;">
@@ -3161,7 +3320,7 @@
                 </div>
             </div>
             <div id="allThreatsContent">
-                <div class="table-shell">
+                <div class="table-shell scroll-table-shell">
                 <table class="threats-table">
                     <thead>
                         <tr>
@@ -3528,6 +3687,8 @@
         let previousThreatCount = null;
         let previousConfiguredApis = null;
         let currentSearchQuery = '';
+        let activeThreatSeverityFilter = 'all';
+        let activeThreatIntelFilter = { type: '', value: '' };
         let lastScanMeta = { target: 'N/A', time: null };
         let latestDashboardStats = null;
         let latestAuditEntries = [];
@@ -3561,6 +3722,7 @@
         let panelState = {
             recentThreatsCollapsed: false,
             recentLogsCollapsed: false,
+            incidentsCollapsed: false,
             quarantineCollapsed: false,
             auditTrailCollapsed: false,
         };
@@ -3630,6 +3792,7 @@
             dashboardSecurityPosture: '/api/v1/dashboard/security-posture',
             dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
             dashboardDefenseResponse: '/api/v1/network/event/respond',
+            incidents: '/api/v1/network/incidents',
             dashboardActiveClients: '/api/v1/network/clients?active_only=false',
             dashboardAccuracyMetrics: '/api/v1/dashboard/telemetry/accuracy-metrics',
             dashboardWeeklyThresholdTuning: '/api/v1/dashboard/telemetry/threshold-tuning/run-weekly',
@@ -3676,10 +3839,12 @@
         const recentReports = [];
 
         let recentLogs = [];
+        let incidentRecords = [];
         let latestScanHistory = [];
         let allReports = [];
         let selectedScanType = 'ip';
         let selectedReportType = 'executive_summary';
+        let activeIncidentFilter = 'all';
         let lastToastSignature = null;
         let lastToastTimestamp = 0;
         let notificationSignals = {};
@@ -4536,6 +4701,120 @@
             );
         }
 
+        function setScanStatus(message, tone = 'info') {
+            const statusEl = document.getElementById('scanStatus');
+            if (!statusEl) return;
+
+            const toneColors = {
+                info: 'var(--primary)',
+                success: 'var(--success)',
+                warning: 'var(--warning)',
+                error: 'var(--destructive)',
+            };
+
+            statusEl.style.display = 'block';
+            statusEl.style.borderLeftColor = toneColors[tone] || toneColors.info;
+            statusEl.textContent = message;
+        }
+
+        function clearScanStatus() {
+            const statusEl = document.getElementById('scanStatus');
+            if (!statusEl) return;
+            statusEl.style.display = 'none';
+            statusEl.textContent = '';
+        }
+
+        function renderScanResultPanel(result, context = {}) {
+            const panel = document.getElementById('fileScanResultPanel');
+            const content = document.getElementById('fileScanResultContent');
+            if (!panel || !content) return;
+
+            const target = String(context.target || result?.target || result?.target_name || 'Unknown');
+            const scanType = String(context.type || result?.type || result?.target_type || result?.detected_type || 'unknown').toUpperCase();
+            const status = String(result?.status || 'complete').toLowerCase();
+            const verdict = normalizeThreatLevel(result?.threat_level, result?.verdict);
+            const summary = String(result?.summary || result?.analysis?.summary || result?.message || 'Scan completed.').trim();
+            const confidence = Number(result?.confidence ?? result?.analysis?.confidence);
+            const confidenceLabel = Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : 'N/A';
+            const threatsDetected = Number(result?.threats_detected ?? result?.analysis?.threats_detected ?? 0);
+            const timestamp = result?.timestamp ? new Date(result.timestamp).toLocaleString() : new Date().toLocaleString();
+            const apiResults = asObject(result?.api_results || result?.analysis?.api_results) || {};
+            const apiCount = Array.isArray(apiResults.apis_called) ? apiResults.apis_called.length : 0;
+            const scanId = String(result?.scan_id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const viewButton = scanId ? `<button class="btn btn-ghost btn-sm" onclick="viewScanDetail('${scanId}')">View full details</button>` : '';
+
+            if (status === 'scanning') {
+                content.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:0.9rem;min-height:96px;">
+                        <div style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:999px;background:rgba(45,212,191,0.12);">
+                            <span class="spinner" aria-hidden="true"></span>
+                        </div>
+                        <div style="min-width:0;">
+                            <div style="font-weight:600;margin-bottom:0.2rem;">Scanning ${escHtml(target)}</div>
+                            <div style="color:var(--muted-foreground);font-size:0.85rem;">Mode: ${escHtml(scanType)} · waiting for analysis response</div>
+                        </div>
+                    </div>
+                `;
+                panel.style.display = 'block';
+                panel.style.borderColor = 'rgba(45,212,191,0.3)';
+                return;
+            }
+
+            const tone = verdict === 'malicious' ? 'error' : verdict === 'suspicious' ? 'warning' : 'success';
+            const verdictLabel = verdict === 'clean' ? 'safe' : verdict;
+            const threatClass = getThreatBadgeClass(verdict, result?.verdict);
+
+            content.innerHTML = `
+                <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:flex-start;">
+                    <div>
+                        <div style="font-size:0.82rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Latest Scan Result</div>
+                        <div style="font-size:1.05rem;font-weight:700;margin-top:0.2rem;">${escHtml(target)}</div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
+                        <span class="badge ${threatClass}">${escHtml(verdictLabel)}</span>
+                        <span class="badge">${escHtml(scanType)}</span>
+                        <span class="badge">${escHtml(status.toUpperCase())}</span>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;margin-bottom:1rem;">
+                    <div style="padding:0.9rem;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.25rem;">Confidence</div>
+                        <div style="font-size:1.05rem;font-weight:700;">${escHtml(confidenceLabel)}</div>
+                    </div>
+                    <div style="padding:0.9rem;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.25rem;">Threat Indicators</div>
+                        <div style="font-size:1.05rem;font-weight:700;">${threatsDetected}</div>
+                    </div>
+                    <div style="padding:0.9rem;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.25rem;">API Calls</div>
+                        <div style="font-size:1.05rem;font-weight:700;">${apiCount}</div>
+                    </div>
+                    <div style="padding:0.9rem;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.78rem;color:var(--muted-foreground);margin-bottom:0.25rem;">Timestamp</div>
+                        <div style="font-size:1.05rem;font-weight:700;">${escHtml(timestamp)}</div>
+                    </div>
+                </div>
+                <div style="margin-bottom:1rem;padding:1rem;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);">
+                    <div style="font-size:0.82rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">Summary</div>
+                    <div style="line-height:1.6;">${escHtml(summary)}</div>
+                </div>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;">
+                    ${viewButton}
+                </div>
+            `;
+
+            panel.style.display = 'block';
+            panel.style.borderColor = tone === 'error'
+                ? 'rgba(239,68,68,0.35)'
+                : tone === 'warning'
+                    ? 'rgba(245,158,11,0.35)'
+                    : 'rgba(34,197,94,0.25)';
+
+            setTimeout(() => {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 60);
+        }
+
         function setReportType(type) {
             if (!REPORT_TYPE_DETAILS[type]) return;
             selectedReportType = type;
@@ -4876,15 +5155,215 @@
                 .replace(/\b\w/g, char => char.toUpperCase());
         }
 
+        function normalizeThreatIntel(rawIntel, fallbackRecord = null) {
+            const intel = asObject(rawIntel) || {};
+            const fallback = asObject(fallbackRecord) || {};
+
+            const country = String(
+                intel.country ||
+                intel.source_country ||
+                fallback.source_country ||
+                fallback.country ||
+                ''
+            ).trim();
+
+            const asn = String(
+                intel.asn ||
+                intel.source_asn ||
+                fallback.source_asn ||
+                ''
+            ).trim();
+
+            const organization = String(
+                intel.organization ||
+                intel.org ||
+                intel.source_org ||
+                fallback.source_org ||
+                fallback.organization ||
+                ''
+            ).trim();
+
+            const confidenceRaw = (
+                intel.confidence ??
+                intel.confidence_score ??
+                fallback.confidence ??
+                fallback.confidence_score
+            );
+            const confidence = formatConfidencePct(confidenceRaw);
+
+            if (!country && !asn && !organization && confidence === '-') {
+                return null;
+            }
+
+            return {
+                country,
+                asn,
+                organization,
+                confidence,
+            };
+        }
+
+        function renderThreatIntelBadges(intel) {
+            if (!intel) return '';
+
+            const chips = [];
+            const asFilterChip = (type, label, value) => {
+                const encodedValue = encodeURIComponent(String(value || '').trim());
+                if (!encodedValue) return '';
+                const isActive = activeThreatIntelFilter.type === type
+                    && String(activeThreatIntelFilter.value || '').toLowerCase() === String(value || '').trim().toLowerCase();
+                return `<button type="button" class="intel-chip intel-chip-action${isActive ? ' active' : ''}" data-intel-type="${type}" data-intel-value="${encodedValue}" onclick="handleIntelChipClick(event)">${escHtml(label)}</button>`;
+            };
+
+            if (intel.country) chips.push(asFilterChip('country', intel.country, intel.country));
+            if (intel.asn) chips.push(asFilterChip('asn', intel.asn, intel.asn));
+            if (intel.organization) chips.push(asFilterChip('organization', intel.organization, intel.organization));
+            if (intel.confidence && intel.confidence !== '-') chips.push(asFilterChip('confidence', `Confidence ${intel.confidence}`, intel.confidence));
+
+            if (chips.length === 0) return '';
+            return `<div class="intel-inline">${chips.join('')}</div>`;
+        }
+
+        function updateThreatFilterButtons() {
+            document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
+                const filter = String(btn.getAttribute('data-filter') || 'all').toLowerCase();
+                btn.classList.toggle('active', filter === activeThreatSeverityFilter);
+            });
+        }
+
+        function updateThreatFilterCounts() {
+            const allCountEl = document.getElementById('threat-count');
+            const criticalCountEl = document.getElementById('threat-count-critical');
+            const highCountEl = document.getElementById('threat-count-high');
+            const lowCountEl = document.getElementById('threat-count-low');
+
+            const allCount = Array.isArray(threats) ? threats.length : 0;
+            const criticalCount = threats.filter(t => String(t?.severity || '').toLowerCase() === 'critical').length;
+            const highCount = threats.filter(t => String(t?.severity || '').toLowerCase() === 'high').length;
+            const lowCount = threats.filter(t => String(t?.severity || '').toLowerCase() === 'low').length;
+
+            if (allCountEl) allCountEl.textContent = String(allCount);
+            if (criticalCountEl) criticalCountEl.textContent = String(criticalCount);
+            if (highCountEl) highCountEl.textContent = String(highCount);
+            if (lowCountEl) lowCountEl.textContent = String(lowCount);
+        }
+
+        function getThreatIntelFieldValue(threat, field) {
+            const intel = normalizeThreatIntel(threat?.threat_intel || threat?.intel || threat?.source_intelligence, threat) || {};
+            if (field === 'country') {
+                return String(intel.country || threat?.source_country || threat?.location || '').trim();
+            }
+            if (field === 'asn') {
+                return String(intel.asn || threat?.source_asn || '').trim();
+            }
+            if (field === 'organization') {
+                return String(intel.organization || threat?.source_org || threat?.organization || '').trim();
+            }
+            if (field === 'confidence') {
+                return String(intel.confidence || '').trim();
+            }
+            return '';
+        }
+
+        function matchesThreatFilters(threat) {
+            const severity = String(threat?.severity || '').toLowerCase();
+            const severityMatched = activeThreatSeverityFilter === 'all' || severity === activeThreatSeverityFilter;
+            if (!severityMatched) return false;
+
+            if (!activeThreatIntelFilter.type || !activeThreatIntelFilter.value) {
+                return true;
+            }
+
+            const fieldValue = getThreatIntelFieldValue(threat, activeThreatIntelFilter.type).toLowerCase();
+            const expected = String(activeThreatIntelFilter.value || '').toLowerCase();
+            return !!fieldValue && fieldValue.includes(expected);
+        }
+
+        function handleIntelChipClick(event) {
+            const target = event?.currentTarget;
+            if (!target) return;
+            const type = String(target.getAttribute('data-intel-type') || '').trim().toLowerCase();
+            const encodedValue = String(target.getAttribute('data-intel-value') || '').trim();
+            if (!type || !encodedValue) return;
+
+            let decoded = '';
+            try {
+                decoded = decodeURIComponent(encodedValue);
+            } catch (_) {
+                decoded = encodedValue;
+            }
+            drilldownThreatIntel(type, decoded);
+        }
+
+        function drilldownThreatIntel(type, value) {
+            const normalizedType = String(type || '').toLowerCase();
+            const normalizedValue = String(value || '').trim();
+            if (!normalizedType || !normalizedValue) return;
+
+            const sameFilter = activeThreatIntelFilter.type === normalizedType
+                && String(activeThreatIntelFilter.value || '').toLowerCase() === normalizedValue.toLowerCase();
+
+            if (sameFilter) {
+                activeThreatIntelFilter = { type: '', value: '' };
+                showToast('Intel drilldown cleared', 'info');
+            } else {
+                activeThreatIntelFilter = { type: normalizedType, value: normalizedValue };
+                activeThreatSeverityFilter = 'all';
+                showToast(`Filtering threats by ${normalizedType}: ${normalizedValue}`, 'info');
+            }
+
+            updateThreatFilterButtons();
+            renderThreats();
+            renderThreats('allThreatsPageTableBody');
+            renderThreats('allThreatsModalTableBody');
+            if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
+        }
+
+        function filterByStatus(status) {
+            const normalized = String(status || 'all').trim().toLowerCase();
+            const severityFilters = new Set(['all', 'critical', 'high', 'medium', 'low']);
+
+            if (severityFilters.has(normalized)) {
+                activeThreatSeverityFilter = normalized;
+                activeThreatIntelFilter = { type: '', value: '' };
+                updateThreatFilterButtons();
+                renderThreats();
+                renderThreats('allThreatsPageTableBody');
+                renderThreats('allThreatsModalTableBody');
+                if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
+                return;
+            }
+
+            const searchEl = document.getElementById('dashboardSearchInput');
+            if (searchEl) searchEl.value = normalized;
+            applyDashboardSearch(normalized);
+        }
+
+        window.dashboard = window.dashboard || {};
+        window.dashboard.filterByStatus = filterByStatus;
+
         function renderThreats(tableId = 'threatsTableBody') {
             const tbody = document.getElementById(tableId);
             if (!tbody) return;
+            updateThreatFilterCounts();
+
             if (!threats || threats.length === 0) {
                 const colSpan = tableId === 'threatsTableBody' || tableId === 'allThreatsModalTableBody' ? 8 : 7;
                 tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center; padding:2rem; color:var(--muted-foreground);">No threats detected for the selected period.</td></tr>`;
                 return;
             }
-            tbody.innerHTML = threats.map(threat => `
+
+            const visibleThreats = threats.filter(matchesThreatFilters);
+            if (!visibleThreats.length) {
+                const colSpan = tableId === 'threatsTableBody' || tableId === 'allThreatsModalTableBody' ? 8 : 7;
+                const activeFilterLabel = String(activeThreatSeverityFilter || 'all').toLowerCase() === 'all'
+                    ? 'current filters'
+                    : `${activeThreatSeverityFilter} filter`;
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center; padding:2rem; color:var(--muted-foreground);">No threats match the ${escHtml(activeFilterLabel)}.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = visibleThreats.map(threat => `
                 <tr>
                     <td><code class="threat-id">${threat.id}</code></td>
                     <td>
@@ -4913,6 +5392,267 @@
                 </tr>
             `).join('');
             if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
+        }
+
+        function normalizeIncidentItem(item = {}, index = 0) {
+            const kind = String(item.incident_kind || item.kind || 'incident').toLowerCase();
+            const type = String(item.incident_type || item.action || item.type || 'unknown').toUpperCase();
+            const status = String(item.status || 'unknown').toLowerCase();
+            const detectedAt = item.detected_at || item.created_at || item.timestamp || new Date().toISOString();
+            const client = item.client && typeof item.client === 'object' ? item.client : {};
+            const clientLabel = client.hostname || client.client_id || item.client_id || item.target_client_id || 'Unknown';
+
+            return {
+                ...item,
+                incident_id: String(item.incident_id || item.id || item.event_id || item.action_id || `INC_${index}`),
+                incident_kind: kind,
+                incident_type: type,
+                title: item.title || type,
+                target: item.target || item.destination_ip || item.source_ip || item.source_domain || clientLabel || 'Unknown',
+                source_ip: item.source_ip || item.raw_details?.attack?.source_ip || item.raw_details?.details?.source_ip || 'Unknown',
+                source_domain: item.source_domain || item.raw_details?.attack?.source_domain || item.raw_details?.details?.source_domain || null,
+                source_country: item.source_country || item.raw_details?.attack?.indicators?.source_country || item.raw_details?.details?.source_country || 'Unknown',
+                severity: String(item.severity || 'unknown').toLowerCase(),
+                status,
+                blocked: Boolean(item.blocked),
+                quarantined: Boolean(item.quarantined),
+                ignored: Boolean(item.ignored),
+                action: type,
+                detected_at: detectedAt,
+                client,
+                client_label: clientLabel,
+                source: item.source || 'SENTINEL-AI',
+                description: item.description || item.short_description || 'Incident detected',
+                short_description: item.short_description || item.description || 'Incident detected',
+                raw_details: item.raw_details || {},
+            };
+        }
+
+        function getIncidentBadgeClass(incident) {
+            if (!incident) return 'badge';
+            if (incident.quarantined) return 'badge-threat';
+            if (incident.blocked) return 'badge-warning';
+            if (incident.ignored) return 'badge-safe';
+            return incident.severity === 'critical' || incident.severity === 'high' ? 'badge-threat' : 'badge';
+        }
+
+        function matchesIncidentFilter(incident) {
+            const filter = String(activeIncidentFilter || 'all').toLowerCase();
+            if (filter === 'all') return true;
+            if (filter === 'blocked') return incident.blocked || incident.action === 'BLOCK' || incident.status === 'blocked';
+            if (filter === 'ignored') return incident.ignored || incident.action === 'IGNORE' || incident.status === 'ignored';
+            if (filter === 'quarantined') return incident.quarantined || incident.action === 'QUARANTINE' || incident.status === 'quarantined';
+            return true;
+        }
+
+        function updateIncidentStats() {
+            const statsTargets = [
+                document.getElementById('incidentStats'),
+                document.getElementById('incidentStatsThreatsPage'),
+            ].filter(Boolean);
+            if (!statsTargets.length) return;
+
+            const total = Array.isArray(incidentRecords) ? incidentRecords.length : 0;
+            const blocked = incidentRecords.filter(item => item.blocked || item.action === 'BLOCK' || item.status === 'blocked').length;
+            const ignored = incidentRecords.filter(item => item.ignored || item.action === 'IGNORE' || item.status === 'ignored').length;
+            const quarantined = incidentRecords.filter(item => item.quarantined || item.action === 'QUARANTINE' || item.status === 'quarantined').length;
+            const visible = incidentRecords.filter(matchesIncidentFilter).length;
+
+            const statsMarkup = `
+                <span><strong>${visible}</strong> visible</span>
+                <span><strong>${total}</strong> total</span>
+                <span><strong>${blocked}</strong> blocked</span>
+                <span><strong>${ignored}</strong> ignored</span>
+                <span><strong>${quarantined}</strong> quarantined</span>
+            `;
+            statsTargets.forEach((el) => {
+                el.innerHTML = statsMarkup;
+            });
+        }
+
+        function renderIncidents() {
+            const tbodies = [
+                document.getElementById('incidentTableBody'),
+                document.getElementById('incidentTableBodyThreatsPage'),
+            ].filter(Boolean);
+            if (!tbodies.length) return;
+
+            const filterButtons = {
+                all: [document.getElementById('incidentFilterAll'), document.getElementById('incidentFilterAllThreatsPage')],
+                blocked: [document.getElementById('incidentFilterBlocked'), document.getElementById('incidentFilterBlockedThreatsPage')],
+                ignored: [document.getElementById('incidentFilterIgnored'), document.getElementById('incidentFilterIgnoredThreatsPage')],
+                quarantined: [document.getElementById('incidentFilterQuarantined'), document.getElementById('incidentFilterQuarantinedThreatsPage')],
+            };
+            Object.entries(filterButtons).forEach(([key, btnList]) => {
+                (btnList || []).forEach((btn) => {
+                    if (btn) btn.classList.toggle('active', String(activeIncidentFilter || 'all') === key);
+                });
+            });
+
+            const visibleIncidents = Array.isArray(incidentRecords) ? incidentRecords.filter(matchesIncidentFilter) : [];
+            window.visibleIncidentRows = visibleIncidents;
+            updateIncidentStats();
+
+            if (!visibleIncidents.length) {
+                const filterLabel = activeIncidentFilter && activeIncidentFilter !== 'all' ? ` for ${escHtml(activeIncidentFilter)}` : '';
+                const emptyMarkup = `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">No incident records matched current filters${filterLabel}.</td></tr>`;
+                tbodies.forEach((tbody) => {
+                    tbody.innerHTML = emptyMarkup;
+                });
+                return;
+            }
+
+            const rowsMarkup = visibleIncidents.map((incident, index) => {
+                const clientLabel = incident.client_label || incident.client?.hostname || incident.client?.client_id || 'Unknown';
+                const statusLabel = incident.quarantined ? 'quarantined' : incident.blocked ? 'blocked' : incident.ignored ? 'ignored' : incident.status || 'open';
+                return `
+                    <tr>
+                        <td>
+                            <div style="font-weight:600;">${escHtml(formatThreatTypeLabel(incident.title || incident.incident_type || 'incident'))}</div>
+                            <div class="threat-subline" style="max-width: 260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(incident.short_description || incident.description || '')}</div>
+                        </td>
+                        <td><code class="threat-target">${escHtml(incident.target || 'Unknown')}</code></td>
+                        <td><code class="threat-id">${escHtml(incident.source_ip || 'Unknown')}</code></td>
+                        <td>${escHtml(incident.source_country || 'Unknown')}</td>
+                        <td>
+                            <div>${escHtml(clientLabel)}</div>
+                            ${incident.client?.ip_address ? `<div class="threat-subline">${escHtml(incident.client.ip_address)}</div>` : ''}
+                        </td>
+                        <td><span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(incident.action || incident.incident_type || 'UNKNOWN')}</span></td>
+                        <td>${escHtml(statusLabel)}</td>
+                        <td>${incident.detected_at ? escHtml(new Date(incident.detected_at).toLocaleString()) : 'Unknown'}</td>
+                        <td style="text-align:right;">
+                            <button class="btn btn-ghost btn-sm tooltip" onclick="const btn = event.currentTarget; btn.classList.add('clicked'); setTimeout(() => btn.classList.remove('clicked'), 300); openIncidentDetailByIndex(${index})" title="View Incident Details">
+                                👁️
+                                <span class="tooltiptext">View Incident Details</span>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            tbodies.forEach((tbody) => {
+                tbody.innerHTML = rowsMarkup;
+            });
+        }
+
+        function openIncidentDetailByIndex(index) {
+            const rows = Array.isArray(window.visibleIncidentRows) ? window.visibleIncidentRows : [];
+            const incident = rows[Number(index)];
+            if (!incident) return;
+            openIncidentDetailModal(incident);
+        }
+
+        function filterIncidents(filter = 'all') {
+            return fetchIncidents(filter);
+        }
+
+        function openIncidentDetailModal(incident) {
+            const modal = document.getElementById('incidentDetailModal');
+            const content = document.getElementById('incidentDetailContent');
+            const subtitle = document.getElementById('incidentDetailSubtitle');
+            if (!modal || !content || !incident) return;
+
+            const details = incident.raw_details || {};
+            const client = incident.client || {};
+            if (subtitle) {
+                subtitle.textContent = `${incident.incident_kind || 'incident'} · ${incident.action || incident.status || 'unknown'} · ${incident.target || 'unknown target'}`;
+            }
+
+            const rawSections = Object.entries(details)
+                .map(([key, value]) => `
+                    <div style="padding:0.75rem; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                        <div style="font-size:0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem; text-transform: capitalize;">${escHtml(String(key).replace(/_/g, ' '))}</div>
+                        <pre style="margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.82rem;">${escHtml(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>
+                    </div>
+                `)
+                .join('');
+
+            content.innerHTML = `
+                <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:1rem; margin-bottom:1.25rem;">
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Incident ID</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.incident_id || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Type</div><div>${escHtml(incident.incident_type || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Target</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.target || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Action</div><div><span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(incident.action || 'UNKNOWN')}</span></div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Source IP</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.source_ip || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Country</div><div>${escHtml(incident.source_country || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Client / PC</div><div>${escHtml(client.hostname || client.client_id || incident.client_label || 'Unknown')}</div></div>
+                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Time</div><div>${incident.detected_at ? escHtml(new Date(incident.detected_at).toLocaleString()) : 'Unknown'}</div></div>
+                </div>
+                <div style="margin-bottom:1.25rem; padding:1rem; background: rgba(255,255,255,0.02); border-radius:8px;">
+                    <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.5rem;">Description</div>
+                    <div style="line-height:1.6;">${escHtml(incident.description || incident.short_description || 'No description available.')}</div>
+                </div>
+                ${rawSections ? `
+                    <div style="margin-bottom:1.25rem;">
+                        <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.75rem;">Structured Details</div>
+                        <div style="display:grid; gap:0.5rem;">${rawSections}</div>
+                    </div>
+                ` : ''}
+                <div style="margin-bottom:1.25rem; padding:1rem; background: rgba(255,255,255,0.02); border-radius:8px;">
+                    <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.5rem;">Raw Payload</div>
+                    <pre style="margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.82rem;">${escHtml(JSON.stringify(incident, null, 2))}</pre>
+                </div>
+            `;
+
+            modal.style.display = 'flex';
+        }
+
+        function closeIncidentDetail() {
+            const modal = document.getElementById('incidentDetailModal');
+            const content = document.getElementById('incidentDetailContent');
+            const subtitle = document.getElementById('incidentDetailSubtitle');
+            if (modal) modal.style.display = 'none';
+            if (content) content.innerHTML = '';
+            if (subtitle) subtitle.textContent = '';
+        }
+
+        async function fetchIncidents(filter = activeIncidentFilter || 'all') {
+            activeIncidentFilter = String(filter || 'all').toLowerCase();
+            const statsTargets = [
+                document.getElementById('incidentStats'),
+                document.getElementById('incidentStatsThreatsPage'),
+            ].filter(Boolean);
+            const tbodyTargets = [
+                document.getElementById('incidentTableBody'),
+                document.getElementById('incidentTableBodyThreatsPage'),
+            ].filter(Boolean);
+            if (tbodyTargets.length && !incidentRecords.length) {
+                tbodyTargets.forEach((tbody) => {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading incidents...</td></tr>';
+                });
+            }
+
+            try {
+                const query = new URLSearchParams({ hours: '720', limit: '1000' });
+                if (activeIncidentFilter === 'blocked') {
+                    query.set('blocked_only', 'true');
+                } else if (activeIncidentFilter === 'quarantined') {
+                    query.set('quarantined_only', 'true');
+                } else if (activeIncidentFilter === 'ignored') {
+                    query.set('ignored_only', 'true');
+                }
+
+                const payload = await apiRequest(`${API_ENDPOINTS.incidents}?${query.toString()}`, { timeoutMs: 20000 });
+                const items = Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : []);
+                incidentRecords = items.map((item, index) => normalizeIncidentItem(item, index));
+                renderIncidents();
+                updateSystemStatusPanel();
+                if (statsTargets.length && !incidentRecords.length) {
+                    statsTargets.forEach((statsEl) => {
+                        statsEl.innerHTML = '<span>No incident records available</span>';
+                    });
+                }
+            } catch (error) {
+                console.warn('Incident feed unavailable:', error?.message || error);
+                incidentRecords = [];
+                if (tbodyTargets.length) {
+                    tbodyTargets.forEach((tbody) => {
+                        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Incident feed unavailable right now.</td></tr>';
+                    });
+                }
+                updateIncidentStats();
+            }
         }
 
         async function fetchAllReports() {
@@ -5182,7 +5922,7 @@
                                             Relevant APIs: ${expectedApis.length} • Checked: ${apis.length}
                                         </div>
                                     ` : ''}
-                                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                        <div class="detail-scroll-block" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                                         ${(apiStatusEntries.length > 0 ? apiStatusEntries : apis.map(api => ({ name: api, status: 'checked' }))).map(api => {
                                             const status = (api.status || '').toLowerCase();
                                             const badgeClass = status === 'checked' || status === 'online'
@@ -5232,7 +5972,7 @@
                         threatIndicatorsHTML = `
                             <div style="margin-bottom: 1.5rem;">
                                 <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">⚠️ Threat Indicators (${effectiveThreatIndicators.length})</div>
-                                <div style="display: grid; gap: 0.5rem; max-height: 300px; overflow-y: auto;">
+                                <div class="detail-scroll-block" style="display: grid; gap: 0.5rem;">
                                     ${effectiveThreatIndicators.map(indicator => {
                                         const severityColor = indicator.severity === 'critical' ? 'var(--destructive)' : 
                                                              indicator.severity === 'medium' ? 'var(--warning)' : 'var(--muted-foreground)';
@@ -5695,7 +6435,7 @@
                 ${apiSources.length ? `
                     <div style="margin-bottom: 1.5rem;">
                         <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">🔍 API Sources</div>
-                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        <div class="detail-scroll-block" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                             ${apiSources.map(source => `<span class="badge">${source}</span>`).join('')}
                         </div>
                     </div>
@@ -5703,7 +6443,7 @@
                 ${affectedSystems.length ? `
                     <div style="margin-bottom: 1.5rem;">
                         <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">💻 Affected Systems</div>
-                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        <div class="detail-scroll-block" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                             ${affectedSystems.map(system => `<span class="badge">${system}</span>`).join('')}
                         </div>
                     </div>
@@ -5711,7 +6451,7 @@
                 ${detailEntries.length ? `
                     <div style="margin-bottom: 1.5rem;">
                         <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">🧾 Technical Details</div>
-                        <div style="display: grid; gap: 0.5rem;">
+                        <div class="detail-scroll-block" style="display: grid; gap: 0.5rem;">
                             ${detailEntries.map(([key, value]) => `
                                 <div style="padding: 0.75rem; background: rgba(255,255,255,0.02); border-radius: 6px;">
                                     <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem; text-transform: capitalize;">${String(key).replace(/_/g, ' ')}</div>
@@ -6791,9 +7531,13 @@
 
             // Clamp refresh interval to avoid request storms caused by stale/local bad settings.
             const interval = Number(dashboardSettings.refreshIntervalMs || DEFAULT_DASHBOARD_SETTINGS.refreshIntervalMs);
-            dashboardSettings.refreshIntervalMs = Number.isFinite(interval)
-                ? Math.min(120000, Math.max(10000, interval))
-                : DEFAULT_DASHBOARD_SETTINGS.refreshIntervalMs;
+            if (Number.isFinite(interval) && interval === 0) {
+                dashboardSettings.refreshIntervalMs = 0;
+            } else {
+                dashboardSettings.refreshIntervalMs = Number.isFinite(interval)
+                    ? Math.min(600000, Math.max(10000, interval))
+                    : DEFAULT_DASHBOARD_SETTINGS.refreshIntervalMs;
+            }
             console.log('🔗 API_BASE_URL set to:', API_BASE_URL);
         }
 
@@ -6983,6 +7727,8 @@
                 refreshClientsPage();
             } else if (page === 'reports') {
                 renderAllReportsPage();
+            } else if (page === 'threats') {
+                fetchIncidents(activeIncidentFilter || 'all');
             } else if (page === 'dashboard') {
                 // Refresh live activity feed when returning to dashboard
                 refreshLiveActivity();
@@ -6997,10 +7743,12 @@
         function applyPanelState() {
             const threatsCard = document.getElementById('recentThreatsCard');
             const logsCard = document.getElementById('recentLogsCard');
+            const incidentsCard = document.getElementById('incidentsCard');
             const quarantineCard = document.getElementById('quarantineCard');
             const auditTrailCard = document.getElementById('auditTrailCard');
             const threatsBtn = document.getElementById('toggleRecentThreatsBtn');
             const logsBtn = document.getElementById('toggleRecentLogsBtn');
+            const incidentsBtn = document.getElementById('toggleIncidentsBtn');
             const quarantineBtn = document.getElementById('toggleQuarantineBtn');
             const auditTrailBtn = document.getElementById('toggleAuditTrailBtn');
 
@@ -7012,6 +7760,11 @@
             if (logsCard && logsBtn) {
                 logsCard.style.display = panelState.recentLogsCollapsed ? 'none' : 'block';
                 logsBtn.textContent = panelState.recentLogsCollapsed ? '+ Maximize' : '− Minimize';
+            }
+
+            if (incidentsCard && incidentsBtn) {
+                incidentsCard.style.display = panelState.incidentsCollapsed ? 'none' : 'block';
+                incidentsBtn.textContent = panelState.incidentsCollapsed ? '+ Maximize' : '− Minimize';
             }
 
             if (quarantineCard && quarantineBtn) {
@@ -7039,6 +7792,12 @@
 
         function toggleRecentLogsPanel() {
             panelState.recentLogsCollapsed = !panelState.recentLogsCollapsed;
+            persistPanelState();
+            applyPanelState();
+        }
+
+        function toggleIncidentsPanel() {
+            panelState.incidentsCollapsed = !panelState.incidentsCollapsed;
             persistPanelState();
             applyPanelState();
         }
@@ -7173,14 +7932,16 @@
                     const refreshCalls = [
                         fetchDashboardStats(),
                         fetchThreats(),
-                        fetchLogs(),
                         fetchApiStatus(),
-                        fetchSystemHealth(),
-                        fetchMonitoringStats(),
                     ];
 
                     if (activePage === 'dashboard') {
                         refreshCalls.push(
+                            fetchLogs(),
+                            fetchMonitoringStats(),
+                        );
+                        refreshCalls.push(
+                            fetchIncidents(activeIncidentFilter || 'all'),
                             fetchActiveClients(),
                             fetchSecurityPosture(),
                             fetchQuarantineInventory(),
@@ -7870,27 +8631,16 @@
             btn.innerHTML = '<span class="spinner"></span> Scanning...';
 
             try {
-                // Detect scan type
-                let type = inferScanTypeFromTarget(target);
-                const activeType = String(selectedScanType || '').toLowerCase();
-                if (activeType === 'file_type' || activeType === 'file') {
-                    type = inferScanTypeFromTarget(target);
-                } else if (activeType === 'domain' && /^https?:\/\//i.test(target)) {
-                    type = 'url';
-                } else if (activeType === 'url' && !/^https?:\/\//i.test(target)) {
-                    type = inferScanTypeFromTarget(target);
-                }
-
                 const scanInputEl = input || primaryInput || secondaryInput;
                 if (scanInputEl) {
-                    scanInputEl.dataset.detectedScanType = type;
+                    scanInputEl.dataset.detectedScanType = inferScanTypeFromTarget(target);
                 }
 
                 const result = await apiRequest(API_ENDPOINTS.scan, {
                     method: 'POST',
-                    body: JSON.stringify({ type, target })
+                    body: JSON.stringify({ type: inferScanTypeFromTarget(target), target })
                 });
-const isThreat = isThreatResult(result);
+                const isThreat = isThreatResult(result);
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
                 lastScanMeta = { target, time: new Date().toISOString() };
                 updateSystemStatusPanel();
@@ -8509,6 +9259,7 @@ const isThreat = isThreatResult(result);
                 console.log('Using static threats data');
                 updateSourceSignal('threats', { ok: false, error: error?.message || 'threats_failed' });
             }
+            updateThreatFilterCounts();
             renderThreats();
             renderThreats('allThreatsPageTableBody');
             renderThreats('allThreatsModalTableBody');
@@ -9044,6 +9795,7 @@ const isThreat = isThreatResult(result);
                 const toggleBindings = [
                     { id: 'toggleRecentThreatsBtn', fn: toggleRecentThreatsPanel },
                     { id: 'toggleRecentLogsBtn', fn: toggleRecentLogsPanel },
+                    { id: 'toggleIncidentsBtn', fn: toggleIncidentsPanel },
                     { id: 'toggleQuarantineBtn', fn: toggleQuarantinePanel },
                     { id: 'toggleLiveActivityBtn', fn: toggleLiveActivityPanel },
                     { id: 'toggleScansHistoryBtn', fn: toggleScansHistoryPanel },
@@ -9063,6 +9815,7 @@ const isThreat = isThreatResult(result);
                 Promise.allSettled([
                     fetchDashboardStats(),
                     fetchThreats(),
+                    fetchIncidents('all'),
                     fetchLogs(),
                     fetchApiStatus(),
                     fetchSystemHealth(),

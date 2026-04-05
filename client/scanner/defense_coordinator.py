@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -16,6 +17,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Callable
 import json
 import textwrap
+import ipaddress
+import urllib.request
+
+from .threat_intel import enrich_ip_threat_intel
 
 logger = logging.getLogger("DefenseCoordinator")
 
@@ -30,22 +35,85 @@ class DefenseCoordinator:
             def run_dialog():
                 root = tk.Tk()
                 root.title("SentinelAI Threat Response")
-                root.geometry("420x220")
+                root.geometry("560x360")
                 root.resizable(False, False)
-                msg = f"Threat Detected:\nType: {attack.get('type', 'unknown')}\nSeverity: {attack.get('severity', 'UNKNOWN')}\nSource: {attack.get('source_ip', 'UNKNOWN')}\n\nChoose an action:"
-                label = tk.Label(root, text=msg, justify="left", font=("Arial", 11))
-                label.pack(padx=16, pady=16)
+                root.configure(bg="#0b1220")
+
+                card = tk.Frame(root, bg="#111827", bd=0, highlightthickness=1, highlightbackground="#1f2937")
+                card.pack(fill="both", expand=True, padx=16, pady=16)
+
+                title = tk.Label(
+                    card,
+                    text="Threat Response Required",
+                    fg="#f9fafb",
+                    bg="#111827",
+                    font=("Arial", 15, "bold"),
+                )
+                title.pack(anchor="w", padx=16, pady=(14, 8))
+
+                source_line = attack.get('source_ip', 'UNKNOWN')
+                if attack.get('source_location'):
+                    source_line = f"{source_line} ({attack.get('source_location')})"
+                message = (
+                    f"Type: {attack.get('type', 'unknown')}\n"
+                    f"Severity: {attack.get('severity', 'UNKNOWN')}\n"
+                    f"Source: {source_line}\n"
+                    f"Threat count from source: {attack.get('source_threat_count', 1)}\n\n"
+                    "Select an action. If no response after 5 prompts, auto-quarantine will start."
+                )
+                label = tk.Label(
+                    card,
+                    text=message,
+                    justify="left",
+                    anchor="w",
+                    fg="#d1d5db",
+                    bg="#111827",
+                    font=("Arial", 11),
+                )
+                label.pack(fill="x", padx=16, pady=(0, 12))
+
                 btn_frame = tk.Frame(root)
-                btn_frame.pack(pady=8)
+                btn_frame.configure(bg="#111827")
+                btn_frame.pack(pady=(0, 16))
 
                 def on_response(response):
                     self.respond_to_attack(attack_id, response)
                     root.quit()
                     root.destroy()
 
-                tk.Button(btn_frame, text="Block", width=12, command=lambda: on_response('BLOCK')).pack(side=tk.LEFT, padx=8)
-                tk.Button(btn_frame, text="Ignore", width=12, command=lambda: on_response('IGNORE')).pack(side=tk.LEFT, padx=8)
-                tk.Button(btn_frame, text="Quarantine", width=12, command=lambda: on_response('QUARANTINE')).pack(side=tk.LEFT, padx=8)
+                tk.Button(
+                    btn_frame,
+                    text="Block",
+                    width=14,
+                    bg="#b91c1c",
+                    fg="#ffffff",
+                    activebackground="#991b1b",
+                    activeforeground="#ffffff",
+                    relief="flat",
+                    command=lambda: on_response('BLOCK'),
+                ).pack(side=tk.LEFT, padx=8)
+                tk.Button(
+                    btn_frame,
+                    text="Ignore",
+                    width=14,
+                    bg="#374151",
+                    fg="#ffffff",
+                    activebackground="#1f2937",
+                    activeforeground="#ffffff",
+                    relief="flat",
+                    command=lambda: on_response('IGNORE'),
+                ).pack(side=tk.LEFT, padx=8)
+                tk.Button(
+                    btn_frame,
+                    text="Quarantine",
+                    width=14,
+                    bg="#ca8a04",
+                    fg="#111827",
+                    activebackground="#a16207",
+                    activeforeground="#ffffff",
+                    relief="flat",
+                    command=lambda: on_response('QUARANTINE'),
+                ).pack(side=tk.LEFT, padx=8)
 
                 # Make the dialog modal
                 root.grab_set()
@@ -86,11 +154,13 @@ class DefenseCoordinator:
         self.alert_counts = defaultdict(int)  # attack_id -> count
         self.user_responses = {}  # attack_id -> response
         self.suppressed_attacks = set()  # Attacks that should be suppressed (false positives)
+        self.source_threat_counts = defaultdict(int)  # source_ip -> number of threats detected
+        self._geo_cache: Dict[str, str] = {}
         
         # Configuration (reduced alert frequency to prevent spam)
-        self.MAX_ALERTS = 3  # Reduced from 5 to 3
-        self.ALERT_INTERVAL = 60  # Increased from 30s to 60s
-        self.RESPONSE_TIMEOUT = 600  # Increased from 5min to 10min for better user experience
+        self.MAX_ALERTS = max(5, int(os.getenv("SENTINEL_MAX_ALERTS", "5") or 5))
+        self.ALERT_INTERVAL = max(15, int(os.getenv("SENTINEL_ALERT_INTERVAL", "60") or 60))
+        self.RESPONSE_TIMEOUT = max(300, int(os.getenv("SENTINEL_RESPONSE_TIMEOUT", "600") or 600))
         self.MIN_SEVERITY_FOR_ALERT = 'HIGH'  # Only alert on HIGH/CRITICAL attacks
         
         # Quarantine state
@@ -140,9 +210,107 @@ class DefenseCoordinator:
         """Build readable source label: ip (hostname)."""
         ip = attack.get('source_ip', 'UNKNOWN')
         host = attack.get('source_hostname') or attack.get('source_domain')
+        location = attack.get('source_location')
         if host and host != ip:
-            return f"{ip} ({host})"
-        return str(ip)
+            base = f"{ip} ({host})"
+        else:
+            base = str(ip)
+        if location:
+            return f"{base} [{location}]"
+        return base
+
+    def _normalize_attack(self, attack: Dict) -> Dict:
+        """Normalize incoming attack payload so alerts always have complete context."""
+        normalized = dict(attack or {})
+        normalized_type = str(normalized.get('type') or normalized.get('alert_type') or 'attack_alert')
+        normalized['type'] = normalized_type
+        normalized['description'] = str(
+            normalized.get('description')
+            or normalized.get('details')
+            or normalized.get('short_description')
+            or 'Suspicious activity detected'
+        )
+        normalized['severity'] = str(normalized.get('severity') or 'HIGH').upper()
+        normalized['timestamp'] = self._coerce_timestamp(normalized.get('timestamp'))
+
+        source_ip = (
+            normalized.get('source_ip')
+            or normalized.get('src_ip')
+            or normalized.get('remote_ip')
+            or normalized.get('attacker_ip')
+        )
+        source_ip = str(source_ip).strip() if source_ip else ''
+        if not source_ip or source_ip.upper() == 'UNKNOWN':
+            source_ip = self._guess_local_ip()
+        normalized['source_ip'] = source_ip or 'UNKNOWN'
+
+        if not normalized.get('source_hostname'):
+            normalized['source_hostname'] = self._resolve_hostname(normalized['source_ip'])
+
+        normalized['source_location'] = self._lookup_ip_location(normalized['source_ip'])
+        self.source_threat_counts[normalized['source_ip']] += 1
+        normalized['source_threat_count'] = self.source_threat_counts[normalized['source_ip']]
+        return normalized
+
+    @staticmethod
+    def _coerce_timestamp(value) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except Exception:
+                pass
+        return datetime.now()
+
+    @staticmethod
+    def _guess_local_ip() -> str:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except Exception:
+            return "127.0.0.1"
+
+    @staticmethod
+    def _resolve_hostname(ip: str) -> Optional[str]:
+        try:
+            if not ip or ip in {'UNKNOWN', 'MULTIPLE'}:
+                return None
+            return socket.gethostbyaddr(ip)[0]
+        except Exception:
+            return None
+
+    def _lookup_ip_location(self, ip: str) -> str:
+        """Return a short location string for the source IP."""
+        if not ip or ip in {'UNKNOWN', 'MULTIPLE'}:
+            return "Unknown location"
+        if ip in self._geo_cache:
+            return self._geo_cache[ip]
+
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_loopback:
+                location = "Loopback/local host"
+            elif ip_obj.is_private:
+                location = "Private/local network"
+            else:
+                req = urllib.request.Request(
+                    f"https://ipapi.co/{ip}/json/",
+                    headers={"User-Agent": "SENTINEL-AI/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                city = payload.get('city') or ''
+                region = payload.get('region') or ''
+                country = payload.get('country_name') or payload.get('country') or ''
+                parts = [p for p in (city, region, country) if p]
+                location = ", ".join(parts) if parts else "Public internet"
+        except Exception:
+            location = "Location unavailable"
+
+        self._geo_cache[ip] = location
+        return location
 
     def _is_quarantine_notice(self, attack: Dict, alert_num: int) -> bool:
         """Return True when the notification is for quarantine state rather than alert escalation."""
@@ -188,6 +356,8 @@ class DefenseCoordinator:
         - Send alerts up to 3 times for real threats
         - Quarantine if no response
         """
+        attack = self._normalize_attack(attack)
+
         # Skip if attack is suppressed (whitelisted IP/false positive)
         source_ip = attack.get('source_ip', '')
         if source_ip in self.suppressed_attacks:
@@ -260,6 +430,7 @@ class DefenseCoordinator:
                 
                 if response == 'IGNORE':
                     # User chose to ignore
+                    self._notify_action_event(attack, "IGNORE", "Threat ignored by user (source suppressed for this event).")
                     del self.active_attacks[attack_id]
                     return
                 elif response == 'BLOCK':
@@ -288,7 +459,7 @@ class DefenseCoordinator:
         
         # Max alerts reached without response - QUARANTINE
         if attack['alert_count'] >= self.MAX_ALERTS:
-            logger.critical(f"🚨 MAX ALERTS REACHED for {attack_id} - INITIATING AUTO-QUARANTINE")
+            logger.critical(f"🚨 MAX PROMPTS REACHED ({self.MAX_ALERTS}) for {attack_id} - INITIATING AUTO-QUARANTINE")
             self._execute_quarantine(attack_id, attack, user_initiated=False)
 
     def _send_alert(self, attack_id: str, attack: Dict):
@@ -383,11 +554,12 @@ class DefenseCoordinator:
                 ("Source", source_label),
                 ("Summary", short_desc),
                 ("Mitigate", mitigation),
+                ("Threat Count (Source)", attack.get('source_threat_count', 1)),
                 ("Remaining Alerts", remaining),
                 ("Next Alert", f"{self.ALERT_INTERVAL}s"),
                 ("Timeout", f"{self.RESPONSE_TIMEOUT}s"),
             ],
-            footer="Response options: BLOCK | IGNORE | QUARANTINE",
+            footer=f"Response options: BLOCK | IGNORE | QUARANTINE | Auto-quarantine after {self.MAX_ALERTS} prompts",
         )
 
     def _notify_desktop(self, message: str, attack: Dict, alert_num: int):
@@ -507,6 +679,7 @@ class DefenseCoordinator:
         source_ip = attack.get('source_ip')
         if not source_ip or source_ip == 'UNKNOWN':
             logger.warning("Cannot block: no valid source IP")
+            self._notify_action_event(attack, "BLOCK", "Block requested but source IP is unavailable.")
             return
         
         system = platform.system()
@@ -527,6 +700,7 @@ class DefenseCoordinator:
                     '-s', source_ip, '-j', 'DROP'
                 ], check=True)
                 logger.info(f"✅ Blocked {source_ip} using {ipt}")
+                self._notify_action_event(attack, "BLOCK", f"Blocked {source_ip} using {ipt}.")
                 
             elif system == "Darwin":  # macOS
                 # Use pf (packet filter)
@@ -535,6 +709,7 @@ class DefenseCoordinator:
                     '-T', 'add', source_ip
                 ], check=True)
                 logger.info(f"✅ Blocked {source_ip} using pf")
+                self._notify_action_event(attack, "BLOCK", f"Blocked {source_ip} using pf.")
                 
             elif system == "Windows":
                 # Use Windows Firewall
@@ -544,11 +719,14 @@ class DefenseCoordinator:
                     f'remoteip={source_ip}'
                 ], check=True)
                 logger.info(f"✅ Blocked {source_ip} using Windows Firewall")
+                self._notify_action_event(attack, "BLOCK", f"Blocked {source_ip} using Windows Firewall.")
                 
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to block {source_ip}: {e}")
+            self._notify_action_event(attack, "BLOCK", f"Block failed for {source_ip}: {e}")
         except Exception as e:
             logger.error(f"Error blocking {source_ip}: {e}")
+            self._notify_action_event(attack, "BLOCK", f"Error while blocking {source_ip}: {e}")
 
     def _execute_quarantine(self, attack_id: str, attack: Dict, user_initiated: bool = False):
         """Execute full system quarantine"""
@@ -556,7 +734,7 @@ class DefenseCoordinator:
             logger.warning("System already quarantined")
             return
 
-        reason = "User-initiated" if user_initiated else "Automatic (No response to alerts)"
+        reason = "User-initiated" if user_initiated else f"Automatic (No response after {self.MAX_ALERTS} prompts)"
         logger.critical(
             "🔒 Quarantine initiated | reason=%s | type=%s | source=%s | time=%s",
             reason,
@@ -588,6 +766,11 @@ class DefenseCoordinator:
         
         # Send critical notification
         self._send_quarantine_notification(attack)
+        self._notify_action_event(
+            attack,
+            "QUARANTINE",
+            f"System quarantine activated: {reason}",
+        )
         
         # Callback
         if self.callback:
@@ -609,7 +792,11 @@ class DefenseCoordinator:
                 'source_ip': attack.get('source_ip', 'UNKNOWN'),
                 'severity': attack['severity'],
                 'reason': reason,
-                'description': attack['description']
+                'description': attack['description'],
+                'threat_intel': enrich_ip_threat_intel(
+                    attack.get('source_ip', 'UNKNOWN'),
+                    event_context='defense_quarantine',
+                ),
             }
             
             # Append to log file
@@ -901,6 +1088,27 @@ class DefenseCoordinator:
         
         self.user_responses[attack_id] = response
         logger.info(f"User response recorded for {attack_id}: {response}")
+        attack = self.active_attacks.get(attack_id)
+        if attack:
+            self._notify_action_event(attack, response, f"User selected {response} for incident {attack_id}.")
+
+    def _notify_action_event(self, attack: Dict, action: str, details: str):
+        """Emit consistent action notifications across console and desktop channels."""
+        source_label = self._format_source_endpoint(attack)
+        self._render_console_table(
+            "🛡️ RESPONSE ACTION",
+            [
+                ("Action", action),
+                ("Attack Type", attack.get('type', 'unknown')),
+                ("Source", source_label),
+                ("Details", details),
+                ("Time", datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+            ],
+        )
+        try:
+            self._notify_desktop(details, {**attack, 'type': f"Action: {action}"}, 1)
+        except Exception:
+            pass
 
     def get_status(self) -> Dict:
         """Get current defense status"""

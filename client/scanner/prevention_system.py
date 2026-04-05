@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional
 
+from .threat_intel import enrich_ip_threat_intel
+
 logger = logging.getLogger("PreventionSystem")
 
 
@@ -614,11 +616,16 @@ Recommendations:
                 loaded = json.loads(self.quarantine_index.read_text(encoding='utf-8'))
                 records = loaded if isinstance(loaded, list) else []
 
+            local_ip = "127.0.0.1"
+            intel = enrich_ip_threat_intel(local_ip, event_context="file_quarantine")
+
             records.append({
                 'timestamp': datetime.now().isoformat(),
                 'original_path': str(original_path),
                 'quarantine_path': str(quarantine_path),
                 'sha256': sha256_hash,
+                'source_ip': local_ip,
+                'threat_intel': intel,
             })
 
             import json
@@ -651,6 +658,7 @@ Recommendations:
                 'reason': reason,
                 'timestamp': ts.isoformat(),
                 'action': 'ip_blocked',
+                'threat_intel': enrich_ip_threat_intel(ip_address, event_context='prevention_ip_block'),
             }
             # Avoid duplicate within same minute
             already = any(

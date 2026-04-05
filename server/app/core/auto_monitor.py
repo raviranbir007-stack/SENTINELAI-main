@@ -108,6 +108,12 @@ class AutomaticActivityMonitor:
         ).strip().lower() not in {"0", "false", "no", "off"}
         self.external_escalation_types = {"ip", "url", "domain", "file_hash"}
         self._last_prompt_at: Dict[str, float] = {}
+        self._last_prompt_fingerprint: Optional[str] = None
+        self._last_prompt_fingerprint_at = 0.0
+        self.prompt_duplicate_suppress_seconds = max(
+            1,
+            int(os.getenv("SENTINEL_PROMPT_DUPLICATE_SUPPRESS_SECONDS", "5") or 5),
+        )
         self._trusted_recent_ips: Dict[str, float] = {}
         self._public_dns_cache: Dict[str, tuple[float, Optional[str]]] = {}
         self.trusted_infra_ips: Set[str] = {
@@ -1065,6 +1071,27 @@ class AutomaticActivityMonitor:
 
         if artifact_type == 'url' and context and '[' in context:
             endpoint = f"{endpoint}{context}"
+
+        # Suppress immediate duplicate cards with identical rendered content.
+        # This keeps terminal output readable when parallel monitors emit the same event.
+        prompt_fingerprint = "|".join(
+            [
+                str(type_label).strip().lower(),
+                str(endpoint).strip().lower(),
+                str(verdict_label).strip().lower(),
+                str(conf_pct).strip().lower(),
+                str(action_text).strip().lower(),
+            ]
+        )
+        now = time.time()
+        if (
+            self._last_prompt_fingerprint == prompt_fingerprint
+            and (now - self._last_prompt_fingerprint_at) < self.prompt_duplicate_suppress_seconds
+        ):
+            return
+
+        self._last_prompt_fingerprint = prompt_fingerprint
+        self._last_prompt_fingerprint_at = now
 
         title_emoji = "✅" if verdict_label == 'SAFE' else "⚠️" if verdict_label in {'SUSPICIOUS', 'UNKNOWN'} else "🚨"
         self._render_prompt_table(
