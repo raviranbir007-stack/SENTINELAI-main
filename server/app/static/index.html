@@ -2215,6 +2215,32 @@
             display: inline-block;
         }
 
+        .btn.is-loading {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.55rem;
+            pointer-events: none;
+            cursor: progress;
+            box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.35), 0 0 28px rgba(45, 212, 191, 0.2);
+        }
+
+        .btn.is-loading::after {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: inherit;
+            border: 1px solid rgba(45, 212, 191, 0.45);
+            animation: pulseRing 1.25s ease-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes pulseRing {
+            0% { transform: scale(1); opacity: 0.8; }
+            100% { transform: scale(1.08); opacity: 0; }
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -2952,7 +2978,6 @@
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-bottom: 2rem;">
                     <div class="card card-cyber" style="cursor:pointer;text-align:center;padding:1.25rem 1rem;" data-scan-type="ip">
                         <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
-                        <div style="font-size:1.5rem;margin-bottom:0.5rem;">🌐</div>
                         <div style="font-weight:600;font-size:0.875rem;">IP Address</div>
                         <div style="font-size:0.75rem;color:var(--muted-foreground);">Reputation check</div>
                     </div>
@@ -2986,13 +3011,14 @@
                     </div>
 
                     <div style="margin-bottom:1.25rem;">
-                        <label style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Scan Target — IP · Domain · URL · Hash</label>
+                        <label id="newScanTargetLabel" style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Scan Target — IP · Domain · URL · Hash</label>
                         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
                             <input type="text" id="newScanInput" class="scan-input"
                                    placeholder="192.168.1.1 · example.com · https://site.com · sha256..."
                                    style="flex:1;min-width:280px;">
                             <button class="btn btn-cyber" id="newScanBtn" style="white-space:nowrap;min-width:130px;">🔍 Start Scan</button>
                         </div>
+                        <div id="newScanInputHint" style="font-size:0.72rem;color:var(--muted-foreground);margin-top:0.4rem;">Auto-detects IPs, domains, URLs, file names, and hashes.</div>
                     </div>
 
                     <!-- Divider -->
@@ -3650,6 +3676,8 @@
         let lastBackendFailureAt = 0;
         let lastBackendRecoveryAt = 0;
         let lastConnectionErrorNoticeAt = 0;
+        let apiStatusInFlight = null;
+        let lastApiStatusFetchAt = 0;
         let notifications = [];
         let previousThreatCount = null;
         let previousConfiguredApis = null;
@@ -3940,9 +3968,23 @@
                     throw new Error(errData.detail || `HTTP ${res.status}`);
                 }
 
+                const contentType = (res.headers.get('content-type') || '').toLowerCase();
+                const contentDisposition = res.headers.get('content-disposition') || '';
                 const blob = await res.blob();
-                const safeName = String(reportRef).replace(/[^a-zA-Z0-9._-]/g, '_');
-                downloadBlob(blob, `${safeName}.pdf`);
+                const directName = contentDisposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+                const normalizedRef = String(reportRef).split('/').pop() || String(reportRef);
+                const safeName = normalizedRef.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+                let fallbackExt = '.txt';
+                if (contentType.includes('application/pdf')) fallbackExt = '.pdf';
+                else if (contentType.includes('application/json')) fallbackExt = '.json';
+
+                let fileName = directName && directName[1] ? decodeURIComponent(directName[1]) : safeName;
+                if (!/\.[a-z0-9]{2,5}$/i.test(fileName)) {
+                    fileName = `${fileName}${fallbackExt}`;
+                }
+
+                downloadBlob(blob, fileName);
                 showToast('Report downloaded', 'success');
             } catch (error) {
                 console.error('Report download error:', error);
@@ -4068,6 +4110,26 @@
                 console.error('API Error:', error);
                 throw error;
             }
+        }
+
+        function setButtonLoadingState(button, loading, loadingLabel) {
+            if (!button) return;
+            if (loading) {
+                if (!button.dataset.originalLabel) {
+                    button.dataset.originalLabel = button.innerHTML;
+                }
+                button.disabled = true;
+                button.classList.add('is-loading');
+                button.setAttribute('aria-busy', 'true');
+                button.innerHTML = `<span class="spinner" aria-hidden="true"></span> ${loadingLabel || 'Loading...'}`;
+                return;
+            }
+
+            button.disabled = false;
+            button.classList.remove('is-loading');
+            button.removeAttribute('aria-busy');
+            button.innerHTML = button.dataset.originalLabel || button.innerHTML;
+            delete button.dataset.originalLabel;
         }
 
         async function resolveDashboardRuntimeContext() {
@@ -4980,15 +5042,23 @@
         }
 
         async function fetchApiStatus() {
+            const now = Date.now();
+            const freshnessMs = 12000;
+            if (apiStatusInFlight) {
+                return apiStatusInFlight;
+            }
+            if (lastApiStatusFetchAt && (now - lastApiStatusFetchAt) < freshnessMs) {
+                return Promise.resolve();
+            }
+
+            lastApiStatusFetchAt = now;
+            apiStatusInFlight = (async () => {
             try {
                 const hasValue = (value) => value !== undefined && value !== null && value !== '';
                 const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
-                if (refreshBtn) {
-                    refreshBtn.style.opacity = '0.5';
-                    refreshBtn.disabled = true;
-                }
+                setButtonLoadingState(refreshBtn, true, 'Checking...');
 
-                const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus);
+                const status = await apiRequest(API_ENDPOINTS.dashboardApiStatus, { timeoutMs: 30000 });
 
                 const statusItems = Array.isArray(status)
                     ? status
@@ -5152,22 +5222,41 @@
                 console.error('❌ Failed to fetch API status:', error?.message || error);
                 updateSourceSignal('apis', { ok: false, error: error?.message || 'api_status_failed' });
                 updateSystemStatusPanel();
+
+                const message = String(error?.message || '').toLowerCase();
+                const isConnectionIssue = message.includes('failed to fetch')
+                    || message.includes('networkerror')
+                    || message.includes('network request failed')
+                    || message.includes('err_connection_refused')
+                    || message.includes('load failed')
+                    || message.includes('request timed out');
+                const isServerError = /^http\s+5\d\d/.test(message);
                 
                 // Show error to user
-                const summary = document.getElementById('apiConnectionSummary');
                 if (summary) {
-                    summary.textContent = 'API status check failed - check console for details';
+                    summary.textContent = isConnectionIssue
+                        ? 'Backend offline - retrying connection with backoff'
+                        : isServerError
+                            ? 'API status server error - check backend logs'
+                            : 'API status request rejected - review authentication/configuration';
                     summary.style.color = 'var(--destructive)';
                 }
                 
-                addNotification('API Status Check Failed', `Failed to load API status: ${error?.message || 'Unknown error'}`, 'error');
+                if (isConnectionIssue) {
+                    addNotification('Backend Offline', 'API connection lost. Retrying with backoff.', 'warning', 'backend_offline', 30000);
+                } else if (isServerError) {
+                    addNotification('API Status Error', `Server error while loading API status: ${error?.message || 'Unknown error'}`, 'warning', 'api_status_server_error', 30000);
+                } else {
+                    addNotification('API Status Rejected', `API status request was rejected: ${error?.message || 'Unknown error'}`, 'info', 'api_status_rejected', 30000);
+                }
             } finally {
                 const refreshBtn = document.querySelector('[onclick="fetchApiStatus()"]');
-                if (refreshBtn) {
-                    refreshBtn.style.opacity = '1';
-                    refreshBtn.disabled = false;
-                }
+                setButtonLoadingState(refreshBtn, false);
+                apiStatusInFlight = null;
             }
+            })();
+
+            return apiStatusInFlight;
         }
 
         function formatThreatTypeLabel(type) {
@@ -5418,12 +5507,45 @@
         }
 
         function normalizeIncidentItem(item = {}, index = 0) {
+            const normalizeText = (value) => {
+                if (value === null || value === undefined) return null;
+                const text = String(value).trim();
+                if (!text) return null;
+                const lowered = text.toLowerCase();
+                if (['unknown', 'unknown target', 'unknown source', 'n/a', 'na', 'none', 'null', '-'].includes(lowered)) return null;
+                return text;
+            };
+            const firstNonEmpty = (...values) => {
+                for (const value of values) {
+                    const normalized = normalizeText(value);
+                    if (normalized) return normalized;
+                }
+                return null;
+            };
+
             const kind = String(item.incident_kind || item.kind || 'incident').toLowerCase();
             const type = String(item.incident_type || item.action || item.type || 'unknown').toUpperCase();
             const status = String(item.status || 'unknown').toLowerCase();
             const detectedAt = item.detected_at || item.created_at || item.timestamp || new Date().toISOString();
             const client = item.client && typeof item.client === 'object' ? item.client : {};
-            const clientLabel = client.hostname || client.client_id || item.client_id || item.target_client_id || 'Unknown';
+            const clientLabel = firstNonEmpty(client.hostname, client.client_id, item.client_id, item.target_client_id) || 'Unknown';
+            const sourceIp = firstNonEmpty(item.source_ip, item.raw_details?.attack?.source_ip, item.raw_details?.details?.source_ip, item.raw_details?.details?.metadata?.source_ip);
+            const sourceDomain = firstNonEmpty(item.source_domain, item.raw_details?.attack?.source_domain, item.raw_details?.details?.source_domain, item.raw_details?.details?.metadata?.source_domain, item.raw_details?.details?.domain, item.raw_details?.details?.metadata?.domain);
+            const sourceCountry = firstNonEmpty(item.source_country, item.raw_details?.attack?.indicators?.source_country, item.raw_details?.attack?.indicators?.country, item.raw_details?.details?.source_country, item.raw_details?.details?.metadata?.source_country, item.raw_details?.details?.country);
+            const targetValue = firstNonEmpty(
+                item.target,
+                item.destination_ip,
+                item.raw_details?.attack?.destination_ip,
+                item.raw_details?.details?.target,
+                item.raw_details?.details?.metadata?.target,
+                client.hostname,
+                client.client_id,
+                client.ip_address,
+                sourceDomain,
+                sourceIp
+            );
+            const sourceDisplay = sourceDomain || sourceIp || targetValue || 'Unknown';
+            const conciseDescription = firstNonEmpty(item.short_description, item.description) || 'Incident detected';
 
             return {
                 ...item,
@@ -5431,10 +5553,11 @@
                 incident_kind: kind,
                 incident_type: type,
                 title: item.title || type,
-                target: item.target || item.destination_ip || item.source_ip || item.source_domain || clientLabel || 'Unknown',
-                source_ip: item.source_ip || item.raw_details?.attack?.source_ip || item.raw_details?.details?.source_ip || 'Unknown',
-                source_domain: item.source_domain || item.raw_details?.attack?.source_domain || item.raw_details?.details?.source_domain || null,
-                source_country: item.source_country || item.raw_details?.attack?.indicators?.source_country || item.raw_details?.details?.source_country || 'Unknown',
+                target: targetValue || 'Unknown',
+                source_ip: sourceIp || null,
+                source_domain: sourceDomain || null,
+                source_country: sourceCountry || null,
+                source_display: sourceDisplay,
                 severity: String(item.severity || 'unknown').toLowerCase(),
                 status,
                 blocked: Boolean(item.blocked),
@@ -5446,17 +5569,58 @@
                 client_label: clientLabel,
                 source: item.source || 'SENTINEL-AI',
                 description: item.description || item.short_description || 'Incident detected',
-                short_description: item.short_description || item.description || 'Incident detected',
+                short_description: conciseDescription,
                 raw_details: item.raw_details || {},
             };
         }
 
         function getIncidentBadgeClass(incident) {
             if (!incident) return 'badge';
-            if (incident.quarantined) return 'badge-threat';
-            if (incident.blocked) return 'badge-warning';
-            if (incident.ignored) return 'badge-safe';
-            return incident.severity === 'critical' || incident.severity === 'high' ? 'badge-threat' : 'badge';
+            const action = String(incident.action || '').toUpperCase();
+            const severity = String(incident.severity || '').toLowerCase();
+            const status = String(incident.status || '').toLowerCase();
+            if (incident.quarantined || action === 'QUARANTINE') return 'badge-threat';
+            if (incident.blocked || action === 'BLOCK' || status === 'blocked') return 'badge-warning';
+            if (incident.ignored || action === 'IGNORE' || status === 'ignored') return 'badge-safe';
+            if (severity === 'critical' || severity === 'high') return 'badge-threat';
+            if (severity === 'low') return 'badge-safe';
+            return 'badge';
+        }
+
+        function formatIncidentStatus(incident) {
+            const action = String(incident?.action || '').toUpperCase();
+            const status = String(incident?.status || '').trim().toLowerCase();
+            if (incident?.quarantined || action === 'QUARANTINE') return 'Quarantined';
+            if (incident?.blocked || action === 'BLOCK' || status === 'blocked') return 'Blocked';
+            if (incident?.ignored || action === 'IGNORE' || status === 'ignored') return 'Ignored';
+
+            const normalized = status
+                .replace(/_/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (!normalized) return 'Open';
+            return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
+        }
+
+        function formatIncidentSeverity(severity) {
+            const normalized = String(severity || '').trim().toLowerCase();
+            if (!normalized) return 'Unknown';
+            return normalized.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+        }
+
+        function formatIncidentTimestamp(timestamp) {
+            if (!timestamp) return 'Unknown';
+            const date = new Date(timestamp);
+            if (Number.isNaN(date.getTime())) return 'Unknown';
+            return date.toLocaleString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+            });
         }
 
         function matchesIncidentFilter(incident) {
@@ -5527,7 +5691,9 @@
 
             const rowsMarkup = visibleIncidents.map((incident, index) => {
                 const clientLabel = incident.client_label || incident.client?.hostname || incident.client?.client_id || 'Unknown';
-                const statusLabel = incident.quarantined ? 'quarantined' : incident.blocked ? 'blocked' : incident.ignored ? 'ignored' : incident.status || 'open';
+                const statusLabel = formatIncidentStatus(incident);
+                const severityLabel = formatIncidentSeverity(incident.severity);
+                const timeLabel = formatIncidentTimestamp(incident.detected_at);
                 return `
                     <tr>
                         <td>
@@ -5535,15 +5701,18 @@
                             <div class="threat-subline" style="max-width: 260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(incident.short_description || incident.description || '')}</div>
                         </td>
                         <td><code class="threat-target">${escHtml(incident.target || 'Unknown')}</code></td>
-                        <td><code class="threat-id">${escHtml(incident.source_ip || 'Unknown')}</code></td>
+                        <td><code class="threat-id">${escHtml(incident.source_display || incident.source_ip || 'Unknown')}</code></td>
                         <td>${escHtml(incident.source_country || 'Unknown')}</td>
                         <td>
                             <div>${escHtml(clientLabel)}</div>
                             ${incident.client?.ip_address ? `<div class="threat-subline">${escHtml(incident.client.ip_address)}</div>` : ''}
                         </td>
-                        <td><span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(incident.action || incident.incident_type || 'UNKNOWN')}</span></td>
-                        <td>${escHtml(statusLabel)}</td>
-                        <td>${incident.detected_at ? escHtml(new Date(incident.detected_at).toLocaleString()) : 'Unknown'}</td>
+                        <td>
+                            <span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(incident.action || incident.incident_type || 'UNKNOWN')}</span>
+                            <div class="threat-subline">${escHtml(severityLabel)}</div>
+                        </td>
+                        <td><span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(statusLabel)}</span></td>
+                        <td>${escHtml(timeLabel)}</td>
                         <td style="text-align:right;">
                             <button class="btn btn-ghost btn-sm tooltip" onclick="const btn = event.currentTarget; btn.classList.add('clicked'); setTimeout(() => btn.classList.remove('clicked'), 300); openIncidentDetailByIndex(${index})" title="View Incident Details">
                                 👁️
@@ -5578,43 +5747,158 @@
 
             const details = incident.raw_details || {};
             const client = incident.client || {};
+            const defenseAction = details.defense_action || {};
+            const defenseDetails = details.details || {};
+            const defenseMetadata = asObject(defenseDetails.metadata) || {};
+            const defenseMetadataDetails = asObject(defenseMetadata.details) || {};
             if (subtitle) {
-                subtitle.textContent = `${incident.incident_kind || 'incident'} · ${incident.action || incident.status || 'unknown'} · ${incident.target || 'unknown target'}`;
+                subtitle.textContent = `${formatThreatTypeLabel(incident.incident_kind || 'incident')} · ${String(incident.action || incident.status || 'unknown').toUpperCase()} · ${incident.target || 'unknown target'}`;
+            }
+
+            const sourceLabel = incident.source_display || incident.source_domain || incident.source_ip || 'Unknown';
+            const rawPayload = JSON.stringify(incident, null, 2);
+            const statusLabel = formatIncidentStatus(incident);
+            const severityLabel = formatIncidentSeverity(incident.severity);
+            const timeLabel = formatIncidentTimestamp(incident.detected_at);
+            const actionVerb = String(incident.action || incident.incident_type || 'unknown').toUpperCase();
+            const actionOutcome = incident.quarantined
+                ? 'Quarantined'
+                : incident.blocked
+                    ? 'Blocked'
+                    : incident.ignored
+                        ? 'Ignored'
+                        : statusLabel;
+
+            const kvCard = (label, value, mono = false) => `
+                <div style="padding:0.85rem 0.95rem; border:1px solid rgba(255,255,255,0.06); border-radius:10px; background:rgba(255,255,255,0.02);">
+                    <div style="font-size:0.74rem; letter-spacing:0.05em; text-transform:uppercase; color:var(--muted-foreground); margin-bottom:0.3rem;">${escHtml(label)}</div>
+                    <div style="font-weight:600; word-break:break-word; ${mono ? "font-family:'JetBrains Mono', monospace;" : ''}">${escHtml(value || 'Unknown')}</div>
+                </div>
+            `;
+
+            const sectionCard = (title, bodyHtml) => `
+                <section style="padding:1rem; border:1px solid rgba(255,255,255,0.06); border-radius:14px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); margin-bottom:1rem;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.85rem;">
+                        <h3 style="margin:0; font-size:0.95rem; letter-spacing:0.02em;">${escHtml(title)}</h3>
+                    </div>
+                    ${bodyHtml}
+                </section>
+            `;
+
+            const summaryItems = [
+                ['Action', actionVerb],
+                ['Outcome', actionOutcome],
+                ['Status', statusLabel],
+                ['Severity', severityLabel],
+                ['Source', sourceLabel],
+                ['Target', incident.target || 'Unknown'],
+                ['Client', client.hostname || client.client_id || incident.client_label || 'Unknown'],
+                ['Client IP', client.ip_address || 'Unknown'],
+            ];
+
+            const summaryGrid = summaryItems.map(([label, value]) => kvCard(label, value)).join('');
+
+            const actionContextRows = [
+                ['Requested Action', defenseDetails.requested_action || incident.action || 'Unknown'],
+                ['Decision Reason', defenseDetails.reason || incident.description || 'Unknown'],
+                ['Target Type', defenseDetails.target_type || 'Unknown'],
+                ['Scope', defenseDetails.scope || incident.action_scope || 'Unknown'],
+                ['Successful', String(defenseAction.successful ?? defenseDetails.successful ?? false)],
+                ['Execution Status', defenseAction.status || defenseDetails.status || incident.status || 'Unknown'],
+                ['Affected Attack Events', String(defenseDetails.affected_attack_events ?? incident.affected_attack_events ?? 0)],
+                ['Affected Clients', String((defenseDetails.affected_clients || incident.affected_clients || []).length || 0)],
+            ];
+
+            const actionContextGrid = actionContextRows.map(([label, value]) => kvCard(label, value)).join('');
+
+            const decisionTraceRows = [
+                ['Defense Action ID', defenseAction.action_id || incident.incident_id || 'Unknown', true],
+                ['Created At', defenseAction.created_at || 'Unknown', true],
+                ['Executed At', defenseAction.executed_at || incident.detected_at || 'Unknown', true],
+                ['Reverted At', defenseAction.reverted_at || 'Not reverted', true],
+                ['Client ID', defenseAction.client_id || client.client_id || 'Unknown', true],
+                ['Attack Event ID', defenseAction.attack_event_id || defenseMetadataDetails.attack_id || 'Not linked', true],
+            ];
+
+            const decisionTraceGrid = decisionTraceRows.map(([label, value, mono]) => kvCard(label, value, mono)).join('');
+
+            const clientRows = [
+                ['Hostname', client.hostname || incident.client_label || 'Unknown'],
+                ['IP Address', client.ip_address || 'Unknown'],
+                ['OS Type', client.os_type || 'Unknown'],
+                ['OS Version', client.os_version || 'Unknown'],
+                ['Runner Version', client.version || 'Unknown'],
+                ['Network Segment', client.network_segment || 'Unknown'],
+                ['Gateway', client.gateway || 'Unknown'],
+                ['Active', String(client.is_active ?? 'Unknown')],
+            ];
+
+            const clientGrid = clientRows.map(([label, value]) => kvCard(label, value)).join('');
+
+            const metadataSummaryRows = [
+                ['Alert Level', defenseMetadata.level || 'Unknown'],
+                ['Message', defenseMetadata.message || incident.description || 'Unknown'],
+                ['Attack Type', defenseMetadataDetails.attack_type || 'Unknown'],
+                ['Source IP', defenseMetadataDetails.source_ip || 'Not provided'],
+                ['Source Domain', defenseMetadataDetails.source_domain || 'Not provided'],
+                ['Destination IP', defenseMetadataDetails.destination_ip || 'Not provided'],
+                ['User Initiated', String(defenseMetadataDetails.user_initiated ?? 'Unknown')],
+                ['Alert Number', defenseMetadataDetails.alert_number ?? 'Unknown'],
+            ];
+
+            const metadataSummaryGrid = metadataSummaryRows.map(([label, value]) => kvCard(label, value)).join('');
+
+            const structuredSections = [
+                sectionCard('Incident Overview', `
+                    <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.75rem;">${summaryGrid}</div>
+                `),
+                sectionCard('Decision Context', `
+                    <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.75rem;">${actionContextGrid}</div>
+                `),
+                sectionCard('Client Context', `
+                    <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.75rem;">${clientGrid}</div>
+                `),
+            ];
+
+            if (incident.incident_kind === 'defense_action') {
+                structuredSections.push(
+                    sectionCard('Defense Action Trace', `
+                        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.75rem;">${decisionTraceGrid}</div>
+                    `),
+                    sectionCard('Alert Metadata', `
+                        <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.75rem;">${metadataSummaryGrid}</div>
+                    `),
+                );
             }
 
             const rawSections = Object.entries(details)
                 .map(([key, value]) => `
-                    <div style="padding:0.75rem; background: rgba(255,255,255,0.02); border-radius: 6px;">
-                        <div style="font-size:0.75rem; color: var(--muted-foreground); margin-bottom: 0.25rem; text-transform: capitalize;">${escHtml(String(key).replace(/_/g, ' '))}</div>
-                        <pre style="margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.82rem;">${escHtml(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>
+                    <div style="padding:0.85rem 1rem; background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:10px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.55rem;">
+                            <div style="font-size:0.78rem; color: var(--muted-foreground); text-transform: uppercase; letter-spacing:0.05em;">${escHtml(String(key).replace(/_/g, ' '))}</div>
+                        </div>
+                        <div style="white-space:pre-wrap; word-break:break-word; font-size:0.86rem; line-height:1.55; color: var(--foreground);">${escHtml(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</div>
                     </div>
                 `)
                 .join('');
 
             content.innerHTML = `
-                <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:1rem; margin-bottom:1.25rem;">
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Incident ID</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.incident_id || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Type</div><div>${escHtml(incident.incident_type || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Target</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.target || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Action</div><div><span class="badge ${getIncidentBadgeClass(incident)}">${escHtml(incident.action || 'UNKNOWN')}</span></div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Source IP</div><div style="font-family:'JetBrains Mono', monospace; word-break:break-word;">${escHtml(incident.source_ip || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Country</div><div>${escHtml(incident.source_country || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Client / PC</div><div>${escHtml(client.hostname || client.client_id || incident.client_label || 'Unknown')}</div></div>
-                    <div><div style="color:var(--muted-foreground); font-size:0.85rem;">Time</div><div>${incident.detected_at ? escHtml(new Date(incident.detected_at).toLocaleString()) : 'Unknown'}</div></div>
-                </div>
-                <div style="margin-bottom:1.25rem; padding:1rem; background: rgba(255,255,255,0.02); border-radius:8px;">
-                    <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.5rem;">Description</div>
-                    <div style="line-height:1.6;">${escHtml(incident.description || incident.short_description || 'No description available.')}</div>
-                </div>
+                ${structuredSections.join('')}
+                <section style="padding:1rem; border:1px solid rgba(255,255,255,0.06); border-radius:14px; background:rgba(255,255,255,0.02); margin-bottom:1rem;">
+                    <h3 style="margin:0 0 0.75rem 0; font-size:0.95rem;">Description</h3>
+                    <div style="line-height:1.7; color:var(--foreground);">${escHtml(incident.description || incident.short_description || 'No description available.')}</div>
+                </section>
                 ${rawSections ? `
-                    <div style="margin-bottom:1.25rem;">
-                        <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.75rem;">Structured Details</div>
-                        <div style="display:grid; gap:0.5rem;">${rawSections}</div>
-                    </div>
+                    <section style="padding:1rem; border:1px solid rgba(255,255,255,0.06); border-radius:14px; background:rgba(255,255,255,0.02); margin-bottom:1rem;">
+                        <h3 style="margin:0 0 0.75rem 0; font-size:0.95rem;">Structured Details</h3>
+                        <div style="display:grid; gap:0.75rem;">${rawSections}</div>
+                    </section>
                 ` : ''}
-                <div style="margin-bottom:1.25rem; padding:1rem; background: rgba(255,255,255,0.02); border-radius:8px;">
-                    <div style="font-size:0.875rem; font-weight:600; margin-bottom:0.5rem;">Raw Payload</div>
-                    <pre style="margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.82rem;">${escHtml(JSON.stringify(incident, null, 2))}</pre>
+                <div style="margin-bottom:1.25rem; padding:1rem; background: rgba(255,255,255,0.02); border-radius:14px; border:1px solid rgba(255,255,255,0.06);">
+                    <details>
+                        <summary style="cursor:pointer; font-size:0.875rem; font-weight:600;">Raw Payload (Advanced)</summary>
+                        <pre style="margin:0.75rem 0 0 0; white-space:pre-wrap; word-break:break-word; font-size:0.82rem;">${escHtml(rawPayload)}</pre>
+                    </details>
                 </div>
             `;
 
@@ -5715,6 +5999,47 @@
             document.querySelectorAll('[data-scan-type]').forEach((card) => {
                 card.classList.toggle('active', card.getAttribute('data-scan-type') === normalized);
             });
+
+            const typeCopyMap = {
+                ip: {
+                    label: 'Scan Target — IP Address',
+                    placeholder: '192.168.1.1 · 2001:db8::1',
+                    hint: 'Enter an IPv4 or IPv6 address for reputation and attribution checks.',
+                },
+                domain: {
+                    label: 'Scan Target — Domain',
+                    placeholder: 'example.com · login.example.net',
+                    hint: 'Enter a domain to inspect reputation, phishing signals, and host risk.',
+                },
+                url: {
+                    label: 'Scan Target — URL',
+                    placeholder: 'https://site.com/path · https://bit.ly/abc',
+                    hint: 'Enter a full URL to analyze phishing, redirects, and unsafe content.',
+                },
+                file: {
+                    label: 'Scan Target — File / Folder',
+                    placeholder: 'report.pdf · archive.zip · C:/Users/Alice/Downloads/sample.docx',
+                    hint: 'Use a filename or path when you want file heuristics and hash-backed analysis.',
+                },
+                file_type: {
+                    label: 'Scan Target — File Type / Doc',
+                    placeholder: 'pdf · docx · xlsx · hash',
+                    hint: 'Type an extension or document label to route the scan as a file-type analysis.',
+                },
+                hash: {
+                    label: 'Scan Target — File Hash',
+                    placeholder: 'md5 · sha1 · sha256',
+                    hint: 'Paste a file hash to query reputation and intelligence sources.',
+                },
+            };
+
+            const copy = typeCopyMap[normalized] || typeCopyMap.ip;
+            const labelEl = document.getElementById('newScanTargetLabel');
+            const inputEl = document.getElementById('newScanInput');
+            const hintEl = document.getElementById('newScanInputHint');
+            if (labelEl) labelEl.textContent = copy.label;
+            if (inputEl) inputEl.placeholder = copy.placeholder;
+            if (hintEl) hintEl.textContent = copy.hint;
         }
 
         function inferScanTypeFromTarget(target) {
@@ -5733,6 +6058,20 @@
             if (fileLikeRegex.test(value) || /\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt|md|csv|eml|zip|exe|dll|ps1|js|json|html?)$/i.test(value)) return 'file';
             if (domainRegex.test(value)) return 'domain';
             return selectedScanType || 'ip';
+        }
+
+        function resolveScanTypeForSubmission(target) {
+            const value = String(target || '').trim();
+            const inferred = inferScanTypeFromTarget(value);
+            const selected = String(selectedScanType || '').toLowerCase();
+            const active = selected && selected !== 'ip' ? selected : inferred;
+            if (active === 'file_type') {
+                const normalized = value.toLowerCase();
+                const hashRegex = /^([a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})$/;
+                if (hashRegex.test(normalized)) return 'hash';
+                return 'file';
+            }
+            return active === 'file_type' ? 'file' : active;
         }
 
         function inferScanTypeFromFile(file) {
@@ -8638,18 +8977,21 @@
             }
 
             const btn = document.getElementById('scanBtn') || document.getElementById('newScanBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> Scanning...';
+            setButtonLoadingState(btn, true, 'Scanning...');
+
+            await new Promise(requestAnimationFrame);
 
             try {
                 const scanInputEl = input || primaryInput || secondaryInput;
+                const scanType = resolveScanTypeForSubmission(target);
                 if (scanInputEl) {
-                    scanInputEl.dataset.detectedScanType = inferScanTypeFromTarget(target);
+                    scanInputEl.dataset.detectedScanType = scanType;
                 }
 
                 const result = await apiRequest(API_ENDPOINTS.scan, {
                     method: 'POST',
-                    body: JSON.stringify({ type: inferScanTypeFromTarget(target), target })
+                    timeoutMs: 120000,
+                    body: JSON.stringify({ type: scanType, scan_type: scanType, target })
                 });
                 const isThreat = isThreatResult(result);
                 showToast(`Scan complete: ${isThreat ? '⚠️ Threat detected!' : '✅ Target is safe'}`, isThreat ? 'error' : 'success');
@@ -8664,15 +9006,30 @@
                 if (secondaryInput) secondaryInput.value = '';
                 
                 // Refresh data
-                fetchDashboardStats();
-                fetchThreats();
-                fetchLogs();
+                await Promise.allSettled([
+                    fetchScanHistory(),
+                    fetchDashboardStats(),
+                    fetchThreats(),
+                    fetchLogs(),
+                ]);
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
                 addNotification('Scan Failed', error.message, 'error');
+                if (String(error?.message || '').toLowerCase().includes('timed out')) {
+                    setTimeout(() => {
+                        Promise.allSettled([
+                            fetchScanHistory(),
+                            fetchDashboardStats(),
+                            fetchThreats(),
+                            fetchLogs(),
+                        ]);
+                    }, 5000);
+                }
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = btn.id === 'newScanBtn' ? '🔍 Start Scan' : '⚡ SCAN';
+                setButtonLoadingState(btn, false);
+                if (btn) {
+                    btn.innerHTML = btn.id === 'newScanBtn' ? '🔍 Start Scan' : '⚡ SCAN';
+                }
             }
         }
 

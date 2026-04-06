@@ -344,12 +344,19 @@ class SentinelClientV3:
                     return True
                 else:
                     logger.error(f"❌ Registration response missing client_id. Response: {result}")
-                    self.cli.prompt_registration_failed("No client_id in response")
+                    self.cli.prompt_registration_failed("Registration response missing client_id")
                     return False
             else:
                 # Registration failed - enter offline mode
-                error_msg = f"HTTP {response.status_code}"
-                logger.warning(f"⚠️  Registration failed: {error_msg} - entering offline mode")
+                if response.status_code in {401, 403}:
+                    error_msg = f"Registration rejected (HTTP {response.status_code})"
+                elif response.status_code == 429:
+                    error_msg = "Registration rate-limited by server"
+                elif 500 <= response.status_code < 600:
+                    error_msg = f"Server error (HTTP {response.status_code})"
+                else:
+                    error_msg = f"HTTP {response.status_code}"
+                logger.warning(f"⚠️  Registration failed: {error_msg} - switching to local mode")
                 logger.warning(f"   Response: {response.text}")
                 
                 self.offline_mode = True
@@ -357,14 +364,14 @@ class SentinelClientV3:
                 return False
 
         except requests.exceptions.ConnectionError as e:
-            logger.warning(f"⚠️  Registration connection failed: {self.server_url} unreachable - entering offline mode")
+            logger.warning(f"⚠️  Registration connection failed: {self.server_url} unreachable - switching to local mode")
             logger.warning(f"   Error: {str(e)}")
             self.offline_mode = True
             self.cli.prompt_registration_failed(f"Server unreachable: {self.server_url}")
             return False
         except Exception as e:
             # Registration failed - enter offline mode
-            logger.warning(f"⚠️  Registration exception: {str(e)} - entering offline mode")
+            logger.warning(f"⚠️  Registration exception: {str(e)} - switching to local mode")
             self.offline_mode = True
             self.cli.prompt_registration_failed(str(e))
             return False

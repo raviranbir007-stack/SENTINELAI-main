@@ -58,7 +58,9 @@ def _store_generated_report(report_meta: dict, pdf_bytes: bytes) -> None:
     except Exception:
         GENERATED_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         report_id = str(report_meta.get("report_id") or _safe_report_name(report_meta.get("title") or "report"))
-        report_path = GENERATED_REPORTS_DIR / f"{report_id}.pdf"
+        is_pdf = isinstance(pdf_bytes, (bytes, bytearray)) and bytes(pdf_bytes).startswith(b"%PDF")
+        extension = "pdf" if is_pdf else "txt"
+        report_path = GENERATED_REPORTS_DIR / f"{report_id}.{extension}"
         report_path.write_bytes(pdf_bytes)
 
 
@@ -125,7 +127,8 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
         if y < 40:
             pdf.showPage()
             y = 750
-        pdf.drawString(50, y, line)
+        safe_line = str(line or "").encode("latin-1", "replace").decode("latin-1")
+        pdf.drawString(50, y, safe_line)
         y -= 18
 
     pdf.save()
@@ -177,7 +180,12 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 
                 report_bytes = await report_generator.generate_analysis_report(threat_analysis)
                 if not report_bytes:
-                    raise HTTPException(status_code=500, detail="Report generation failed")
+                    fallback_text = report_generator._get_fallback_analysis(threat_analysis)
+                    scan_results = report_generator._format_scan_results_section(threat_analysis)
+                    forensic_summary = report_generator._format_forensic_summary(threat_analysis)
+                    report_bytes = (
+                        f"{fallback_text}\n\n---\n\nSCAN RESULTS\n\n{scan_results}\n\nFORENSIC SUMMARY\n\n{forensic_summary}"
+                    ).encode("utf-8", "replace")
 
                 content_type = "application/pdf" if report_bytes.startswith(b"%PDF") else "text/plain; charset=utf-8"
                 filename = f"{data.target}_security_report.pdf" if content_type == "application/pdf" else f"{data.target}_security_report.txt"
@@ -185,7 +193,7 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
                     "report_id": report_id,
                     "title": f"Threat Analysis - {data.target}",
                     "target": data.target,
-                    "type": scan.target_type or "unknown",
+                    "type": threat_analysis.get("report_type", "executive_summary"),
                     "threats_detected": threat_analysis.get("threats_detected", len(threat_analysis.get("threat_indicators", []))),
                     "verdict": threat_analysis.get("verdict", "unknown"),
                     "confidence": threat_analysis.get("confidence", 0.0),
@@ -204,36 +212,55 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 
         logger.debug(f"REPORT started | target={data.target} | scan_id={data.scan_id}")
 
-        report_text = generate_ai_report(data)
-        # If ReportLab is not available, return the generated report text as JSON
-        if not REPORTLAB_AVAILABLE:
-            return {
-                "target": data.target,
-                "report_text": report_text,
-                "note": "ReportLab not installed. Install with: pip install reportlab to receive PDF output.",
-            }
+        report_type = report_generator._normalize_report_type(data.report_type or "executive_summary")
+        threat_analysis = {
+            "input": data.target,
+            "input_type": "manual_report",
+            "verdict": "unknown",
+            "confidence": float(data.risk_score or 0.0),
+            "threat_indicators": [{"source": "manual_input", "severity": "unknown", "indicator": t} for t in (data.threats or [])],
+            "api_results": {},
+            "summary": data.scan_summary or "Manual report generation",
+            "threats_detected": len(data.threats or []),
+            "analysis_data": {},
+            "file_analysis": {},
+            "forensic_metadata": {},
+            "scan_id": data.scan_id,
+            "threat_level": "unknown",
+            "status": "complete",
+            "report_type": report_type,
+            "intervals": data.intervals or ["24h", "7d", "30d"],
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        report_bytes = await report_generator.generate_analysis_report(threat_analysis)
+        if not report_bytes:
+            report_text = generate_ai_report(data)
+            report_bytes = report_text.encode("utf-8", "replace")
 
-        pdf_file = create_pdf(report_text, data)
-        pdf_bytes = pdf_file.getvalue()
+        content_type = "application/pdf" if report_bytes.startswith(b"%PDF") else "text/plain; charset=utf-8"
         report_meta = {
             "report_id": report_id,
             "title": f"Threat Analysis - {data.target}",
             "target": data.target,
-            "type": data.report_type or "executive_summary",
+            "type": report_type,
             "threats_detected": len(data.threats or []),
             "verdict": "unknown",
             "confidence": float(data.risk_score or 0.0),
             "created": now.isoformat(),
             "download_url": f"/api/v1/reports/download/{report_id}",
         }
-        _store_generated_report(report_meta, pdf_bytes)
+        _store_generated_report(report_meta, report_bytes)
 
-        filename = f"{data.target}_security_report.pdf"
+        filename = (
+            f"{data.target}_security_report.pdf"
+            if content_type == "application/pdf"
+            else f"{data.target}_security_report.txt"
+        )
 
-        logger.debug(f"REPORT ok | target={data.target} | fmt=pdf")
+        logger.debug(f"REPORT ok | target={data.target} | media={content_type}")
         return StreamingResponse(
-            pdf_file,
-            media_type="application/pdf",
+            io.BytesIO(report_bytes),
+            media_type=content_type,
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
@@ -241,7 +268,19 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
         raise
     except Exception as e:
         logger.error(f"Report generation failed: {e}")
-        raise HTTPException(status_code=500, detail="Report generation failed")
+        try:
+            fallback_text = generate_ai_report(data)
+            fallback_pdf = create_pdf(fallback_text, data)
+            safe_target = _safe_report_name(data.target or "report")
+            return StreamingResponse(
+                fallback_pdf,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"attachment; filename={safe_target}_security_report_fallback.pdf"
+                },
+            )
+        except Exception:
+            raise HTTPException(status_code=500, detail="Report generation failed")
 
 
 @router.get("/")
@@ -305,13 +344,26 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
     try:
         from ....core.report_generator import report_generator
 
+        def _build_download_response(report_bytes: bytes, requested_id: str) -> StreamingResponse:
+            is_pdf = isinstance(report_bytes, (bytes, bytearray)) and bytes(report_bytes).startswith(b"%PDF")
+            ext = "pdf" if is_pdf else "txt"
+            media = "application/pdf" if is_pdf else "text/plain; charset=utf-8"
+            from io import BytesIO
+            buf = BytesIO(report_bytes)
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type=media,
+                headers={"Content-Disposition": f"attachment; filename={requested_id}.{ext}"},
+            )
+
         report_path = GENERATED_REPORTS_DIR / f"{report_id}.pdf"
         if report_path.exists():
-            return StreamingResponse(
-                io.BytesIO(report_path.read_bytes()),
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename={report_id}.pdf"},
-            )
+            return _build_download_response(report_path.read_bytes(), report_id)
+
+        text_report_path = GENERATED_REPORTS_DIR / f"{report_id}.txt"
+        if text_report_path.exists():
+            return _build_download_response(text_report_path.read_bytes(), report_id)
         
         # Check cache first
         if hasattr(report_generator, '_reports_cache') and report_id in report_generator._reports_cache:
@@ -353,16 +405,7 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
             if not pdf_bytes:
                 raise HTTPException(status_code=404, detail="Report not found")
 
-        from io import BytesIO
-
-        buf = BytesIO(pdf_bytes)
-        buf.seek(0)
-
-        return StreamingResponse(
-            buf,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={report_id}.pdf"},
-        )
+        return _build_download_response(pdf_bytes, report_id)
 
     except HTTPException:
         raise

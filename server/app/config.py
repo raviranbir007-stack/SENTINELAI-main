@@ -153,6 +153,8 @@ class Settings(BaseSettings):
 
     # AI / Gemini
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")
+    GOOGLE_API_KEYS: str = os.getenv("GOOGLE_API_KEYS", "")
 
     # Defense decisioning controls (network-defense)
     SENTINEL_AUTO_BLOCK_MIN_SEVERITY: str = os.getenv("SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high")

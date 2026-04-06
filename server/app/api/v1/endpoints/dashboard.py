@@ -11,6 +11,19 @@ from ....models import ScanHistory
 
 router = APIRouter()
 
+_API_STATUS_CACHE: dict[str, object] = {
+    "time_range": None,
+    "cached_at": None,
+    "payload": None,
+}
+
+
+def _api_status_cache_ttl_seconds() -> int:
+    try:
+        return max(5, int(os.getenv("SENTINEL_API_STATUS_CACHE_TTL_SECONDS", "20")))
+    except Exception:
+        return 20
+
 
 def _runtime_role() -> dict:
     explicit = os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "").strip().lower()
@@ -846,11 +859,25 @@ async def get_api_status(
     """Get status and usage of all configured external threat intelligence APIs."""
     from ....core.threat_analyzer import ALL_EXTERNAL_APIS
     from ....core.security_telemetry import security_telemetry
+    from datetime import datetime
+
+    normalized_range = str(time_range or "24h").strip().lower()
+    cached_at = _API_STATUS_CACHE.get("cached_at")
+    cached_payload = _API_STATUS_CACHE.get("payload")
+    cached_range = _API_STATUS_CACHE.get("time_range")
+    ttl_seconds = _api_status_cache_ttl_seconds()
+    if (
+        cached_payload
+        and cached_range == normalized_range
+        and isinstance(cached_at, datetime)
+        and (datetime.utcnow() - cached_at).total_seconds() < ttl_seconds
+    ):
+        return cached_payload
 
     def _norm(value: str) -> str:
         return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
-    hours = _hours_from_range(time_range)
+    hours = _hours_from_range(normalized_range)
     threshold = datetime.utcnow() - timedelta(hours=hours)
 
     # Query recent scans to get API usage. Keep this bounded so dashboard API calls stay responsive
@@ -975,7 +1002,7 @@ async def get_api_status(
     total_calls = sum(a["usage_24h"] for a in apis)
 
     return {
-        "time_range": _label(time_range),
+        "time_range": _label(normalized_range),
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "summary": {
             "total_apis": len(apis),
@@ -985,6 +1012,11 @@ async def get_api_status(
         },
         "apis": apis,
     }
+
+    _API_STATUS_CACHE["time_range"] = normalized_range
+    _API_STATUS_CACHE["cached_at"] = datetime.utcnow()
+    _API_STATUS_CACHE["payload"] = payload
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -1106,7 +1138,13 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
 
     gemini_status = "unconfigured"
     try:
-        if settings.GEMINI_API_KEY:
+        has_gemini_key = bool(settings.GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEYS") or os.getenv("GOOGLE_API_KEYS"))
+        if not has_gemini_key:
+            for idx in range(1, 21):
+                if os.getenv(f"GEMINI_API_KEY_{idx}") or os.getenv(f"GOOGLE_API_KEY_{idx}"):
+                    has_gemini_key = True
+                    break
+        if has_gemini_key:
             from ....gemini_integration import get_gemini_client
             gemini_status = "ready" if get_gemini_client().is_available() else "unavailable"
     except Exception:

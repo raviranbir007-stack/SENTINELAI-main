@@ -2,6 +2,7 @@
 Dependency health checks for SENTINEL-AI server startup
 """
 import logging
+import os
 from typing import Dict, List, Tuple
 from sqlalchemy import text
 
@@ -39,7 +40,19 @@ def check_gemini_config() -> Tuple[bool, str]:
         from .config import settings
         from .gemini_integration import get_gemini_client
         
-        if not getattr(settings, 'GEMINI_API_KEY', None) and not getattr(settings, 'GEMINI_API_KEY_1', None):
+        has_key = bool(
+            getattr(settings, 'GEMINI_API_KEY', None)
+            or os.getenv('GOOGLE_API_KEY')
+            or os.getenv('GEMINI_API_KEYS')
+            or os.getenv('GOOGLE_API_KEYS')
+        )
+        if not has_key:
+            for idx in range(1, 21):
+                if os.getenv(f'GEMINI_API_KEY_{idx}') or os.getenv(f'GOOGLE_API_KEY_{idx}'):
+                    has_key = True
+                    break
+
+        if not has_key:
             return False, "Gemini API keys not configured"
         
         client = get_gemini_client()
@@ -92,7 +105,7 @@ async def run_health_checks(db_engine=None) -> Dict[str, Tuple[bool, str]]:
     if not passed:
         logger.error(f"❌ Config check: {msg}")
     else:
-        logger.info(f"✅ Config check: {msg}")
+        logger.debug(f"✅ Config check: {msg}")
     
     # Database check
     if db_engine:
@@ -101,7 +114,7 @@ async def run_health_checks(db_engine=None) -> Dict[str, Tuple[bool, str]]:
         if not passed:
             logger.error(f"❌ Database check: {msg}")
         else:
-            logger.info(f"✅ Database check: {msg}")
+            logger.debug(f"✅ Database check: {msg}")
     
     # ML Models check
     passed, msg = check_ml_models()
@@ -109,7 +122,7 @@ async def run_health_checks(db_engine=None) -> Dict[str, Tuple[bool, str]]:
     if not passed:
         logger.error(f"❌ ML Models check: {msg}")
     else:
-        logger.info(f"✅ ML Models check: {msg}")
+        logger.debug(f"✅ ML Models check: {msg}")
     
     # Gemini check (optional)
     passed, msg = check_gemini_config()
@@ -117,7 +130,7 @@ async def run_health_checks(db_engine=None) -> Dict[str, Tuple[bool, str]]:
     if not passed:
         logger.warning(f"⚠️  Gemini check: {msg}")
     else:
-        logger.info(f"✅ Gemini check: {msg}")
+        logger.debug(f"✅ Gemini check: {msg}")
     
     return results
 
@@ -140,6 +153,7 @@ async def validate_startup(db_engine=None) -> bool:
     if failed:
         logger.error(f"❌ Critical health checks failed: {', '.join(failed)}")
         return False
-    
-    logger.info("✅ All critical health checks passed")
+
+    passed_count = sum(1 for passed, _ in results.values() if passed)
+    logger.info("✅ Health checks passed (%d/%d)", passed_count, len(results))
     return True

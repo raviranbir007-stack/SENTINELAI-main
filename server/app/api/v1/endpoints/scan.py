@@ -523,6 +523,22 @@ def _normalize_scan_source(scan_source: Optional[str]) -> str:
     return value
 
 
+def _normalize_scan_type(scan_type: Optional[str]) -> str:
+    """Normalize a requested scan type to a supported routing hint."""
+    if not scan_type:
+        return ""
+    value = scan_type.strip().lower()
+    alias_map = {
+        "file_type": "file",
+        "filehash": "hash",
+        "file_hash": "hash",
+    }
+    value = alias_map.get(value, value)
+    if value in {"ip", "domain", "url", "file", "hash"}:
+        return value
+    return ""
+
+
 def _normalize_verdict(verdict: object, default: str = "unknown") -> str:
     """Normalize threat verdict values from enum/string/object forms."""
     value = verdict if verdict is not None else default
@@ -568,6 +584,7 @@ class ThreatScanRequest(BaseModel):
     """Request model for threat scanning"""
 
     target: str
+    scan_type: Optional[str] = None  # ip | domain | url | file | file_type | hash
     include_report: bool = False
     include_external_apis: Optional[bool] = None  # None -> settings.EXTERNAL_APIS_ENABLED
     client_id: Optional[str] = None  # Optional client ID for tracking
@@ -591,6 +608,16 @@ class ThreatScanRequest(BaseModel):
         value = v.strip().lower()
         if value not in _ALLOWED_SCAN_SOURCES:
             raise ValueError("scan_source must be one of: manual, client_protection, background, scheduled")
+        return value
+
+    @field_validator("scan_type")
+    @classmethod
+    def validate_scan_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip().lower()
+        if value not in {"ip", "domain", "url", "file", "file_type", "hash"}:
+            raise ValueError("scan_type must be one of: ip, domain, url, file, file_type, hash")
         return value
 
 
@@ -1194,15 +1221,24 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
     try:
         target = request.target.strip()
         include_report = request.include_report
+        requested_scan_type = _normalize_scan_type(request.scan_type)
+
+        analysis_target = target
+        if requested_scan_type == "file":
+            lowered = target.strip().lower()
+            if lowered in {ext.lstrip('.') for ext in InputDetector.FILE_EXTENSIONS}:
+                analysis_target = f".{lowered}"
 
         # Detect input type
-        input_type, metadata = InputDetector.detect(target)
+        input_type, metadata = InputDetector.detect(analysis_target)
 
-        logger.debug(f"SCAN started | detected_type={input_type.value} | target={target}")
+        logger.debug(
+            f"SCAN started | detected_type={input_type.value} | requested_type={requested_scan_type or 'auto'} | target={target}"
+        )
 
         # Run threat analysis
         analysis_result = await threat_analyzer.analyze(
-            target,
+            analysis_target,
             use_external_apis=_resolve_external_api_mode(request.include_external_apis, request.scan_source),
         )
         normalized_verdict = _normalize_verdict(analysis_result.get("verdict", "unknown"))
@@ -1227,6 +1263,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "scan_id": scan_id,
             "target": target,
             "detected_type": input_type.value,
+            "requested_scan_type": requested_scan_type or None,
             "status": "complete",
             "threat_level": normalized_verdict,
             "confidence": analysis_result.get("confidence", 0.0),
@@ -1250,7 +1287,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
         # Store in scan history and database
         await _store_scan_result(result, db)
         
-        _log_scan_completion(scan_id, input_type.value, result)
+        _log_scan_completion(scan_id, requested_scan_type or input_type.value, result)
         return result
 
     except Exception as e:

@@ -121,17 +121,15 @@ class ThreatAnalyzer:
                 prompt = self._create_threat_type_prompt(indicators)
                 
                 try:
-                    response = self.gemini.client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt,
-                        config={
-                            "temperature": 0.1,
-                            "max_output_tokens": 50
-                        }
+                    generation = self.gemini.generate_text(
+                        prompt,
+                        max_output_tokens=50,
+                        temperature=0.1,
                     )
-                    
-                    if response and response.text:
-                        threat_type = response.text.strip().lower()
+                    response_text = (generation.get("text") or "").strip()
+
+                    if generation.get("success") and response_text:
+                        threat_type = response_text.lower()
                         
                         # Map to common threat types
                         threat_type = self._normalize_threat_type(threat_type)

@@ -158,5 +158,4 @@ case $SETUP_TYPE in
     "monitoring")
         echo "  1. Restart the system to enable monitoring features"
         ;;
-esac</content>
-<parameter name="filePath">/home/kali/Documents/SENTINELAI-main/setup.sh
+esac

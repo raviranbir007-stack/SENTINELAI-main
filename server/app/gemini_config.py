@@ -20,6 +20,7 @@ class GeminiConfig:
     # Default configuration
     DEFAULT_CONFIG = {
         'api_key': None,
+        'api_keys': [],
         'model': 'gemini-1.5-pro',
         'temperature': 0.7,
         'max_tokens': 1000,
@@ -107,6 +108,17 @@ class GeminiConfig:
     def _load_from_env(self) -> Dict[str, Any]:
         """Load configuration from environment variables"""
         env_config = {}
+
+        csv_keys: List[str] = []
+        for csv_env in ('GEMINI_API_KEYS', 'GOOGLE_API_KEYS'):
+            raw = os.getenv(csv_env, '')
+            if raw:
+                csv_keys.extend([item.strip() for item in raw.split(',') if item.strip()])
+        for idx in range(1, 21):
+            for env_name in (f'GEMINI_API_KEY_{idx}', f'GOOGLE_API_KEY_{idx}'):
+                value = os.getenv(env_name, '').strip()
+                if value:
+                    csv_keys.append(value)
         
         # Map environment variables to config keys
         env_mapping = {
@@ -143,6 +155,16 @@ class GeminiConfig:
                     env_config[config_key] = env_value.lower() in ['true', '1', 'yes', 'on']
                 else:
                     env_config[config_key] = env_value
+
+        if csv_keys:
+            deduped = []
+            seen = set()
+            for key in csv_keys:
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(key)
+            env_config['api_keys'] = deduped
         
         return env_config
     
@@ -195,12 +217,17 @@ class GeminiConfig:
         
         # Check required fields
         if self.config['enabled']:
-            if not self.config['api_key']:
-                self.validation_errors.append("GEMINI_API_KEY is required when Gemini is enabled")
+            api_key = str(self.config.get('api_key') or '').strip()
+            api_keys = self.config.get('api_keys') or []
+            if not api_key and not api_keys:
+                self.validation_errors.append("At least one Gemini key is required when Gemini is enabled (GEMINI_API_KEY or GEMINI_API_KEYS/GEMINI_API_KEY_1..N)")
             
             # Validate API key format (basic check)
-            if self.config['api_key'] and len(self.config['api_key']) < 20:
+            if api_key and len(api_key) < 20:
                 self.validation_errors.append("API key appears to be invalid (too short)")
+            for key in api_keys:
+                if len(str(key or '').strip()) < 20:
+                    self.validation_errors.append("One of GEMINI_API_KEYS entries appears invalid (too short)")
         
         # Validate model
         if self.config['model'] not in self.AVAILABLE_MODELS:

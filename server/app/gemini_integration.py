@@ -6,7 +6,9 @@ Handles all Gemini AI interactions for threat analysis
 import json
 import logging
 import os
+import re
 import sys
+import time
 from typing import Dict, Any, Optional, List
 
 # Make google.genai import optional to prevent server crash
@@ -44,16 +46,109 @@ class GeminiIntegration:
         self.available_models = []
         self.initialized = False
         self.backend = None
+        self.api_keys: List[str] = []
+        self.active_key_index: int = 0
+        self._last_error: str = ""
+        self._last_model_used: str = ""
+        self._last_key_used_index: int = 0
+        self._quota_cooldown_until: float = 0.0
+        self.model_candidates = [
+            item.strip()
+            for item in os.getenv("GEMINI_MODEL_CANDIDATES", "gemini-2.5-flash,gemini-2.5-pro,gemini-2.0-flash").split(",")
+            if item.strip()
+        ]
+        if not self.model_candidates:
+            self.model_candidates = ["gemini-2.5-flash"]
+        try:
+            self.max_attempts = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
+        except Exception:
+            self.max_attempts = 3
+        self.max_attempts = max(1, min(self.max_attempts, 5))
+        try:
+            self.min_request_interval = float(os.getenv("GEMINI_MIN_REQUEST_INTERVAL", "1.5"))
+        except Exception:
+            self.min_request_interval = 1.5
+        self.min_request_interval = max(0.2, self.min_request_interval)
+        self._last_request_ts = 0.0
+        try:
+            self.request_timeout_seconds = float(os.getenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "45"))
+        except Exception:
+            self.request_timeout_seconds = 45.0
+        self.request_timeout_seconds = max(10.0, min(self.request_timeout_seconds, 120.0))
+        try:
+            self.quota_cooldown_seconds = int(os.getenv("GEMINI_QUOTA_COOLDOWN_SECONDS", "180"))
+        except Exception:
+            self.quota_cooldown_seconds = 180
+        self.quota_cooldown_seconds = max(30, self.quota_cooldown_seconds)
         self._initialize()
 
+    def _collect_api_keys(self) -> List[str]:
+        """Collect Gemini API keys from settings and env, deduplicated."""
+        csv_keys: List[str] = []
+        for csv_env in ("GEMINI_API_KEYS", "GOOGLE_API_KEYS"):
+            raw = os.getenv(csv_env, "")
+            if raw:
+                csv_keys.extend([part.strip() for part in raw.split(",") if part.strip()])
+
+        key_candidates = [
+            getattr(settings, "GEMINI_API_KEY", "") if settings else "",
+            os.getenv("GEMINI_API_KEY", ""),
+            os.getenv("GOOGLE_API_KEY", ""),
+            *csv_keys,
+        ]
+        for idx in range(1, 21):
+            key_candidates.append(os.getenv(f"GEMINI_API_KEY_{idx}", ""))
+            key_candidates.append(os.getenv(f"GOOGLE_API_KEY_{idx}", ""))
+
+        deduped: List[str] = []
+        seen = set()
+        for candidate in key_candidates:
+            value = str(candidate or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped
+
     def _get_api_key(self) -> str:
-        """Get API key from settings or environment."""
-        return (
-            settings.GEMINI_API_KEY
-            or os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-            or ""
+        """Get preferred API key from pooled keys."""
+        return self.api_keys[0] if self.api_keys else ""
+
+    def _build_client(self, api_key: str):
+        if not GENAI_AVAILABLE:
+            return None
+        return genai.Client(
+            api_key=api_key,
+            http_options=HttpOptions(api_version='v1alpha')
         )
+
+    def _classify_error(self, message: str) -> str:
+        lower = str(message or "").lower()
+        if "429" in lower or "resource_exhausted" in lower or "quota" in lower or "rate limit" in lower:
+            return "quota"
+        if "401" in lower or "403" in lower or "invalid api key" in lower or "permission" in lower or "unauthorized" in lower:
+            return "auth"
+        if "model" in lower and ("not found" in lower or "unsupported" in lower):
+            return "model"
+        if "timeout" in lower or "temporarily" in lower or "unavailable" in lower:
+            return "transient"
+        return "other"
+
+    def _extract_retry_delay_seconds(self, message: str) -> int:
+        text = str(message or "")
+        patterns = [
+            r"retryDelay'?:\s*'?(\d+)s'?,?",
+            r"retry in\s+([0-9]+(?:\.[0-9]+)?)s",
+            r"retry after\s+([0-9]+(?:\.[0-9]+)?)s",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                try:
+                    return max(1, int(float(m.group(1))))
+                except Exception:
+                    continue
+        return 0
     
     def _initialize(self):
         """Initialize Gemini AI client"""
@@ -62,47 +157,45 @@ class GeminiIntegration:
             logger.warning(f"Gemini import check failed under: {sys.executable} (VIRTUAL_ENV={os.getenv('VIRTUAL_ENV')})")
             return
             
-        api_key = self._get_api_key()
-        if not api_key:
+        self.api_keys = self._collect_api_keys()
+        if not self.api_keys:
             logger.warning("Gemini API key not configured. AI features will be limited.")
             return
-        
-        # Check if API key looks valid (basic sanity check)
-        if len(api_key) < 20:
-            logger.warning(f"⚠️ Gemini API key appears invalid (too short: {len(api_key)} chars). Please update GEMINI_API_KEY in .env")
+
+        usable_keys = [k for k in self.api_keys if len(k) >= 20]
+        if not usable_keys:
+            logger.warning("⚠️ All configured Gemini API keys appear invalid (too short).")
             return
+        self.api_keys = usable_keys
         
         try:
             if GENAI_AVAILABLE:
-                # Initialize with the new google.genai package
-                self.client = genai.Client(
-                    api_key=api_key,
-                    http_options=HttpOptions(api_version='v1alpha')
-                )
                 self.backend = "google-genai"
-                
-                # Test connection and get available models
-                try:
-                    models = self.client.models.list()
-                    self.available_models = [model.name for model in models if 'gemini' in model.name.lower()]
-                    if not self.available_models:
-                        logger.warning("⚠️ Gemini API key may be expired or invalid - no models available")
-                        self.initialized = False
-                        return
-                    logger.info(f"✅ Gemini AI initialized. Available models: {self.available_models[:3]}")
-                    logger.info(f"✅ API key is valid and active")
-                    self.initialized = True
-                except Exception as e:
-                    error_msg = str(e)
-                    if "expired" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
-                        logger.error(f"❌ Gemini API key expired or invalid: {error_msg}")
-                        self.initialized = False
-                        return
-                    logger.warning(f"Could not list models, but client created: {e}")
-                    self.initialized = True
+                for idx, api_key in enumerate(self.api_keys):
+                    try:
+                        candidate_client = self._build_client(api_key)
+                        models = candidate_client.models.list()
+                        candidate_models = [model.name for model in models if 'gemini' in model.name.lower()]
+                        self.client = candidate_client
+                        self.available_models = candidate_models
+                        self.active_key_index = idx
+                        self.initialized = True
+                        logger.info(
+                            "✅ Gemini AI initialized with key #%d (%d total keys). Models: %s",
+                            idx + 1,
+                            len(self.api_keys),
+                            self.available_models[:3] if self.available_models else self.model_candidates[:3],
+                        )
+                        break
+                    except Exception as e:
+                        self._last_error = str(e)
+                        continue
+                if not self.initialized:
+                    logger.error("❌ Failed to initialize Gemini with configured keys: %s", self._last_error or "unknown error")
+                    return
             elif LEGACY_GENAI_AVAILABLE:
                 # Legacy google-generativeai client
-                legacy_genai.configure(api_key=api_key)
+                legacy_genai.configure(api_key=self.api_keys[0])
                 self.client = legacy_genai
                 self.backend = "google-generativeai"
 
@@ -155,7 +248,9 @@ class GeminiIntegration:
                 'status': 'ready',
                 'message': 'Gemini AI initialized (startup tests skipped)',
                 'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash',
-                'models_available': len(self.available_models)
+                'models_available': len(self.available_models),
+                'keys_available': len(self.api_keys),
+                'active_key_index': self.active_key_index + 1,
             }
 
         # If tests are enabled, do a lightweight non-blocking check where possible.
@@ -166,7 +261,9 @@ class GeminiIntegration:
                 'status': 'ready',
                 'message': 'Gemini AI initialized',
                 'model': model_name,
-                'models_available': len(self.available_models)
+                'models_available': len(self.available_models),
+                'keys_available': len(self.api_keys),
+                'active_key_index': self.active_key_index + 1,
             }
         except Exception as e:
             logger.warning(f"Gemini availability check minor failure: {e}")
@@ -175,8 +272,109 @@ class GeminiIntegration:
                 'status': 'error',
                 'message': f'Gemini availability check failed: {e}',
                 'model': 'N/A',
-                'models_available': len(self.available_models)
+                'models_available': len(self.available_models),
+                'keys_available': len(self.api_keys),
+                'active_key_index': self.active_key_index + 1,
             }
+
+    def generate_text(self, prompt: str, max_output_tokens: int = 4000, temperature: float = 0.1) -> Dict[str, Any]:
+        """Generate text with key/model failover across configured API keys."""
+        if not self.is_available():
+            return {"success": False, "error": "Gemini AI not available", "text": None}
+
+        now = time.time()
+        if now < float(self._quota_cooldown_until or 0.0):
+            remaining = int(max(1, self._quota_cooldown_until - now))
+            return {"success": False, "error": f"quota cooldown active ({remaining}s)", "text": None}
+
+        elapsed = now - float(self._last_request_ts or 0.0)
+        if elapsed < self.min_request_interval:
+            time.sleep(self.min_request_interval - elapsed)
+        self._last_request_ts = time.time()
+
+        if self.backend == "google-generativeai":
+            try:
+                model_name = self.model_candidates[0]
+                model = self.client.GenerativeModel(model_name)
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": temperature,
+                        "max_output_tokens": max_output_tokens,
+                        "top_p": 0.8,
+                        "top_k": 40,
+                    },
+                )
+                text = getattr(response, "text", None)
+                return {"success": bool(text), "text": text, "model": model_name, "key_index": 1, "error": ""}
+            except Exception as e:
+                return {"success": False, "error": str(e), "text": None}
+
+        last_error = ""
+        key_pool = self.api_keys[:] if self.api_keys else []
+        if key_pool and 0 <= self.active_key_index < len(key_pool):
+            key_pool = key_pool[self.active_key_index:] + key_pool[:self.active_key_index]
+
+        for attempt in range(1, self.max_attempts + 1):
+            for key_offset, api_key in enumerate(key_pool):
+                client = None
+                try:
+                    client = self._build_client(api_key)
+                except Exception as e:
+                    last_error = str(e)
+                    continue
+
+                for model_name in self.model_candidates:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=GenerateContentConfig(
+                                temperature=temperature,
+                                max_output_tokens=max_output_tokens,
+                                top_p=0.8,
+                                top_k=40,
+                            )
+                        )
+                        text = getattr(response, "text", None)
+                        if text:
+                            self.client = client
+                            self._last_model_used = model_name
+                            self._last_key_used_index = key_offset + 1
+                            self.active_key_index = (self.active_key_index + key_offset) % max(1, len(self.api_keys))
+                            self._last_error = ""
+                            return {
+                                "success": True,
+                                "text": text,
+                                "model": model_name,
+                                "key_index": self.active_key_index + 1,
+                                "error": "",
+                            }
+                    except Exception as e:
+                        message = str(e)
+                        last_error = message
+                        kind = self._classify_error(message)
+                        if kind == "quota":
+                            retry_delay = self._extract_retry_delay_seconds(message)
+                            effective_cooldown = max(
+                                int(self.quota_cooldown_seconds),
+                                int(retry_delay) if retry_delay else 0,
+                            )
+                            self._quota_cooldown_until = max(
+                                float(self._quota_cooldown_until or 0.0),
+                                time.time() + float(effective_cooldown),
+                            )
+                            continue
+                        if kind == "auth":
+                            break
+                        if kind == "model":
+                            continue
+                        continue
+            if attempt < self.max_attempts:
+                time.sleep(min(1.0 * attempt, 3.0))
+
+        self._last_error = last_error or "Gemini generation failed"
+        return {"success": False, "error": self._last_error, "text": None}
     
     async def analyze_with_gemini(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -197,17 +395,19 @@ class GeminiIntegration:
             }
         
         try:
-            response = self._generate_content(prompt)
+            generation = self.generate_text(prompt)
+            response = generation.get("text") if generation.get("success") else None
             if response:
                 return {
                     'success': True,
                     'response': response,
-                    'model': self.available_models[0] if self.available_models else 'gemini-2.5-flash'
+                    'model': generation.get("model") or (self.available_models[0] if self.available_models else 'gemini-2.5-flash'),
+                    'key_index': generation.get("key_index", 1),
                 }
             else:
                 return {
                     'success': False,
-                    'error': 'No response from Gemini',
+                    'error': generation.get("error") or 'No response from Gemini',
                     'fallback': True
                 }
         except Exception as e:
@@ -454,56 +654,16 @@ CRITICAL GUIDELINES:
         """Generate content using Gemini with quota handling"""
         if not self.is_available():
             return None
-        
-        try:
-            # Try different models (prioritize free tier friendly models)
-            models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-exp"]
-            
-            for model_name in models_to_try:
-                try:
-                    logger.info(f"Trying model: {model_name}")
-                    if self.backend == "google-generativeai":
-                        model = self.client.GenerativeModel(model_name)
-                        response = model.generate_content(
-                            prompt,
-                            generation_config={
-                                "temperature": 0.1,
-                                "max_output_tokens": 4000,
-                                "top_p": 0.8,
-                                "top_k": 40,
-                            },
-                        )
-                    else:
-                        response = self.client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=GenerateContentConfig(
-                                temperature=0.1,
-                                max_output_tokens=4000,
-                                top_p=0.8,
-                                top_k=40
-                            )
-                        )
-                    
-                    if response and response.text:
-                        logger.info(f"Success with model: {model_name}")
-                        return response.text
-                        
-                except Exception as e:
-                    error_msg = str(e)
-                    # Check if it's a quota error
-                    if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-                        logger.warning(f"⚠️ Gemini API quota exceeded for {model_name}. Skipping AI analysis.")
-                        # Don't try other models if quota is exhausted
-                        return None
-                    logger.warning(f"Model {model_name} failed: {e}")
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Content generation failed: {e}")
-            return None
+        result = self.generate_text(prompt)
+        if result.get("success"):
+            logger.info(
+                "Gemini content generation succeeded | model=%s | key#%s",
+                result.get("model", "unknown"),
+                result.get("key_index", "?"),
+            )
+            return result.get("text")
+        logger.warning("Gemini content generation failed: %s", result.get("error", "unknown error"))
+        return None
     
     def _parse_analysis_response(self, response_text: str, scan_type: str) -> Dict[str, Any]:
         """Parse Gemini response into structured analysis"""
@@ -712,7 +872,9 @@ CRITICAL GUIDELINES:
                 "model_used": self.available_models[0] if self.available_models else "gemini-2.5-flash",
                 "available_models": self.available_models[:5],
                 "initialized": True,
-                "test_skipped": True
+                "test_skipped": True,
+                "keys_available": len(self.api_keys),
+                "active_key_index": self.active_key_index + 1,
             }
         
         try:
@@ -720,19 +882,22 @@ CRITICAL GUIDELINES:
             test_model = self.available_models[0] if self.available_models else "gemini-2.5-flash"
             
             # Simple test prompt
-            response = self.client.models.generate_content(
-                model=test_model,
-                contents="Hello, respond with 'Gemini AI is working' if functional.",
-                config=GenerateContentConfig(max_output_tokens=20)
+            result = self.generate_text(
+                "Hello, respond with 'Gemini AI is working' if functional.",
+                max_output_tokens=20,
+                temperature=0.0,
             )
+            response_text = result.get("text") if result.get("success") else "Connection test failed"
             
             return {
-                "status": "success",
-                "message": "Gemini AI connection successful",
-                "response": response.text,
-                "model_used": test_model,
+                "status": "success" if result.get("success") else "error",
+                "message": "Gemini AI connection successful" if result.get("success") else result.get("error", "Gemini test failed"),
+                "response": response_text,
+                "model_used": result.get("model", test_model),
                 "available_models": self.available_models[:5],
-                "initialized": True
+                "initialized": bool(result.get("success")),
+                "keys_available": len(self.api_keys),
+                "active_key_index": result.get("key_index", self.active_key_index + 1),
             }
             
         except Exception as e:

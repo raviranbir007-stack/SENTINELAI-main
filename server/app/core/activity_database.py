@@ -565,20 +565,39 @@ class ActivityDatabase:
             logger.error(f"Error getting activity summary: {e}")
             return {}
     
-    def get_recent_threats(self, limit: int = 10) -> List[Dict]:
-        """Get recent threats detected"""
+    def get_recent_threats(self, limit: int = 10, hours: int | None = None) -> List[Dict]:
+        """Get recent threats detected, optionally constrained to a time window."""
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT artifact_type, artifact_value, verdict, confidence, 
-                       corroboration_level, source_count, scan_time
-                FROM threat_scans
-                WHERE verdict IN ('malicious', 'suspicious', 'critical')
-                ORDER BY scan_time DESC
-                LIMIT ?
-            ''', (limit,))
+
+            if hours is not None:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
+                cutoff_time_str = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute(
+                    '''
+                    SELECT artifact_type, artifact_value, verdict, confidence,
+                           corroboration_level, source_count, scan_time
+                    FROM threat_scans
+                    WHERE verdict IN ('malicious', 'suspicious', 'critical')
+                      AND scan_time > ?
+                    ORDER BY scan_time DESC
+                    LIMIT ?
+                    ''',
+                    (cutoff_time_str, limit),
+                )
+            else:
+                cursor.execute(
+                    '''
+                    SELECT artifact_type, artifact_value, verdict, confidence,
+                           corroboration_level, source_count, scan_time
+                    FROM threat_scans
+                    WHERE verdict IN ('malicious', 'suspicious', 'critical')
+                    ORDER BY scan_time DESC
+                    LIMIT ?
+                    ''',
+                    (limit,),
+                )
             
             threats = []
             for row in cursor.fetchall():

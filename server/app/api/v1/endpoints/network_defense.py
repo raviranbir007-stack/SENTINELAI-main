@@ -2268,6 +2268,33 @@ async def list_incidents(
 ):
     """Return merged incident records for the dashboard incident console."""
     try:
+        def _normalize_text(value: object) -> Optional[str]:
+            if value is None:
+                return None
+            text = str(value).strip()
+            if not text:
+                return None
+            lowered = text.lower()
+            if lowered in {
+                "unknown",
+                "unknown target",
+                "unknown source",
+                "n/a",
+                "na",
+                "none",
+                "null",
+                "-",
+            }:
+                return None
+            return text
+
+        def _first_non_empty(*values: object) -> Optional[str]:
+            for value in values:
+                normalized = _normalize_text(value)
+                if normalized:
+                    return normalized
+            return None
+
         since_time = datetime.utcnow() - timedelta(hours=hours)
         max_items = max(1, min(int(limit or 500), 1000))
 
@@ -2332,9 +2359,21 @@ async def list_incidents(
 
             client_row = client_map.get(int(attack.target_client_id)) if attack.target_client_id else None
             client_payload = _client_payload(client_row)
-            source_ip = attack.source_ip or indicators.get("source_ip") or None
-            source_domain = attack.source_domain or indicators.get("source_domain") or None
-            source_country = indicators.get("source_country") or indicators.get("country") or indicators.get("geo_country") or None
+            source_ip = _first_non_empty(attack.source_ip, indicators.get("source_ip"))
+            source_domain = _first_non_empty(attack.source_domain, indicators.get("source_domain"), indicators.get("domain"))
+            source_country = _first_non_empty(indicators.get("source_country"), indicators.get("country"), indicators.get("geo_country"), indicators.get("src_country"))
+            target_value = _first_non_empty(
+                attack.destination_ip,
+                indicators.get("destination_ip"),
+                indicators.get("target"),
+                indicators.get("target_host"),
+                indicators.get("target_domain"),
+                client_payload.get("hostname") if client_payload else None,
+                client_payload.get("client_id") if client_payload else None,
+                client_payload.get("ip_address") if client_payload else None,
+                source_domain,
+                source_ip,
+            )
             api_sources = []
             if isinstance(indicators.get("api_sources"), list):
                 api_sources = [str(source) for source in indicators.get("api_sources", []) if source]
@@ -2344,7 +2383,7 @@ async def list_incidents(
                 "incident_kind": "attack_event",
                 "incident_type": attack.attack_type,
                 "title": attack.attack_type,
-                "target": attack.destination_ip or source_ip or source_domain or (client_payload.get("client_id") if client_payload else None) or "unknown",
+                "target": target_value or "unknown",
                 "source_ip": source_ip,
                 "source_domain": source_domain,
                 "source_country": source_country,
@@ -2413,16 +2452,46 @@ async def list_incidents(
             client_payload = _client_payload(client_row)
             severity = "critical" if requested_action == "QUARANTINE" else "high" if requested_action == "BLOCK" else "medium"
             metadata = details.get("metadata") if isinstance(details.get("metadata"), dict) else {}
+            source_ip = _first_non_empty(
+                details.get("source_ip"),
+                metadata.get("source_ip"),
+                details.get("ip"),
+                metadata.get("ip"),
+            )
+            source_domain = _first_non_empty(
+                details.get("source_domain"),
+                metadata.get("source_domain"),
+                details.get("domain"),
+                metadata.get("domain"),
+            )
+            source_country = _first_non_empty(
+                details.get("source_country"),
+                metadata.get("source_country"),
+                details.get("country"),
+                metadata.get("country"),
+            )
+            target_value = _first_non_empty(
+                action.target,
+                details.get("target"),
+                metadata.get("target"),
+                details.get("destination_ip"),
+                metadata.get("destination_ip"),
+                source_domain,
+                source_ip,
+                client_payload.get("hostname") if client_payload else None,
+                client_payload.get("client_id") if client_payload else None,
+                client_payload.get("ip_address") if client_payload else None,
+            )
 
             incidents.append({
                 "incident_id": action.action_id,
                 "incident_kind": "defense_action",
                 "incident_type": requested_action,
                 "title": f"{requested_action} Action",
-                "target": action.target,
-                "source_ip": details.get("source_ip") or metadata.get("source_ip"),
-                "source_domain": details.get("source_domain") or metadata.get("source_domain"),
-                "source_country": details.get("source_country") or metadata.get("source_country"),
+                "target": target_value or "unknown",
+                "source_ip": source_ip,
+                "source_domain": source_domain,
+                "source_country": source_country,
                 "severity": severity,
                 "status": normalized_status,
                 "blocked": requested_action == "BLOCK" and normalized_status == "executed",
@@ -2438,6 +2507,13 @@ async def list_incidents(
                 "affected_clients": details.get("affected_clients") or [],
                 "blocked_at": action.executed_at.isoformat() if action.executed_at else None,
                 "action_scope": details.get("scope") or "targeted",
+                "summary": {
+                    "scope": details.get("scope") or "targeted",
+                    "requested_action": requested_action,
+                    "status": normalized_status,
+                    "successful": bool(action.successful),
+                    "reason": details.get("reason"),
+                },
                 "raw_details": {
                     "defense_action": {
                         "action_id": action.action_id,

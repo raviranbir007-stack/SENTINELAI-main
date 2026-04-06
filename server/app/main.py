@@ -90,12 +90,35 @@ def _public_system_status() -> dict:
         }
     return status
 
-# Gemini API Configuration with multiple fallback options
-GEMINI_API_KEY = (
-    os.getenv("GEMINI_API_KEY") or 
-    os.getenv("GOOGLE_API_KEY") or
-    os.getenv("GEMINI_API_KEY_1")  # Additional fallback
-)
+def _collect_gemini_keys() -> List[str]:
+    csv_keys: List[str] = []
+    for csv_env in ("GEMINI_API_KEYS", "GOOGLE_API_KEYS"):
+        raw = os.getenv(csv_env, "")
+        if raw:
+            csv_keys.extend([item.strip() for item in raw.split(",") if item.strip()])
+
+    key_candidates = [
+        os.getenv("GEMINI_API_KEY", ""),
+        os.getenv("GOOGLE_API_KEY", ""),
+        *csv_keys,
+    ]
+    for idx in range(1, 21):
+        key_candidates.append(os.getenv(f"GEMINI_API_KEY_{idx}", ""))
+        key_candidates.append(os.getenv(f"GOOGLE_API_KEY_{idx}", ""))
+
+    deduped: List[str] = []
+    seen = set()
+    for key in key_candidates:
+        value = str(key or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+GEMINI_API_KEYS_POOL = _collect_gemini_keys()
+GEMINI_API_KEY = GEMINI_API_KEYS_POOL[0] if GEMINI_API_KEYS_POOL else ""
 
 # Gemini Configuration Initialization
 def initialize_gemini_configuration():
@@ -202,7 +225,8 @@ def get_system_status():
                 "status": gemini_status.get('status', 'unknown') if is_available else 'fallback_active',
                 "model": gemini_status.get('model', 'N/A') if is_available else 'N/A'
             },
-            "api_key_present": bool(GEMINI_API_KEY),
+            "api_key_present": bool(GEMINI_API_KEYS_POOL),
+            "api_keys_configured": len(GEMINI_API_KEYS_POOL),
             "fallback_active": fallback_active,
             "version": "2.0.0",
             "features": {
@@ -221,7 +245,8 @@ def get_system_status():
                 "status": "error",
                 "model": "N/A"
             },
-            "api_key_present": bool(GEMINI_API_KEY),
+            "api_key_present": bool(GEMINI_API_KEYS_POOL),
+            "api_keys_configured": len(GEMINI_API_KEYS_POOL),
             "fallback_active": True,
             "version": "2.0.0",
             "features": {

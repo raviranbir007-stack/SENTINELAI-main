@@ -65,6 +65,9 @@ def try_import(name: str):
                     import types
 
                     mod = types.ModuleType(pkg)
+                    if pkg == "torch":
+                        # SciPy probes torch.Tensor via getattr(); provide a minimal placeholder.
+                        mod.Tensor = type("Tensor", (), {})
                     sys.modules[pkg] = mod
                     inserted.append(pkg)
             except Exception:

@@ -49,6 +49,16 @@ else
     exit 1
 fi
 
+# Ensure fuzzy hashing dependency is available even when build isolation breaks pkg_resources.
+if ! python -c "import ssdeep" 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  ssdeep missing; retrying with no-build-isolation...${NC}"
+    pip install --no-build-isolation ssdeep || {
+        echo -e "${RED}❌ Failed to install ssdeep (fuzzy hashing support).${NC}"
+        exit 1
+    }
+    echo -e "${GREEN}✅ ssdeep installed${NC}"
+fi
+
 # Check if Google packages are installed
 echo -e "${BLUE}🔍 Checking Google AI packages...${NC}"
 if ! python -c "import google.genai" 2>/dev/null; then
@@ -106,17 +116,3 @@ python run_server.py
 
 # Deactivate virtual environment on exit
 deactivate
-    echo ""
-    echo "❌ No API keys configured!"
-    echo "   Edit .env and add at least VirusTotal API key"
-    echo "   Then run: ./start.sh"
-    exit 1
-fi
-
-echo ""
-echo "🚀 Starting SENTINEL-AI server..."
-echo "================================"
-echo ""
-
-# Start server with system Python (has reportlab installed)
-python3 run_server.py

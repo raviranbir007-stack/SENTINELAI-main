@@ -269,8 +269,10 @@ def test_download_report():
         )
         assert response.status_code == 200, f"Failed to generate report: {response.status_code}"
         
-        # The generate endpoint returns a PDF directly, not a JSON with report_id
-        if response.headers.get("content-type") == "application/pdf":
+        content_type = str(response.headers.get("content-type") or "").lower()
+
+        # Endpoint can return either a streamed PDF or JSON fallback payload
+        if content_type.startswith("application/pdf"):
             print_success("PDF report generated and downloaded successfully")
             print_info(f"Content-Type: {response.headers.get('content-type')}")
             print_info(f"File size: {len(response.content)} bytes")
@@ -280,6 +282,12 @@ def test_download_report():
             with open(filename, "wb") as f:
                 f.write(response.content)
             print_info(f"Saved to: {filename}")
+        elif "application/json" in content_type:
+            data = response.json()
+            report_text = str(data.get("report_text") or "").strip()
+            assert report_text, "JSON fallback missing report_text"
+            print_success("Report returned JSON fallback payload")
+            print_info(f"Preview: {report_text[:100]}...")
         else:
             raise AssertionError(
                 f"Response is not a PDF: {response.headers.get('content-type')}"
