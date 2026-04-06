@@ -64,7 +64,16 @@ def _legacy_activity_monitor_enabled() -> bool:
 
 def _client_safe_dashboard_mode() -> bool:
     """Return whether client-safe response redaction is enabled."""
-    return os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "true").lower() in {"1", "true", "yes", "on"}
+    explicit = os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+
+    try:
+        return os.geteuid() != 0
+    except Exception:
+        return True
 
 
 def _public_system_status() -> dict:

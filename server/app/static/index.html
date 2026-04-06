@@ -2442,6 +2442,13 @@
                                     <div class="status-item-value" style="color: var(--success);" id="statusApisValue">0/0 Online</div>
                                 </div>
                             </div>
+                            <div class="status-item clickable" onclick="fetchActiveClients()" title="Click to view client inventory" id="clientStatusItem">
+                                <div class="status-item-icon" style="color: var(--warning);">👥</div>
+                                <div>
+                                    <div class="status-item-label">Clients</div>
+                                    <div class="status-item-value" style="color: var(--warning);" id="statusClientsValue">Hidden</div>
+                                </div>
+                            </div>
                         </div>
                         <div class="status-footer">
                             <div class="status-footer-label">LAST SCAN</div>
@@ -2589,53 +2596,6 @@
                             <!-- Threats will be inserted here -->
                         </tbody>
                     </table>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Incident Response Section -->
-        <section class="section section-divider">
-            <div class="container">
-                <div class="section-header">
-                    <div>
-                        <h2>🚨 Incident Response Console</h2>
-                        <p>Unified feed of blocked, ignored, and quarantined incidents</p>
-                    </div>
-                    <div class="section-actions">
-                        <button id="toggleIncidentsBtn" class="btn btn-outline" title="Minimize/Maximize Incident Console">− Minimize</button>
-                        <button id="refreshIncidentsBtn" class="btn btn-outline btn-sm" onclick="fetchIncidents(activeIncidentFilter || 'all')" title="Refresh incidents">↺ Refresh</button>
-                    </div>
-                </div>
-
-                <div class="filter-buttons incident-filter-scroll" style="margin-bottom: 1rem;">
-                    <button class="filter-btn btn btn-outline active" id="incidentFilterAll" onclick="filterIncidents('all')">All</button>
-                    <button class="filter-btn btn btn-outline" id="incidentFilterBlocked" onclick="filterIncidents('blocked')">Blocked</button>
-                    <button class="filter-btn btn btn-outline" id="incidentFilterIgnored" onclick="filterIncidents('ignored')">Ignore</button>
-                    <button class="filter-btn btn btn-outline" id="incidentFilterQuarantined" onclick="filterIncidents('quarantined')">Quarantine</button>
-                    <span id="incidentStats" class="incident-stats-inline"></span>
-                </div>
-
-                <div class="card card-glass dashboard-card" id="incidentsCard">
-                    <div class="table-shell incident-table-shell">
-                        <table class="threats-table">
-                            <thead>
-                                <tr>
-                                    <th>Incident</th>
-                                    <th>Target</th>
-                                    <th>Source IP</th>
-                                    <th>Country</th>
-                                    <th>Client / PC</th>
-                                    <th>Action</th>
-                                    <th>Status</th>
-                                    <th>Time</th>
-                                    <th style="text-align:right;">Details</th>
-                                </tr>
-                            </thead>
-                            <tbody id="incidentTableBody">
-                                <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Loading incidents...</td></tr>
-                            </tbody>
-                        </table>
                     </div>
                 </div>
             </div>
@@ -2933,6 +2893,13 @@
                                     <div class="btn-card-content">
                                         <h4>Technical Analysis</h4>
                                         <p>Detailed technical breakdown</p>
+                                    </div>
+                                </button>
+                                <button class="btn btn-outline btn-card report-type-btn" data-report-type="forensic_investigation" aria-pressed="false">
+                                    🧪
+                                    <div class="btn-card-content">
+                                        <h4>Forensic Investigation</h4>
+                                        <p>Evidence-first incident dossier</p>
                                     </div>
                                 </button>
                             </div>
@@ -3698,8 +3665,9 @@
         let latestActiveClients = null;
         let latestAccuracyMetrics = null;
         const ADMIN_DASHBOARD_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'vbox']);
-        const CLIENT_SAFE_DASHBOARD_MODE = !ADMIN_DASHBOARD_HOSTS.has((window.location.hostname || '').toLowerCase());
-        let knownClientIdsForAlerts = null; // null = first load, Set after first fetch
+        let CLIENT_SAFE_DASHBOARD_MODE = false;
+        let DASHBOARD_RUNTIME_CONTEXT = null;
+        let knownClientIdsForAlerts = null; // null = first load, Map after first fetch
         let securityTaskHistory = {
             cpu: [],
             scans: [],
@@ -3815,6 +3783,7 @@
             
             // Reports
             reports: '/api/v1/reports/',
+            reportsDownload: (reportId) => `/api/v1/reports/download/${reportId}`,
             generateReport: '/api/v1/reports/generate',
             
             // Auth
@@ -3883,6 +3852,10 @@
             technical_analysis: {
                 label: 'Technical Analysis',
                 description: 'Technical findings and evidence.'
+            },
+            forensic_investigation: {
+                label: 'Forensic Investigation',
+                description: 'Chain-of-custody and evidence-focused incident dossier.'
             }
         };
 
@@ -3907,22 +3880,11 @@
         }
 
         function loadLocalReportsCache() {
-            try {
-                const raw = localStorage.getItem(DASHBOARD_LOCAL_REPORTS_KEY);
-                const parsed = raw ? JSON.parse(raw) : [];
-                return Array.isArray(parsed) ? parsed : [];
-            } catch (_e) {
-                return [];
-            }
+            return [];
         }
 
         function saveLocalReportsCache(reports) {
-            try {
-                const normalized = Array.isArray(reports) ? reports.slice(0, 50) : [];
-                localStorage.setItem(DASHBOARD_LOCAL_REPORTS_KEY, JSON.stringify(normalized));
-            } catch (_e) {
-                // ignore storage errors
-            }
+            return reports;
         }
 
         function rememberGeneratedReport(reportMeta) {
@@ -3937,8 +3899,7 @@
                 local_only: !reportMeta?.report_id,
             };
 
-            const existing = loadLocalReportsCache();
-            const merged = [entry, ...existing]
+            const merged = [entry, ...(Array.isArray(allReports) ? allReports : [])]
                 .filter((r, idx, arr) => {
                     const key = r.report_id || `${r.title}-${r.created}`;
                     return arr.findIndex(x => (x.report_id || `${x.title}-${x.created}`) === key) === idx;
@@ -3946,7 +3907,47 @@
                 .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime())
                 .slice(0, 50);
 
-            saveLocalReportsCache(merged);
+            allReports = merged;
+        }
+
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        async function downloadReportById(reportRef) {
+            if (!reportRef) {
+                showToast('Missing report identifier', 'warning');
+                return;
+            }
+
+            try {
+                const isDirectUrl = String(reportRef).startsWith('/') || String(reportRef).startsWith('http');
+                const url = isDirectUrl ? String(reportRef) : `${API_BASE_URL}${API_ENDPOINTS.reportsDownload(encodeURIComponent(reportRef))}`;
+                const res = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                });
+
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.detail || `HTTP ${res.status}`);
+                }
+
+                const blob = await res.blob();
+                const safeName = String(reportRef).replace(/[^a-zA-Z0-9._-]/g, '_');
+                downloadBlob(blob, `${safeName}.pdf`);
+                showToast('Report downloaded', 'success');
+            } catch (error) {
+                console.error('Report download error:', error);
+                showToast(`Failed to download report: ${error.message}`, 'error');
+            }
         }
 
         function loadViewedThreats() {
@@ -4066,6 +4067,28 @@
                 setSyncStatus('warn', 'DEGRADED');
                 console.error('API Error:', error);
                 throw error;
+            }
+        }
+
+        async function resolveDashboardRuntimeContext() {
+            if (DASHBOARD_RUNTIME_CONTEXT && DASHBOARD_RUNTIME_CONTEXT.source !== 'hostname-fallback') {
+                return DASHBOARD_RUNTIME_CONTEXT;
+            }
+            try {
+                const context = asObject(await apiRequest('/api/v1/dashboard/runtime-context')) || {};
+                DASHBOARD_RUNTIME_CONTEXT = context;
+                CLIENT_SAFE_DASHBOARD_MODE = Boolean(context.client_safe_dashboard_mode);
+                return context;
+            } catch (_error) {
+                CLIENT_SAFE_DASHBOARD_MODE = !ADMIN_DASHBOARD_HOSTS.has((window.location.hostname || '').toLowerCase());
+                const fallbackContext = {
+                    role: CLIENT_SAFE_DASHBOARD_MODE ? 'client' : 'admin',
+                    client_safe_dashboard_mode: CLIENT_SAFE_DASHBOARD_MODE,
+                    source: 'hostname-fallback',
+                };
+                // Keep fallback transient so subsequent refreshes can recover once backend is reachable.
+                DASHBOARD_RUNTIME_CONTEXT = fallbackContext;
+                return fallbackContext;
             }
         }
 
@@ -5670,19 +5693,14 @@
                     verdict: String(report.verdict || 'unknown').toLowerCase(),
                     created: report.created || report.created_at || report.timestamp || new Date().toISOString(),
                     type: report.type || selectedReportType || 'report',
+                    download_url: report.download_url || null,
                 }));
 
-                const localReports = loadLocalReportsCache();
-                allReports = [...normalizedRemote, ...localReports]
-                    .filter((entry, idx, arr) => {
-                        const key = entry.report_id || `${entry.title}-${entry.created}`;
-                        return arr.findIndex(other => (other.report_id || `${other.title}-${other.created}`) === key) === idx;
-                    })
-                    .sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
+                allReports = normalizedRemote.sort((a, b) => new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime());
 
                 return allReports;
             } catch (_error) {
-                allReports = loadLocalReportsCache();
+                allReports = [];
                 return allReports;
             }
         }
@@ -5824,7 +5842,6 @@
                 return;
             }
 
-            // Show only the 4 most recent reports
             const recentReports = allReports.slice(0, 4);
             
             container.innerHTML = recentReports.map(report => `
@@ -5841,9 +5858,7 @@
                     </div>
                     <div class="report-item-right">
                         <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
-                        ${report.report_id
-                            ? `<button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️</button>`
-                            : `<span class="badge" style="font-size:10px;">Local</span>`}
+                        <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.download_url || report.report_id}')">⬇️</button>
                     </div>
                 </div>
             `).join('');
@@ -6532,9 +6547,7 @@
                                     </div>
                                 </div>
                                 <div class="report-item-right">
-                                    ${report.report_id
-                                        ? `<button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download</button>`
-                                        : `<span class="badge" style="font-size:10px;">Stored locally</span>`}
+                                    <button class="btn btn-ghost btn-sm" onclick="downloadReportById('${report.download_url || report.report_id}')">⬇️ Download</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -6582,9 +6595,7 @@
                                 </div>
                                 <div class="report-item-right">
                                     <span class="badge badge-safe" style="font-size: 10px;">✓ Ready</span>
-                                    ${report.report_id
-                                        ? `<button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}')">⬇️ Download PDF</button>`
-                                        : `<span class="badge" style="font-size:10px;">Stored locally</span>`}
+                                    <button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.download_url || report.report_id}')">⬇️ Download PDF</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -7461,7 +7472,7 @@
                     </div>
                     <div style="display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:flex-end;">
                         <button class="btn btn-outline btn-sm" onclick="switchPage('reports'); renderAllReportsPage(); closeSearchNavigator();">Open</button>
-                        ${report.report_id ? `<button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.report_id}'); closeSearchNavigator();">Download</button>` : ''}
+                        ${(report.download_url || report.report_id) ? `<button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.download_url || report.report_id}'); closeSearchNavigator();">Download</button>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -8810,14 +8821,21 @@
         }
 
         async function fetchActiveClients() {
+            await resolveDashboardRuntimeContext();
             const activeSection = document.getElementById('activeClientsSection');
             const activeCard = document.getElementById('activeClientsCard');
+            const statusClientsValue = document.getElementById('statusClientsValue');
+            const clientStatusItem = document.getElementById('clientStatusItem');
             if (CLIENT_SAFE_DASHBOARD_MODE) {
                 if (activeSection) activeSection.style.display = 'none';
+                if (statusClientsValue) statusClientsValue.textContent = 'Hidden';
+                if (clientStatusItem) clientStatusItem.title = 'Client inventory hidden in client-safe mode';
                 updateSourceSignal('clients', { ok: true, dataTimestamp: Date.now() });
                 return;
             }
             if (activeSection) activeSection.style.display = 'block';
+            if (statusClientsValue) statusClientsValue.textContent = 'Loading...';
+            if (clientStatusItem) clientStatusItem.title = 'Click to view client inventory';
             if (activeCard) {
                 activeCard.innerHTML = '<div style="text-align:center;color:var(--muted-foreground);padding:1rem;">Refreshing active clients...</div>';
             }
@@ -8826,8 +8844,44 @@
                 const clientsData = asObject(await apiRequest(API_ENDPOINTS.dashboardActiveClients)) || {};
                 latestActiveClients = clientsData;
                 const activeClients = asArray(clientsData.clients || []);
+                const currentSnapshots = new Map();
+                const previousSnapshots = knownClientIdsForAlerts instanceof Map ? knownClientIdsForAlerts : null;
+                activeClients.forEach(client => {
+                    const clientId = String(client?.client_id || '').trim();
+                    if (!clientId) return;
+                    const signature = normalizeClientAlertSignature(client);
+                    currentSnapshots.set(clientId, signature);
+
+                    if (!previousSnapshots) return;
+                    const previousSignature = previousSnapshots.get(clientId);
+                    if (!previousSignature) {
+                        const pending = client.is_active === false;
+                        const title = pending ? 'Client Verification Required' : 'New Client Registered';
+                        const message = `${client.hostname || clientId} · ${client.ip_address || 'unknown IP'}${client.mac_address ? ` · ${client.mac_address}` : ''}`;
+                        addNotification(title, message, pending ? 'warning' : 'info', `client:new:${clientId}`, 120000);
+                        showToast(`${title}: ${client.hostname || clientId}`, pending ? 'warning' : 'info');
+                        return;
+                    }
+
+                    if (previousSignature !== signature) {
+                        const pending = client.is_active === false;
+                        const title = pending ? 'Client Verification Required' : 'Client Identity Updated';
+                        addNotification(
+                            title,
+                            `${client.hostname || clientId} changed network identity: ${client.ip_address || 'unknown IP'}${client.mac_address ? ` · ${client.mac_address}` : ''}`,
+                            pending ? 'warning' : 'info',
+                            `client:update:${clientId}:${signature}`,
+                            120000
+                        );
+                        showToast(`${client.hostname || clientId} identity changed`, 'info');
+                    }
+                });
+                knownClientIdsForAlerts = currentSnapshots;
                 const total = activeClients.length;
                 const userCount = Number(clientsData.identified_active_users_count || 0);
+                if (statusClientsValue) {
+                    statusClientsValue.textContent = `${total} active`;
+                }
                 const rows = activeClients.slice(0, 10).map(client => {
                     const lastSeen = formatLiveTimestamp(client.last_seen);
                     return `
@@ -9018,6 +9072,18 @@
                 : toEpochMs(String(value));
             if (!timestamp) return String(value || 'N/A');
             return formatAge(Date.now() - timestamp);
+        }
+
+        function normalizeClientAlertSignature(client) {
+            return [
+                String(client?.client_id || '').trim(),
+                String(client?.hostname || '').trim().toLowerCase(),
+                String(client?.ip_address || '').trim(),
+                String(client?.mac_address || '').trim().toLowerCase(),
+                String(client?.os_type || '').trim().toLowerCase(),
+                String(client?.version || '').trim(),
+                String(client?.is_active === false ? 'pending' : 'active'),
+            ].join('|');
         }
 
         function switchLiveTab(tab) {
@@ -9622,8 +9688,7 @@
                 if (contentType.includes('application/json')) {
                     const data = await res.json();
                     if (data.report_id) {
-                        const url = `${API_BASE_URL}/api/v1/reports/download/${data.report_id}`;
-                        window.open(url, '_blank');
+                        await downloadReportById(data.report_id);
                         showToast('Scan report ready for download', 'success');
                         return;
                     }
@@ -9813,6 +9878,7 @@
                 
                 // Perform initial data loads immediately
                 Promise.allSettled([
+                    resolveDashboardRuntimeContext(),
                     fetchDashboardStats(),
                     fetchThreats(),
                     fetchIncidents('all'),
@@ -9820,6 +9886,7 @@
                     fetchApiStatus(),
                     fetchSystemHealth(),
                     fetchMonitoringStats(),
+                    fetchActiveClients(),
                     fetchSecurityPosture(),
                     fetchAuditTelemetry(),
                     fetchAllReports(),

@@ -42,6 +42,25 @@ except Exception:
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
+
+
+def _safe_report_name(raw_name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(raw_name or "report")).strip("._")
+    return cleaned or "report"
+
+
+def _store_generated_report(report_meta: dict, pdf_bytes: bytes) -> None:
+    try:
+        from ....api.compat import store_report_artifacts
+
+        store_report_artifacts(report_meta, pdf_bytes)
+    except Exception:
+        GENERATED_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        report_id = str(report_meta.get("report_id") or _safe_report_name(report_meta.get("title") or "report"))
+        report_path = GENERATED_REPORTS_DIR / f"{report_id}.pdf"
+        report_path.write_bytes(pdf_bytes)
+
 
 # ---------- Request Schema ----------
 class ReportRequest(BaseModel):
@@ -118,6 +137,8 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
 @router.post("/generate")
 async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db)):
     try:
+        now = datetime.utcnow()
+        report_id = _safe_report_name(data.scan_id or data.target or f"report_{int(now.timestamp())}")
         if data.scan_id:
             result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == data.scan_id))
             scan = result.scalar_one_or_none()
@@ -141,6 +162,8 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
                     "api_results": analysis_data.get("api_results", {}),
                     "summary": data.scan_summary or analysis_data.get("summary", ""),
                     "threats_detected": scan.threats_detected or len(analysis_data.get("threat_indicators", [])),
+                    "analysis_data": analysis_data,
+                    "file_analysis": analysis_data.get("file_analysis") if isinstance(analysis_data.get("file_analysis"), dict) else (analysis_data.get("local_analysis") if isinstance(analysis_data.get("local_analysis"), dict) else {}),
                     "forensic_metadata": analysis_data.get("forensic_metadata", {}),
                     "scan_id": scan.scan_id,
                     "threat_level": scan.threat_level or analysis_data.get("threat_level", "unknown"),
@@ -158,6 +181,18 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 
                 content_type = "application/pdf" if report_bytes.startswith(b"%PDF") else "text/plain; charset=utf-8"
                 filename = f"{data.target}_security_report.pdf" if content_type == "application/pdf" else f"{data.target}_security_report.txt"
+                report_meta = {
+                    "report_id": report_id,
+                    "title": f"Threat Analysis - {data.target}",
+                    "target": data.target,
+                    "type": scan.target_type or "unknown",
+                    "threats_detected": threat_analysis.get("threats_detected", len(threat_analysis.get("threat_indicators", []))),
+                    "verdict": threat_analysis.get("verdict", "unknown"),
+                    "confidence": threat_analysis.get("confidence", 0.0),
+                    "created": now.isoformat(),
+                    "download_url": f"/api/v1/reports/download/{report_id}",
+                }
+                _store_generated_report(report_meta, report_bytes)
                 return StreamingResponse(
                     io.BytesIO(report_bytes),
                     media_type=content_type,
@@ -179,6 +214,19 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
             }
 
         pdf_file = create_pdf(report_text, data)
+        pdf_bytes = pdf_file.getvalue()
+        report_meta = {
+            "report_id": report_id,
+            "title": f"Threat Analysis - {data.target}",
+            "target": data.target,
+            "type": data.report_type or "executive_summary",
+            "threats_detected": len(data.threats or []),
+            "verdict": "unknown",
+            "confidence": float(data.risk_score or 0.0),
+            "created": now.isoformat(),
+            "download_url": f"/api/v1/reports/download/{report_id}",
+        }
+        _store_generated_report(report_meta, pdf_bytes)
 
         filename = f"{data.target}_security_report.pdf"
 
@@ -199,7 +247,23 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 @router.get("/")
 async def list_reports():
     try:
-        reports_dir = Path(__file__).resolve().parent.parent.parent.parent / "generated_reports"
+        try:
+            from ....api.compat import REPORTS_STORE
+
+            if REPORTS_STORE:
+                reports = list(reversed(REPORTS_STORE))
+                response = JSONResponse(
+                    {"reports": reports, "count": len(reports)},
+                    headers={
+                        "Cache-Control": "public, max-age=5",
+                        "ETag": f'"{len(reports)}-{datetime.utcnow().timestamp():.0f}"'
+                    }
+                )
+                return response
+        except Exception:
+            pass
+
+        reports_dir = GENERATED_REPORTS_DIR
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         reports = []
@@ -210,7 +274,7 @@ async def list_reports():
                 "title": f.stem,
                 "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
                 "size_bytes": f.stat().st_size,
-                "download_url": f"/generated_reports/{f.name}"
+                "download_url": f"/api/v1/reports/download/{f.stem}"
             })
 
         # Return with cache headers: cache for 5 seconds to reduce rapid polling
@@ -233,40 +297,61 @@ async def list_reports():
 
 
 @router.get("/download/{report_id}")
-async def download_report(report_id: str):
+async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
     """Generate and return a PDF report for the given report_id.
 
     First checks if report exists in cache, otherwise generates on-demand.
     """
     try:
         from ....core.report_generator import report_generator
+
+        report_path = GENERATED_REPORTS_DIR / f"{report_id}.pdf"
+        if report_path.exists():
+            return StreamingResponse(
+                io.BytesIO(report_path.read_bytes()),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename={report_id}.pdf"},
+            )
         
         # Check cache first
         if hasattr(report_generator, '_reports_cache') and report_id in report_generator._reports_cache:
             logger.debug(f"REPORT dl | target={report_id} | src=cache")
             pdf_bytes = report_generator._reports_cache[report_id]
         else:
-            logger.debug(f"REPORT dl | target={report_id} | src=generated")
-            # Build a minimal threat_analysis payload for the report
-            threat_analysis = {
-                "input": report_id,
-                "input_type": "report_id",
-                "verdict": "unknown",
-                "confidence": 0.0,
-                "threat_indicators": [],
-                "api_results": {"apis_called": []},
-                "timestamp": None,
-            }
+            logger.debug(f"REPORT dl | target={report_id} | src=rebuild")
+            scan = None
+            try:
+                result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == report_id))
+                scan = result.scalar_one_or_none()
+            except Exception:
+                scan = None
 
-            # Try standard generation first; if it fails, build PDF from fallback analysis
+            if not scan:
+                raise HTTPException(status_code=404, detail="Report not found")
+
+            analysis_data = scan.analysis_data if isinstance(scan.analysis_data, dict) else {}
+            threat_analysis = {
+                "input": scan.target or scan.target_type or scan.scan_id,
+                "input_type": scan.target_type or analysis_data.get("input_type") or "unknown",
+                "verdict": scan.threat_level or analysis_data.get("verdict", "unknown"),
+                "confidence": scan.confidence if scan.confidence is not None else analysis_data.get("confidence", 0.0),
+                "threat_indicators": analysis_data.get("threat_indicators", []),
+                "api_results": analysis_data.get("api_results", {}),
+                "summary": analysis_data.get("summary", ""),
+                "threats_detected": scan.threats_detected or len(analysis_data.get("threat_indicators", [])),
+                "analysis_data": analysis_data,
+                "file_analysis": analysis_data.get("file_analysis") if isinstance(analysis_data.get("file_analysis"), dict) else (analysis_data.get("local_analysis") if isinstance(analysis_data.get("local_analysis"), dict) else {}),
+                "forensic_metadata": analysis_data.get("forensic_metadata", {}),
+                "scan_id": scan.scan_id,
+                "threat_level": scan.threat_level or analysis_data.get("threat_level", "unknown"),
+                "status": "complete",
+                "report_type": analysis_data.get("report_type", "executive_summary"),
+                "intervals": analysis_data.get("intervals", ["24h", "7d", "30d"]),
+                "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
+            }
             pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
             if not pdf_bytes:
-                # Fallback: create AI analysis text and render PDF directly
-                try:
-                    ai_text = report_generator._get_fallback_analysis(threat_analysis)
-                    pdf_bytes = report_generator._create_pdf_report(threat_analysis, ai_text)
-                except Exception:
-                    raise HTTPException(status_code=404, detail="Report not found or generation failed")
+                raise HTTPException(status_code=404, detail="Report not found")
 
         from io import BytesIO
 

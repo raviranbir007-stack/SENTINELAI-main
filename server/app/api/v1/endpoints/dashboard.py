@@ -1,4 +1,8 @@
-from fastapi import Response, APIRouter, Depends
+import os
+import socket
+import ipaddress
+
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +10,81 @@ from ....database import get_db
 from ....models import ScanHistory
 
 router = APIRouter()
+
+
+def _runtime_role() -> dict:
+    explicit = os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return {"role": "client", "client_safe_dashboard_mode": True, "source": "env"}
+    if explicit in {"0", "false", "no", "off"}:
+        return {"role": "admin", "client_safe_dashboard_mode": False, "source": "env"}
+
+    try:
+        is_root = os.geteuid() == 0
+    except Exception:
+        is_root = False
+
+    return {
+        "role": "admin" if is_root else "client",
+        "client_safe_dashboard_mode": not is_root,
+        "source": "privilege",
+    }
+
+
+def _request_origin_is_local_device(request: Request) -> bool:
+    origin = str(request.headers.get("X-Forwarded-For", "") or "").strip()
+    if origin:
+        origin = origin.split(",", 1)[0].strip()
+    if not origin and request.client and request.client.host:
+        origin = str(request.client.host).strip()
+
+    if not origin:
+        return False
+
+    try:
+        parsed = ipaddress.ip_address(origin)
+        if parsed:
+            from ....config import settings
+            local_ips = {str(ip).strip() for ip in settings.admin_infra_ips_list if str(ip).strip()}
+            if str(parsed) in local_ips:
+                return True
+            if parsed.is_loopback:
+                return True
+            if parsed.version == 4 and str(parsed) == "127.0.0.1":
+                return True
+    except Exception:
+        pass
+
+    try:
+        local_names = {socket.gethostname().lower(), socket.getfqdn().lower(), "localhost"}
+        return origin.lower() in local_names
+    except Exception:
+        return origin.lower() == "localhost"
+
+
+@router.get("/runtime-context")
+async def get_runtime_context(request: Request):
+    """Expose the current server runtime role for dashboard UI decisions."""
+    from ....config import settings
+    device_name = socket.getfqdn() or socket.gethostname() or "localhost"
+    device_ip = next(iter(settings.admin_infra_ips_list), None)
+
+    if _request_origin_is_local_device(request):
+        return {
+            "role": "admin",
+            "client_safe_dashboard_mode": False,
+            "source": "local-device",
+            "device_name": device_name,
+            "device_ip": device_ip,
+            "admin_infra_hostnames": settings.admin_infra_hostnames_list,
+        }
+
+    role = _runtime_role()
+    if role.get("role") != "admin":
+        return {**role, "device_name": device_name, "device_ip": device_ip, "admin_infra_hostnames": settings.admin_infra_hostnames_list}
+    if not _request_origin_is_local_device(request):
+        return {"role": "client", "client_safe_dashboard_mode": True, "source": "origin-locked", "device_name": device_name, "device_ip": device_ip, "admin_infra_hostnames": settings.admin_infra_hostnames_list}
+    return {**role, "device_name": device_name, "device_ip": device_ip, "admin_infra_hostnames": settings.admin_infra_hostnames_list}
 
 @router.post("/restore-health")
 async def restore_system_health(db: AsyncSession = Depends(get_db)):
@@ -213,7 +292,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
@@ -493,38 +572,77 @@ async def get_dashboard_stats(
 ):
     """Numeric stat breakdown — manual scans by default, filterable by source."""
     threshold = _get_time_threshold(time_range)
-    query = select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold)
+    query = (
+        select(
+            func.count(ScanHistory.id).label("total"),
+            func.sum(
+                case(
+                    (
+                        func.lower(ScanHistory.threat_level).in_(["malicious", "critical"]),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("critical_threats"),
+            func.sum(
+                case(
+                    (
+                        func.lower(ScanHistory.threat_level).in_(["suspicious", "high"]),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("high_threats"),
+            func.sum(
+                case(
+                    (
+                        func.lower(ScanHistory.threat_level).in_(["unknown", "medium"]),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("medium_threats"),
+            func.sum(
+                case(
+                    (
+                        func.lower(ScanHistory.threat_level).in_(["safe", "clean", "low"]),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("low_threats"),
+            func.sum(
+                case(
+                    (func.lower(ScanHistory.threat_level).in_(["safe", "clean"]), 1),
+                    else_=0,
+                )
+            ).label("clean_scans"),
+            func.sum(case((func.lower(ScanHistory.target_type) == "file", 1), else_=0)).label("files_scanned"),
+            func.sum(case((func.lower(ScanHistory.target_type) == "url", 1), else_=0)).label("urls_scanned"),
+            func.sum(case((func.lower(ScanHistory.target_type) == "ip", 1), else_=0)).label("ips_scanned"),
+            func.sum(case((func.lower(ScanHistory.target_type) == "hash", 1), else_=0)).label("hashes_scanned"),
+            func.sum(case((func.lower(ScanHistory.target_type) == "domain", 1), else_=0)).label("domains_scanned"),
+        )
+        .where(ScanHistory.scan_timestamp >= threshold)
+    )
     if source and source != "all":
         query = query.where(ScanHistory.scan_source == source)
     result = await db.execute(query)
-    scans = result.scalars().all()
+    row = result.one()
 
-    stats = {
-        "critical_threats": 0, "high_threats": 0,
-        "medium_threats": 0,   "low_threats": 0,
-        "clean_scans": 0,
-        "files_scanned": 0,    "urls_scanned": 0,
-        "ips_scanned": 0,      "hashes_scanned": 0,
-        "domains_scanned": 0,  "total": len(scans),
+    return {
+        "critical_threats": int(row.critical_threats or 0),
+        "high_threats": int(row.high_threats or 0),
+        "medium_threats": int(row.medium_threats or 0),
+        "low_threats": int(row.low_threats or 0),
+        "clean_scans": int(row.clean_scans or 0),
+        "files_scanned": int(row.files_scanned or 0),
+        "urls_scanned": int(row.urls_scanned or 0),
+        "ips_scanned": int(row.ips_scanned or 0),
+        "hashes_scanned": int(row.hashes_scanned or 0),
+        "domains_scanned": int(row.domains_scanned or 0),
+        "total": int(row.total or 0),
     }
-    for scan in scans:
-        sev = _map_severity(scan.threat_level or "unknown")
-        if sev == "critical":   stats["critical_threats"] += 1
-        elif sev == "high":     stats["high_threats"]     += 1
-        elif sev == "medium":   stats["medium_threats"]   += 1
-        elif sev == "low":      stats["low_threats"]      += 1
-
-        if (scan.threat_level or "").lower() in ("safe", "clean"):
-            stats["clean_scans"] += 1
-
-        t = (scan.target_type or "").lower()
-        if   t == "file":   stats["files_scanned"]   += 1
-        elif t == "hash":   stats["hashes_scanned"]  += 1
-        elif t == "url":    stats["urls_scanned"]    += 1
-        elif t == "domain": stats["domains_scanned"] += 1
-        elif t == "ip":     stats["ips_scanned"]     += 1
-
-    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -735,18 +853,24 @@ async def get_api_status(
     hours = _hours_from_range(time_range)
     threshold = datetime.utcnow() - timedelta(hours=hours)
 
-    # Query recent scans to get API usage
+    # Query recent scans to get API usage. Keep this bounded so dashboard API calls stay responsive
+    # even when scan history is very large.
+    usage_row_limit = 1200 if hours <= 24 else 2400 if hours <= 168 else 5000
     result = await db.execute(
-        select(ScanHistory)
+        select(ScanHistory.analysis_data)
         .where(
             and_(
                 ScanHistory.scan_timestamp >= threshold,
-                ScanHistory.scan_source.in_(["manual", None]),
+                or_(
+                    ScanHistory.scan_source == "manual",
+                    ScanHistory.scan_source.is_(None),
+                ),
             )
         )
         .order_by(desc(ScanHistory.scan_timestamp))
+        .limit(usage_row_limit)
     )
-    scans = result.scalars().all()
+    scan_analysis_rows = result.all()
 
     api_status_map = {}
     api_usage = defaultdict(int)
@@ -759,8 +883,8 @@ async def get_api_status(
         key_aliases[_norm(name)] = key
 
     # Collect API usage from scans
-    for scan in scans:
-        analysis = scan.analysis_data or {}
+    for row in scan_analysis_rows:
+        analysis = row[0] or {}
         api_results = analysis.get("api_results") or {}
         api_status_dict = api_results.get("api_status") or {}
         apis_called = api_results.get("apis_called") or []
@@ -804,12 +928,35 @@ async def get_api_status(
 
         usage_24h = max(int(api_usage.get(key, 0) or 0), telemetry_daily)
 
+        raw_status = str(meta.get("status") or "").strip().lower()
+        if not is_configured:
+            effective_status = "not_configured"
+            is_online = False
+        elif raw_status in {"", "unknown", "pending", "not_applicable", "skipped_local_mode"}:
+            # These values are scan-contextual and should not downgrade global service availability.
+            effective_status = "online"
+            is_online = True
+        elif raw_status in {"online", "available", "checked", "ok", "healthy", "success"}:
+            effective_status = "online"
+            is_online = True
+        elif raw_status in {"rate_limited", "quota_exceeded"}:
+            effective_status = raw_status
+            # Rate limits indicate the API is reachable but temporarily constrained.
+            is_online = True
+        elif raw_status in {"not_authorized", "error"}:
+            effective_status = raw_status
+            is_online = False
+        else:
+            # Prefer availability for configured APIs unless we have a clear hard-failure signal.
+            effective_status = "online"
+            is_online = True
+
         api_dict = {
             "key": key,
             "name": name,
             "configured": is_configured,  # Use direct settings check
-            "status": meta.get("status", "unknown"),
-            "online": meta.get("status") in ["online", "available", "checked"],
+            "status": effective_status,
+            "online": is_online,
             "usage_24h": usage_24h,
             "daily_used": usage_24h,
             "daily_limit": capacity["daily_limit"],

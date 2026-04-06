@@ -210,6 +210,23 @@ class SentinelClientV3:
     def _check_admin_infrastructure(self) -> bool:
         """Check if this host should run as admin infrastructure (not client)"""
         try:
+            force_admin = os.getenv("SENTINEL_FORCE_ADMIN_INFRA", "").strip().lower() in {"1", "true", "yes", "on"}
+            force_client = os.getenv("SENTINEL_FORCE_CLIENT_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+            if force_client:
+                logger.info("🧭 Forced client mode via SENTINEL_FORCE_CLIENT_MODE")
+                return False
+            if force_admin:
+                logger.info("🧭 Forced admin infrastructure mode via SENTINEL_FORCE_ADMIN_INFRA")
+                return True
+
+            # Privilege-gated role: non-root always behaves as client.
+            try:
+                is_root = os.geteuid() == 0
+            except Exception:
+                is_root = False
+            if not is_root:
+                return False
+
             hostname = socket.gethostname().lower()
             fqdn = socket.getfqdn().lower()
             
@@ -238,8 +255,10 @@ class SentinelClientV3:
             if any(ip in ip_markers for ip in local_ips):
                 logger.info(f"🖥️  IP {list(local_ips)[0]} identified as admin infrastructure")
                 return True
-                
-            return False
+
+            # Root run on this machine defaults to admin infra mode.
+            logger.info("🖥️  Root session detected: defaulting to admin infrastructure mode")
+            return True
             
         except Exception as e:
             logger.debug(f"Admin infrastructure check failed: {e}")
@@ -257,12 +276,6 @@ class SentinelClientV3:
 
     async def register(self) -> bool:
         """Register client with the server"""
-        # Skip registration if this is admin infrastructure
-        if self._is_admin_infrastructure:
-            logger.info("⏭️  Skipping registration: admin infrastructure host")
-            self.offline_mode = True
-            return True
-            
         try:
             logger.info(f"🔗 Registering with {self.server_url} (runtime_id: {self.local_runtime_id[:8]}...)")
             
@@ -680,10 +693,6 @@ class SentinelClientV3:
 
     async def start_monitoring(self):
         """Start all monitoring and defense systems"""
-        if self._is_admin_infrastructure:
-            logger.info("⏭️  Skipping monitoring: admin infrastructure host")
-            return
-            
         if not self.is_registered and not self.offline_mode:
             logger.error("❌ Cannot start monitoring: not registered and not in offline mode")
             return
@@ -867,16 +876,7 @@ class SentinelClientV3:
 async def main():
     """Main entry point"""
     client = SentinelClientV3()
-    
-    # Check if admin infrastructure
-    if client._is_admin_infrastructure:
-        logger.info("🖥️  Running as admin infrastructure - monitoring disabled")
-        logger.info(f"   Runtime ID: {client.local_runtime_id[:8]}...")
-        # Keep process alive for admin infrastructure
-        while True:
-            await asyncio.sleep(60)
-        return
-    
+
     logger.info(f"🚀 Initializing SENTINEL-AI Client v3.0")
     logger.info(f"   Runtime ID: {client.local_runtime_id[:8]}...")
     logger.info(f"   Server: {client.server_url}")

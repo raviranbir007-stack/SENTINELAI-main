@@ -1,4 +1,5 @@
 import os
+import socket
 from typing import List, Optional
 from pathlib import Path
 
@@ -32,10 +33,28 @@ else:
         load_dotenv(env_path)
 
 
+def _primary_local_ip() -> str:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip_address = sock.getsockname()[0]
+        sock.close()
+        return str(ip_address).strip()
+    except Exception:
+        return "127.0.0.1"
+
+
+def _primary_local_hostname() -> str:
+    try:
+        return socket.getfqdn() or socket.gethostname() or "localhost"
+    except Exception:
+        return "localhost"
+
+
 class Settings(BaseSettings):
     # SentinelAI Client Master Password and Admin Email
     MASTER_CLIENT_PASSWORD: str = os.getenv("MASTER_CLIENT_PASSWORD", "changeme-please")
-    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "your-admin@email.com")
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "raviranbir007@gmail.com")
     model_config = ConfigDict(env_file=str(ENV_FILE), extra="ignore")
     # Project metadata
     PROJECT_NAME: str = "SENTINEL-AI"
@@ -103,10 +122,10 @@ class Settings(BaseSettings):
     SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "alerts@sentinel-ai.com")
-    ALERT_EMAIL: Optional[str] = os.getenv("ALERT_EMAIL", os.getenv("SMTP_USERNAME"))
-    CLIENT_REGISTRATION_ALERT_EMAILS: str = os.getenv("CLIENT_REGISTRATION_ALERT_EMAILS", "")
-    ADMIN_INFRA_HOSTNAMES: str = os.getenv("ADMIN_INFRA_HOSTNAMES", "")
-    ADMIN_INFRA_IPS: str = os.getenv("ADMIN_INFRA_IPS", "")
+    ALERT_EMAIL: Optional[str] = os.getenv("ALERT_EMAIL", os.getenv("SMTP_USERNAME") or "raviranbir007@gmail.com")
+    CLIENT_REGISTRATION_ALERT_EMAILS: str = os.getenv("CLIENT_REGISTRATION_ALERT_EMAILS", "raviranbir007@gmail.com")
+    ADMIN_INFRA_HOSTNAMES: str = os.getenv("ADMIN_INFRA_HOSTNAMES", _primary_local_hostname())
+    ADMIN_INFRA_IPS: str = os.getenv("ADMIN_INFRA_IPS", _primary_local_ip())
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

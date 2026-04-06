@@ -184,12 +184,23 @@ server_process = None
 client_process = None
 
 
+def _is_elevated_runtime() -> bool:
+    try:
+        return os.geteuid() == 0
+    except Exception:
+        return False
+
+
 def _is_admin_terminal_context() -> bool:
     """Return True when this terminal should receive admin-only dashboard links."""
     explicit = os.getenv("SENTINEL_SHOW_ADMIN_LINKS", "").strip().lower()
     if explicit in {"1", "true", "yes", "on"}:
         return True
     if explicit in {"0", "false", "no", "off"}:
+        return False
+
+    # Default behavior: only elevated sessions are treated as admin terminal context.
+    if not _is_elevated_runtime():
         return False
 
     host_markers = {h.strip().lower() for h in settings.admin_infra_hostnames_list}
@@ -749,6 +760,11 @@ def run_kali_optimized():
             )
             return
 
+        # Privilege-gated role mode for this machine:
+        # - root/sudo: admin dashboard context (no client-safe redaction)
+        # - non-root: client-safe dashboard mode
+        os.environ["SENTINEL_CLIENT_SAFE_DASHBOARD_MODE"] = "false" if _is_elevated_runtime() else "true"
+
         # Start server in separate process
         global server_process
         server_process = multiprocessing.Process(target=run_server, name="SentinelServer")
@@ -776,11 +792,7 @@ def run_kali_optimized():
             return
         
         # Check if we need sudo for full protection
-        try:
-            is_root = os.geteuid() == 0
-        except AttributeError:
-            # Windows or other OS without geteuid
-            is_root = False
+        is_root = _is_elevated_runtime()
         
         if not is_root:
             logger.warning("")

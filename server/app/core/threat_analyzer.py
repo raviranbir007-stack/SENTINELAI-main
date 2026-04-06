@@ -2500,6 +2500,92 @@ class ThreatAnalyzer:
             'behaviors_detected': behaviors,
             'risk_level': 'high' if behavioral_score > 0.7 else 'medium' if behavioral_score > 0.4 else 'low'
         }
+
+    def _build_behavioral_sequence(self, result: Dict) -> List[Dict[str, Any]]:
+        """Build a chronological behavioral sequence from telemetry and forensic evidence."""
+        sequence: List[Dict[str, Any]] = []
+        seen = set()
+
+        def add_event(timestamp: str, stage: str, source: str, details: str, confidence: float = 0.0) -> None:
+            normalized_timestamp = str(timestamp or "").strip() or datetime.utcnow().isoformat()
+            key = (normalized_timestamp, stage, source, details)
+            if key in seen:
+                return
+            seen.add(key)
+            sequence.append(
+                {
+                    "timestamp": normalized_timestamp,
+                    "stage": stage,
+                    "source": source,
+                    "details": details,
+                    "confidence": round(float(confidence or 0.0), 3),
+                }
+            )
+
+        try:
+            recent_events = list(reversed(security_telemetry.get_recent_events(minutes=45)))
+        except Exception:
+            recent_events = []
+
+        stage_map = {
+            "url": "initial_access",
+            "domain": "initial_access",
+            "file_hash": "payload_analysis",
+            "hash": "payload_analysis",
+            "ip": "network_activity",
+            "suspicious_connection": "network_activity",
+            "arp_spoofing": "lateral_movement",
+        }
+
+        for event in recent_events:
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("type", "unknown")).lower()
+            metadata = event.get("metadata") or {}
+            details = event.get("value") or metadata.get("reason") or event_type
+            add_event(
+                event.get("created_at"),
+                stage_map.get(event_type, "telemetry"),
+                event_type,
+                str(details),
+                float(event.get("confidence", 0.0) or 0.0),
+            )
+
+        forensic = result.get("forensic_metadata", {}) or {}
+        for detail in forensic.get("source_details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            add_event(
+                detail.get("timestamp"),
+                "corroboration",
+                str(detail.get("source", "unknown")),
+                str(detail.get("indicator", detail.get("details", ""))),
+                float(detail.get("score", detail.get("confidence", 0.0)) or 0.0),
+            )
+
+        behavioral = result.get("ai_analysis", {}).get("behavioral_analysis", {}) or {}
+        behaviors = behavioral.get("behaviors_detected", []) or []
+        for index, behavior in enumerate(behaviors, start=1):
+            add_event(
+                result.get("timestamp"),
+                f"behavioral_signal_{index}",
+                "behavioral_analysis",
+                str(behavior),
+                float(behavioral.get("score", 0.0) or 0.0),
+            )
+
+        correlation_chain = forensic.get("correlation_chain", []) or []
+        for index, stage in enumerate(correlation_chain, start=1):
+            add_event(
+                result.get("timestamp"),
+                f"attack_chain_step_{index}",
+                "correlation_chain",
+                str(stage),
+                float(result.get("confidence", 0.0) or 0.0),
+            )
+
+        sequence.sort(key=lambda item: (str(item.get("timestamp", "")), str(item.get("stage", ""))))
+        return sequence[:20]
     
     def _calculate_reputation_score(self, result: Dict, ai_analysis: Dict) -> Dict:
         """
@@ -2855,6 +2941,9 @@ class ThreatAnalyzer:
             )
             result["forensic_metadata"]["advanced_analysis"] = advanced_forensic
             result["forensic_analysis"] = advanced_forensic
+            behavioral_sequence = self._build_behavioral_sequence(result)
+            result["behavioral_sequence"] = behavioral_sequence
+            result["forensic_metadata"]["behavioral_sequence"] = behavioral_sequence
             return result
 
         # Extract unique sources that detected threats
@@ -3258,6 +3347,13 @@ class ThreatAnalyzer:
             result.setdefault("forensic_metadata", {})["correlation_chain"] = chain
             if chain == ["phishing", "download", "c2"]:
                 result.setdefault("flags", {})["attack_chain_detected"] = "phishing_download_c2"
+        except Exception:
+            pass
+
+        try:
+            behavioral_sequence = self._build_behavioral_sequence(result)
+            result["behavioral_sequence"] = behavioral_sequence
+            result.setdefault("forensic_metadata", {})["behavioral_sequence"] = behavioral_sequence
         except Exception:
             pass
 

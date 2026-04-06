@@ -450,6 +450,9 @@ class AutomaticActivityMonitor:
         result: Optional[Dict] = None,
         scan_status: str = "completed",
         host_ip: Optional[str] = None,
+        history_source: Optional[str] = None,
+        history_path: Optional[str] = None,
+        visit_time: Optional[float] = None,
     ):
         """Persist browser activity for dashboards and generated reports."""
         try:
@@ -493,6 +496,10 @@ class AutomaticActivityMonitor:
                     "metadata": {
                         "auto_detected": True,
                         "browser": browser_name,
+                        "browser_engine": history_source.split(":", 1)[0] if history_source else None,
+                        "history_source": history_source,
+                        "history_path": history_path,
+                        "visit_time": visit_time,
                         "host_ip": host_ip,
                         "recommended_action": self._get_recommended_action(result),
                     },
@@ -1314,7 +1321,14 @@ class AutomaticActivityMonitor:
                 if vt <= cutoff:
                     continue
                 max_seen = max(max_seen, vt)
-                await self._process_detected_url(url, title or 'Untitled', browser_name)
+                await self._process_detected_url(
+                    url,
+                    title or 'Untitled',
+                    browser_name,
+                    history_source=source_key,
+                    history_path=str(history_path),
+                    visit_time=float(vt),
+                )
 
             self.history_last_seen[source_key] = max_seen
             conn.close()
@@ -1377,7 +1391,14 @@ class AutomaticActivityMonitor:
                     if vt <= cutoff:
                         continue
                     max_seen = max(max_seen, vt)
-                    await self._process_detected_url(url, title or 'Untitled', browser_name)
+                    await self._process_detected_url(
+                        url,
+                        title or 'Untitled',
+                        browser_name,
+                        history_source=source_key,
+                        history_path=str(history_db),
+                        visit_time=float(vt),
+                    )
 
                 self.history_last_seen[source_key] = max_seen
 
@@ -1423,7 +1444,14 @@ class AutomaticActivityMonitor:
                 if vt <= cutoff:
                     continue
                 max_seen = max(max_seen, vt)
-                await self._process_detected_url(url, title or 'Untitled', browser_name)
+                await self._process_detected_url(
+                    url,
+                    title or 'Untitled',
+                    browser_name,
+                    history_source=source_key,
+                    history_path=str(safari_db_path),
+                    visit_time=float(vt),
+                )
 
             self.history_last_seen[source_key] = max_seen
 
@@ -1434,7 +1462,15 @@ class AutomaticActivityMonitor:
             except Exception:
                 pass
 
-    async def _process_detected_url(self, url: str, title: str, browser_name: str):
+    async def _process_detected_url(
+        self,
+        url: str,
+        title: str,
+        browser_name: str,
+        history_source: Optional[str] = None,
+        history_path: Optional[str] = None,
+        visit_time: Optional[float] = None,
+    ):
         """Apply dedup/filtering and trigger scans for newly detected URLs."""
         now = time.time()
         last_seen = self.url_last_seen.get(url, 0.0)
@@ -1469,6 +1505,9 @@ class AutomaticActivityMonitor:
                 safe_result,
                 scan_status="allowlisted",
                 host_ip=resolved_ip,
+                history_source=history_source,
+                history_path=history_path,
+                visit_time=visit_time,
             )
             return
 
@@ -1485,6 +1524,9 @@ class AutomaticActivityMonitor:
             result,
             scan_status="completed",
             host_ip=resolved_ip,
+            history_source=history_source,
+            history_path=history_path,
+            visit_time=visit_time,
         )
 
         if domain:

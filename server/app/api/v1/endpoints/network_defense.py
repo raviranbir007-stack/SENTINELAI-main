@@ -125,7 +125,16 @@ _ROLLBACK_TASKS: dict[str, asyncio.Task] = {}
 
 
 def _client_safe_mode_enabled() -> bool:
-    return os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}
+    explicit = os.getenv("SENTINEL_CLIENT_SAFE_DASHBOARD_MODE", "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+
+    try:
+        return os.geteuid() != 0
+    except Exception:
+        return True
 
 
 def _registration_alert_recipients() -> list[str]:
@@ -149,6 +158,82 @@ def _registration_alert_recipients() -> list[str]:
         seen.add(key)
         normalized.append(item)
     return normalized
+
+
+def _registration_alert_context(*, client_id: str, request, status: str, changed_fields: Optional[list[str]] = None) -> tuple[str, str]:
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    title = "New Client Verification Required" if status == "pending_verification" else "Client Registration Updated"
+    headline = "New Client Registered" if status == "pending_verification" else "Client Identity Updated"
+    changes_html = ""
+    if changed_fields:
+        items = "".join(f"<li>{field.replace('_', ' ').title()}</li>" for field in changed_fields)
+        changes_html = f"<div style='margin-top:12px'><div style='font-weight:700;margin-bottom:6px;color:#fbbf24'>Changed fields</div><ul style='margin:0;padding-left:20px'>{items}</ul></div>"
+
+    body = (
+        "<div style='font-family:Inter,system-ui,sans-serif;max-width:620px;margin:0 auto;background:#070b12;border:1px solid #22324a;border-radius:10px;overflow:hidden'>"
+        "<div style='background:#0e1522;padding:16px 22px;border-bottom:3px solid #14b8a6'>"
+        f"<h2 style='margin:0;color:#14b8a6;font-size:1rem;font-weight:700'>🖥️&nbsp; SENTINEL-AI &mdash; {headline}</h2>"
+        "</div>"
+        "<div style='padding:20px 22px;color:#e6f0ff;font-size:0.9rem;line-height:1.6'>"
+        "<p style='margin-top:0'>A new endpoint has been detected and registration requires verification before full access is granted.</p>"
+        "<table style='width:100%;border-collapse:collapse;background:#0a1525;border-radius:8px;overflow:hidden;margin-bottom:14px'>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem;width:150px'>Client ID</td><td style='padding:10px 14px;font-family:monospace;color:#86efac'>{client_id}</td></tr>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Hostname</td><td style='padding:10px 14px'>{request.hostname}</td></tr>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>IP Address</td><td style='padding:10px 14px;font-family:monospace'>{request.ip_address}</td></tr>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>MAC Address</td><td style='padding:10px 14px;font-family:monospace'>{request.mac_address or 'Unknown'}</td></tr>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Operating System</td><td style='padding:10px 14px'>{request.os_type}{' &mdash; ' + request.os_version if request.os_version else ''}</td></tr>"
+        f"<tr style='border-bottom:1px solid #22324a'><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Agent Version</td><td style='padding:10px 14px'>{request.version}</td></tr>"
+        f"<tr><td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Observed At</td><td style='padding:10px 14px'>{now} UTC</td></tr>"
+        "</table>"
+        f"<p style='margin:0 0 10px 0;color:#e2e8f0'><strong>Status:</strong> {title}</p>"
+        f"{changes_html}"
+        "<p style='margin:14px 0 0 0;color:#8ea3c0;font-size:0.82rem'>Approve the client from the SENTINEL-AI Clients page after verification.</p>"
+        "</div></div>"
+    )
+    subject = f"SENTINEL-AI: {title} — {request.hostname}"
+    return subject, body
+
+
+async def _upsert_client_alert(
+    db: AsyncSession,
+    *,
+    alert_id: str,
+    alert_type: str,
+    severity: ThreatSeverity,
+    title: str,
+    description: str,
+    client_id: str,
+) -> None:
+    query = select(NetworkAlert).where(NetworkAlert.alert_id == alert_id)
+    result = await db.execute(query)
+    alert = result.scalar_one_or_none()
+
+    if alert is None:
+        alert = NetworkAlert(
+            alert_id=alert_id,
+            alert_type=alert_type,
+            severity=severity,
+            title=title,
+            description=description,
+            affected_clients=[client_id],
+            affected_count=1,
+            status="active",
+        )
+        db.add(alert)
+    else:
+        alert.alert_type = alert_type
+        alert.severity = severity
+        alert.title = title
+        alert.description = description
+        alert.affected_clients = [client_id]
+        alert.affected_count = 1
+        alert.status = "active"
+        alert.acknowledged = False
+        alert.acknowledged_by_id = None
+        alert.acknowledged_at = None
+        alert.resolved_at = None
+
+    await db.flush()
 
 
 def _request_origin_host_or_ip(request: Request) -> str:
@@ -205,6 +290,15 @@ def _parse_ip(value: str) -> str:
 def _local_admin_host_markers() -> tuple[set[str], set[str]]:
     hosts: set[str] = set()
     ips: set[str] = set()
+
+    # Privilege-gated local admin markers:
+    # non-root sessions should behave as client context on the same machine.
+    try:
+        is_root = os.geteuid() == 0
+    except Exception:
+        is_root = False
+    if not is_root:
+        return hosts, ips
 
     for raw in [socket.gethostname(), socket.getfqdn()]:
         norm = _normalize_hostname(raw)
@@ -824,16 +918,6 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
     Register a new client installation or update existing one
     """
     try:
-        if False:  # allow admin as client
-            return {
-                "status": "admin_infrastructure",
-                "message": "Host is designated as admin infrastructure and excluded from client inventory",
-                "client_scope": {
-                    "role": "admin_infrastructure",
-                    "excluded_from_client_inventory": True,
-                },
-            }
-
         # Check if client already exists (by IP or hostname)
         query = select(ClientInstallation).where(
             or_(
@@ -845,14 +929,66 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
         existing_client = result.scalar_one_or_none()
 
         if existing_client:
+            changed_fields: list[str] = []
+            field_map = {
+                "hostname": request.hostname,
+                "ip_address": request.ip_address,
+                "mac_address": request.mac_address,
+                "os_type": request.os_type,
+                "os_version": request.os_version,
+                "network_segment": request.network_segment,
+                "gateway": request.gateway,
+                "version": request.version,
+            }
+            for field_name, new_value in field_map.items():
+                current_value = getattr(existing_client, field_name)
+                if str(current_value or "") != str(new_value or ""):
+                    changed_fields.append(field_name)
+
             # Update existing client (do NOT reset protection_enabled)
             existing_client.last_seen = datetime.utcnow()
-            existing_client.is_active = True
+            existing_client.is_active = existing_client.is_active if existing_client.is_active is not None else False
             existing_client.version = request.version
+            existing_client.hostname = request.hostname
+            existing_client.ip_address = request.ip_address
+            existing_client.mac_address = request.mac_address or existing_client.mac_address
             existing_client.os_version = request.os_version or existing_client.os_version
+            existing_client.os_type = request.os_type or existing_client.os_type
+            existing_client.network_segment = request.network_segment or existing_client.network_segment
+            existing_client.gateway = request.gateway or existing_client.gateway
+            if request.dns_servers is not None:
+                existing_client.dns_servers = request.dns_servers
             # DO NOT reset protection_enabled here!
             await db.commit()
             await db.refresh(existing_client)
+
+            if changed_fields:
+                alert_title = f"Client registration updated: {request.hostname}"
+                alert_body = (
+                    f"Client {existing_client.client_id} updated on the admin panel. "
+                    f"Hostname: {request.hostname}. IP: {request.ip_address}. "
+                    f"Changed fields: {', '.join(changed_fields)}."
+                )
+                await _upsert_client_alert(
+                    db,
+                    alert_id=f"CLIENT_REG_{existing_client.client_id}",
+                    alert_type="client_registration",
+                    severity=ThreatSeverity.MEDIUM,
+                    title=alert_title,
+                    description=alert_body,
+                    client_id=existing_client.client_id,
+                )
+                await db.commit()
+
+                recipients = _registration_alert_recipients()
+                if recipients:
+                    _subj, _body = _registration_alert_context(
+                        client_id=existing_client.client_id,
+                        request=request,
+                        status="updated",
+                        changed_fields=changed_fields,
+                    )
+                    asyncio.create_task(NotificationEngine.send_email(recipients, _subj, _body))
 
             return {
                 "status": "updated",
@@ -875,7 +1011,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                 dns_servers=request.dns_servers or [],
                 version=request.version,
                 protection_enabled=True,
-                is_active=True,
+                is_active=False,
                 blocked_ips=[],
                 blocked_domains=[],
             )
@@ -886,48 +1022,28 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
 
             logger.info("New client registered from hostname=%s ip=%s", request.hostname, request.ip_address)
 
-            # ── Email alert: new client enrolled ──────────────────────────
+            await _upsert_client_alert(
+                db,
+                alert_id=f"CLIENT_REG_{client_id}",
+                alert_type="client_registration",
+                severity=ThreatSeverity.HIGH,
+                title=f"New client verification required: {request.hostname}",
+                description=(
+                    f"Client {client_id} enrolled from hostname {request.hostname} ({request.ip_address}) "
+                    f"and is awaiting admin verification."
+                ),
+                client_id=client_id,
+            )
+            await db.commit()
+
+            # ── Email alert: new client enrolled and pending verification ──
             recipients = _registration_alert_recipients()
             if recipients:
-                _now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                _subj = f"SENTINEL-AI: New Client Enrolled — {request.hostname}"
-                _body = (
-                    "<div style='font-family:Inter,system-ui,sans-serif;max-width:580px;"
-                    "margin:0 auto;background:#070b12;border:1px solid #22324a;"
-                    "border-radius:10px;overflow:hidden'>"
-                    "<div style='background:#0e1522;padding:16px 22px;"
-                    "border-bottom:3px solid #14b8a6'>"
-                    "<h2 style='margin:0;color:#14b8a6;font-size:1rem;font-weight:700'>"
-                    "🖥️&nbsp; SENTINEL-AI &mdash; New Client Enrolled</h2>"
-                    "</div>"
-                    "<div style='padding:20px 22px;color:#e6f0ff;font-size:0.9rem;line-height:1.6'>"
-                    "<p style='margin-top:0'>A new endpoint has successfully registered with "
-                    "the SENTINEL-AI protection network and real-time protection is now active.</p>"
-                    "<table style='width:100%;border-collapse:collapse;background:#0a1525;"
-                    "border-radius:8px;overflow:hidden;margin-bottom:14px'>"
-                    f"<tr style='border-bottom:1px solid #22324a'>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem;width:140px'>Client ID</td>"
-                    f"<td style='padding:10px 14px;font-family:monospace;color:#86efac'>{client_id}</td></tr>"
-                    f"<tr style='border-bottom:1px solid #22324a'>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Hostname</td>"
-                    f"<td style='padding:10px 14px'>{request.hostname}</td></tr>"
-                    f"<tr style='border-bottom:1px solid #22324a'>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>IP Address</td>"
-                    f"<td style='padding:10px 14px;font-family:monospace'>{request.ip_address}</td></tr>"
-                    f"<tr style='border-bottom:1px solid #22324a'>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Operating System</td>"
-                    f"<td style='padding:10px 14px'>{request.os_type}"
-                    f"{' &mdash; ' + request.os_version if request.os_version else ''}</td></tr>"
-                    f"<tr style='border-bottom:1px solid #22324a'>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Agent Version</td>"
-                    f"<td style='padding:10px 14px'>{request.version}</td></tr>"
-                    f"<tr>"
-                    f"<td style='padding:10px 14px;color:#8ea3c0;font-size:0.82rem'>Enrolled At</td>"
-                    f"<td style='padding:10px 14px'>{_now} UTC</td></tr>"
-                    "</table>"
-                    "<p style='margin:0;color:#8ea3c0;font-size:0.82rem'>"
-                    "View and manage all enrolled clients from the Active Clients section of the SENTINEL-AI Dashboard."
-                    "</p></div></div>"
+                _subj, _body = _registration_alert_context(
+                    client_id=client_id,
+                    request=request,
+                    status="pending_verification",
+                    changed_fields=None,
                 )
                 asyncio.create_task(
                     NotificationEngine.send_email(recipients, _subj, _body)
@@ -935,8 +1051,9 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
             # ──────────────────────────────────────────────────────────────
 
             return {
-                "status": "registered",
+                "status": "pending_verification",
                 "client_id": client_id,
+                "verification_required": True,
                 "client_scope": {
                     "can_send": ["heartbeat", "attack_report", "defense_events"],
                     "cannot_access": [
@@ -946,7 +1063,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                         "other_client_inventory",
                     ],
                 },
-                "message": "Client successfully registered",
+                "message": "Client registered and awaiting admin verification",
             }
 
     except Exception as e:
@@ -968,9 +1085,10 @@ async def client_heartbeat(
     try:
         notify_quarantine: dict = {}
         runtime_identity: dict = {}
+        first_seen_alert: dict = {}
 
         async def _persist_heartbeat():
-            nonlocal runtime_identity
+            nonlocal runtime_identity, first_seen_alert
             query = select(ClientInstallation).where(ClientInstallation.client_id == client_id)
             result = await db.execute(query)
             client = result.scalar_one_or_none()
@@ -978,13 +1096,14 @@ async def client_heartbeat(
             if not client:
                 raise HTTPException(status_code=404, detail="Client not found")
 
+            was_active = bool(client.is_active)
             client.last_seen = datetime.utcnow()
             client.is_active = True
-            # DO NOT reset protection_enabled here!
 
             heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
             runtime_identity = _extract_runtime_identity(heartbeat_status)
             defense_state = heartbeat_status.get("defense_coordinator") if isinstance(heartbeat_status, dict) else {}
+
             if isinstance(defense_state, dict):
                 is_quarantined = bool(defense_state.get("is_quarantined"))
                 active_attacks = int(defense_state.get("active_attacks") or 0)
@@ -1028,16 +1147,25 @@ async def client_heartbeat(
                                 },
                             )
                         )
-                        if is_quarantined:
-                            notify_quarantine.update(
-                                {
-                                    "client_id": client_id,
-                                    "hostname": client.hostname,
-                                    "ip_address": client.ip_address,
-                                    "active_attacks": active_attacks,
-                                    "timestamp": request.timestamp if request else None,
-                                }
-                            )
+
+                    if is_quarantined:
+                        notify_quarantine.update(
+                            {
+                                "client_id": client_id,
+                                "hostname": client.hostname,
+                                "ip_address": client.ip_address,
+                                "active_attacks": active_attacks,
+                                "timestamp": request.timestamp if request else None,
+                            }
+                        )
+
+            if not was_active:
+                first_seen_alert = {
+                    "client_id": client.client_id,
+                    "hostname": client.hostname,
+                    "ip_address": client.ip_address,
+                }
+
             await db.commit()
             return client.last_seen.isoformat()
 
@@ -1051,6 +1179,32 @@ async def client_heartbeat(
 
         if runtime_identity:
             _CLIENT_RUNTIME_STATE[client_id] = runtime_identity
+
+        if first_seen_alert:
+            await _upsert_client_alert(
+                db,
+                alert_id=f"CLIENT_ONLINE_{client_id}",
+                alert_type="client_first_seen",
+                severity=ThreatSeverity.MEDIUM,
+                title=f"Client online: {first_seen_alert.get('hostname') or client_id}",
+                description=(
+                    f"Client {client_id} came online from hostname {first_seen_alert.get('hostname')} "
+                    f"({first_seen_alert.get('ip_address')})."
+                ),
+                client_id=client_id,
+            )
+            await db.commit()
+            recipients = _registration_alert_recipients()
+            if recipients:
+                subject = f"SENTINEL-AI Alert: Client online on {first_seen_alert.get('hostname') or client_id}"
+                body = (
+                    "<h3>SENTINEL-AI Client Online Alert</h3>"
+                    f"<p><strong>Client ID:</strong> {first_seen_alert.get('client_id')}</p>"
+                    f"<p><strong>Hostname:</strong> {first_seen_alert.get('hostname')}</p>"
+                    f"<p><strong>IP:</strong> {first_seen_alert.get('ip_address')}</p>"
+                    f"<p><strong>Timestamp:</strong> {datetime.utcnow().isoformat()}</p>"
+                )
+                await NotificationEngine.send_email(recipients, subject, body)
 
         if notify_quarantine and settings.ALERT_EMAIL:
             subject = f"SENTINEL-AI Alert: Quarantine active on {notify_quarantine.get('hostname') or client_id}"

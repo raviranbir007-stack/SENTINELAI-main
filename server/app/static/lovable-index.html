@@ -432,6 +432,16 @@
                     <div class="stat-label">System Health</div>
                     <div class="stat-value" id="systemHealth">--</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-label">Runtime Mode</div>
+                    <div class="stat-value" id="runtimeModeStatus">--</div>
+                    <div style="color:#888;font-size:0.8rem;margin-top:0.35rem;" id="runtimeModeSource">Waiting for server context...</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Client Status</div>
+                    <div class="stat-value" id="clientStatusValue">--</div>
+                    <div style="color:#888;font-size:0.8rem;margin-top:0.35rem;" id="clientStatusSource">Waiting for client inventory...</div>
+                </div>
                 <div class="stat-card" id="securityPostureCard">
                     <div class="stat-label">Security Posture</div>
                     <div class="stat-value" id="securityPostureStatus">--</div>
@@ -608,9 +618,9 @@
                 </div>
             </div>
             <div class="results-section">
-                <h2 class="section-title">📚 Recent Reports</h2>
+                <h2 class="section-title">📚 All Generated Reports</h2>
                 <div id="reportsList">
-                    <p style="color: #666;">Loading reports...</p>
+                    <p style="color: #666;">Loading reports from the server...</p>
                 </div>
             </div>
         </div>
@@ -623,6 +633,8 @@
         // State
         let currentScanType = 'ip';
         let scanResults = [];
+        let runtimeContext = null;
+        let reportFeed = [];
 
         // DOM Elements
         const scanInput = document.getElementById('scanInput');
@@ -676,6 +688,102 @@
             setTimeout(() => toast.remove(), 5000);
         }
 
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function normalizeReport(report, index = 0) {
+            const created = report.created_at || report.created || report.timestamp || new Date().toISOString();
+            return {
+                report_id: report.report_id || report.id || report.filename || `report_${index}`,
+                filename: report.filename || `${report.title || 'report'}.pdf`,
+                title: report.title || report.filename || 'Security Report',
+                target: report.target || report.scan_id || 'N/A',
+                threats_detected: Number(report.threats_detected || 0),
+                verdict: String(report.verdict || 'unknown').toLowerCase(),
+                created,
+                type: report.type || 'report',
+                size_bytes: Number(report.size_bytes || 0),
+                download_url: report.download_url || null,
+            };
+        }
+
+        async function fetchReports() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/reports/`, { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
+                const payload = await response.json();
+                const reports = Array.isArray(payload) ? payload : (Array.isArray(payload?.reports) ? payload.reports : []);
+                reportFeed = reports.map((report, index) => normalizeReport(report, index))
+                    .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+                return reportFeed;
+            } catch (error) {
+                console.error('Failed to load reports', error);
+                reportFeed = [];
+                return [];
+            }
+        }
+
+        async function downloadReportById(reportRef, fallbackName = 'report.pdf') {
+            if (!reportRef) return;
+            try {
+                showToast('Downloading report...', 'info');
+                const isDirectUrl = String(reportRef).startsWith('/') || String(reportRef).startsWith('http');
+                const url = isDirectUrl ? String(reportRef) : `${API_BASE_URL}/reports/download/${encodeURIComponent(reportRef)}`;
+                const response = await fetch(url, { method: 'GET' });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `Server returned ${response.status}`);
+                }
+                const blob = await response.blob();
+                downloadBlob(blob, fallbackName.endsWith('.pdf') ? fallbackName : `${fallbackName}.pdf`);
+                showToast('Report downloaded successfully!', 'success');
+            } catch (error) {
+                console.error('Report download error:', error);
+                showToast(`Failed to download report: ${error.message}`, 'error');
+            }
+        }
+
+        function renderReportsList() {
+            const container = document.getElementById('reportsList');
+            if (!container) return;
+
+            if (!Array.isArray(reportFeed) || reportFeed.length === 0) {
+                container.innerHTML = '<p style="color: #666;">No reports generated yet. Click a report button above to create one.</p>';
+                return;
+            }
+
+            container.innerHTML = reportFeed.map((report) => `
+                <div class="report-item" role="button" tabindex="0" onclick="downloadReportById('${report.download_url || report.report_id}')">
+                    <div class="report-item-left">
+                        <div class="report-item-icon">📄</div>
+                        <div style="flex: 1;">
+                            <div class="report-item-title">${escHtml(report.title || 'Threat Analysis')}</div>
+                            <div class="report-item-meta">
+                                <span>🎯 ${escHtml(report.target || 'N/A')}</span>
+                                <span>🕐 ${new Date(report.created).toLocaleString()}</span>
+                                <span class="badge badge-${report.verdict === 'safe' ? 'safe' : 'threat'}" style="font-size: 10px;">${report.threats_detected || 0} threats</span>
+                                <span class="badge" style="font-size: 10px;">${escHtml(report.type || 'report')}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="report-item-right">
+                        <span class="badge badge-safe" style="font-size: 10px;">✓ Download</span>
+                        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); downloadReportById('${report.download_url || report.report_id}')">⬇️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         // API Functions
         async function apiRequest(endpoint, options = {}) {
             try {
@@ -693,6 +801,87 @@
             } catch (error) {
                 console.error('API Error:', error);
                 throw error;
+            }
+        }
+
+        async function fetchRuntimeContext() {
+            try {
+                const ctx = await apiRequest('/dashboard/runtime-context');
+                runtimeContext = ctx || {};
+                const runtimeMode = document.getElementById('runtimeModeStatus');
+                const runtimeSource = document.getElementById('runtimeModeSource');
+                const isAdmin = String(runtimeContext.role || '').toLowerCase() === 'admin';
+                if (runtimeMode) {
+                    runtimeMode.innerHTML = isAdmin ? '<span style="color:#00ff88;font-weight:bold;">ADMIN</span>' : '<span style="color:#ffcc00;font-weight:bold;">CLIENT</span>';
+                }
+                if (runtimeSource) {
+                    const sourceLabel = runtimeContext.source ? `source: ${runtimeContext.source}` : 'source: unknown';
+                    const deviceNameLabel = runtimeContext.device_name ? `device name: ${runtimeContext.device_name}` : 'device name: unknown';
+                    const deviceIpLabel = runtimeContext.device_ip ? `device IP: ${runtimeContext.device_ip}` : 'device IP: unknown';
+                    runtimeSource.textContent = isAdmin
+                        ? `Admin panel on ${deviceNameLabel}. ${deviceIpLabel}. ${sourceLabel}`
+                        : `Client-safe view enabled on ${deviceNameLabel}. ${deviceIpLabel}. ${sourceLabel}`;
+                }
+                const clientStatusValue = document.getElementById('clientStatusValue');
+                const clientStatusSource = document.getElementById('clientStatusSource');
+                if (clientStatusValue) {
+                    clientStatusValue.innerHTML = isAdmin
+                        ? '<span style="color:#00ff88;font-weight:bold;">ADMIN</span>'
+                        : '<span style="color:#ffcc00;font-weight:bold;">CLIENT</span>';
+                }
+                if (clientStatusSource) {
+                    const deviceParts = [];
+                    if (runtimeContext.device_name) deviceParts.push(`Name ${runtimeContext.device_name}`);
+                    if (runtimeContext.device_ip) deviceParts.push(`IP ${runtimeContext.device_ip}`);
+                    clientStatusSource.textContent = deviceParts.length ? deviceParts.join(' · ') : 'Device identity unknown';
+                }
+                return runtimeContext;
+            } catch (error) {
+                console.error('Failed to load runtime context', error);
+                const runtimeMode = document.getElementById('runtimeModeStatus');
+                const runtimeSource = document.getElementById('runtimeModeSource');
+                const clientStatusValue = document.getElementById('clientStatusValue');
+                const clientStatusSource = document.getElementById('clientStatusSource');
+                if (runtimeMode) runtimeMode.textContent = '--';
+                if (runtimeSource) runtimeSource.textContent = 'Unable to determine runtime mode.';
+                if (clientStatusValue) clientStatusValue.textContent = '--';
+                if (clientStatusSource) clientStatusSource.textContent = 'Unable to determine client status.';
+                return null;
+            }
+        }
+
+        async function refreshClientStatus() {
+            const clientStatusValue = document.getElementById('clientStatusValue');
+            const clientStatusSource = document.getElementById('clientStatusSource');
+            if (!runtimeContext || String(runtimeContext?.source || '').toLowerCase() === 'unknown') {
+                await fetchRuntimeContext();
+            }
+            const isAdmin = String(runtimeContext?.role || '').toLowerCase() === 'admin';
+
+            if (!isAdmin) {
+                if (clientStatusValue) clientStatusValue.innerHTML = '<span style="color:#ffcc00;font-weight:bold;">CLIENT</span>';
+                if (clientStatusSource) clientStatusSource.textContent = 'Client-safe mode active on this device.';
+                return;
+            }
+
+            try {
+                const payload = await apiRequest('/network/clients?active_only=false');
+                const clients = Array.isArray(payload?.clients) ? payload.clients : [];
+                const total = clients.length;
+                const active = clients.filter((client) => client && client.is_active !== false).length;
+                const pending = Math.max(0, total - active);
+                if (clientStatusValue) {
+                    clientStatusValue.textContent = `${active}/${total}`;
+                }
+                if (clientStatusSource) {
+                    clientStatusSource.textContent = pending > 0
+                        ? `${pending} pending verification` 
+                        : 'All registered clients approved';
+                }
+            } catch (error) {
+                console.error('Failed to load client status', error);
+                if (clientStatusValue) clientStatusValue.textContent = '--';
+                if (clientStatusSource) clientStatusSource.textContent = 'Unable to load client inventory.';
             }
         }
 
@@ -843,7 +1032,7 @@
             showToast(`Generating ${btnText} report...`, 'info');
             
             try {
-                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/interval/${interval}?format=pdf`, {
+                const res = await fetch(`${API_BASE_URL}/advanced-reports/interval/${interval}?format=pdf`, {
                     method: 'GET'
                 });
                 
@@ -854,16 +1043,11 @@
                 
                 // Download the PDF
                 const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `sentinel_report_${interval}_${Date.now()}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
+                downloadBlob(blob, `sentinel_report_${interval}_${Date.now()}.pdf`);
                 
                 showToast(`${btnText} report downloaded successfully!`, 'success');
+                await fetchReports();
+                renderReportsList();
             } catch (error) {
                 console.error('Report generation error:', error);
                 showToast(`Failed to generate ${btnText} report: ${error.message}`, 'error');
@@ -886,7 +1070,7 @@
                 showToast('Generating comprehensive report (24h/7d/30d)...', 'info');
                 
                 // Generate comprehensive report
-                const res = await fetch(`${API_BASE_URL}/api/v1/advanced-reports/generate-comprehensive`, {
+                const res = await fetch(`${API_BASE_URL}/advanced-reports/generate-comprehensive`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -909,16 +1093,11 @@
                 
                 // Download the PDF
                 const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `sentinel_comprehensive_report_${Date.now()}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
+                downloadBlob(blob, `sentinel_comprehensive_report_${Date.now()}.pdf`);
                 
                 showToast('Comprehensive report (24h/7d/30d) downloaded successfully!', 'success');
+                await fetchReports();
+                renderReportsList();
             } catch (error) {
                 console.error('Comprehensive report generation error:', error);
                 showToast(`Failed to generate comprehensive report: ${error.message}`, 'error');
@@ -931,10 +1110,19 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            fetchRuntimeContext().then(() => refreshClientStatus());
             fetchDashboardStats();
             updatePlaceholder();
+            fetchReports().then(() => renderReportsList());
             // Auto-refresh stats every 30 seconds
             setInterval(fetchDashboardStats, 30000);
+            setInterval(() => {
+                refreshClientStatus();
+            }, 30000);
+            setInterval(async () => {
+                await fetchReports();
+                renderReportsList();
+            }, 60000);
         });
     </script>
 </body>

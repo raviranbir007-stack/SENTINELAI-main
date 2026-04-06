@@ -66,15 +66,30 @@ BYTE_SIGNATURES: List[Tuple[str, bytes, str, str]] = [
                     "EICAR AV test file", "HIGH"),
     ("MZ_PE",       b"MZ",              "Windows PE executable header", "INFO"),
     ("ELF",         b"\x7fELF",         "Linux ELF executable",        "INFO"),
+    ("RAR",         b"Rar!\x1a\x07",    "RAR archive",                 "LOW"),
+    ("ZIP",         b"PK\x03\x04",      "ZIP archive",                 "LOW"),
+    ("SEVEN_Z",     b"7z\xbc\xaf'\x1c", "7-Zip archive",               "LOW"),
+    ("CAB",         b"MSCF",             "Microsoft Cabinet archive",   "LOW"),
+    ("OLE2",        b"\xd0\xcf\x11\xe0", "OLE2 compound document",      "MEDIUM"),
     ("JAVA_CLASS",  b"\xca\xfe\xba\xbe","Java class file",             "MEDIUM"),
     ("SHELLCODE_NOP", b"\x90\x90\x90\x90\x90\x90\x90\x90", "NOP sled (shellcode)", "HIGH"),
     ("REVERSE_SHELL", b"/bin/sh\x00-i",  "Reverse-shell string",       "CRITICAL"),
     ("MSFVENOM",    b"msfvenom",         "Metasploit payload marker",  "CRITICAL"),
     ("XOR_DECODE",  b"xor eax",          "XOR decode stub (shellcode)","HIGH"),
+    ("UPX",         b"UPX!",             "UPX packer marker",          "HIGH"),
+    ("NSIS",        b"NullsoftInst",     "NSIS installer marker",      "LOW"),
+    ("PYINSTALLER",  b"MEI\014\013\012\013\016", "PyInstaller archive marker", "LOW"),
 ]
 
 REGEX_SIGNATURES: List[Tuple[str, str, str]] = [
     ("POWERSHELL_ENCODED", r"powershell.*-enc",          "HIGH"),
+    ("POWERSHELL_B64",     r"powershell.*encodedcommand", "HIGH"),
+    ("CERTUTIL_DL",        r"certutil(?:\.exe)?\s+.*-urlcache", "HIGH"),
+    ("RUNDLL32",           r"rundll32(?:\.exe)?",      "HIGH"),
+    ("MSHTA",              r"mshta(?:\.exe)?",         "HIGH"),
+    ("REGSVR32",           r"regsvr32(?:\.exe)?",      "HIGH"),
+    ("BITSADMIN",          r"bitsadmin(?:\.exe)?",     "MEDIUM"),
+    ("WMI_EXEC",           r"wmic\s+.*process\s+call\s+create", "HIGH"),
     ("WGET_SH",            r"wget\s+.*\|\s*(ba)?sh",     "HIGH"),
     ("CURL_SH",            r"curl\s+.*\|\s*(ba)?bash",   "HIGH"),
     ("BASE64_BLOB",        r"base64\s+--?decode",        "MEDIUM"),
@@ -84,6 +99,16 @@ REGEX_SIGNATURES: List[Tuple[str, str, str]] = [
     ("VIRTUALALLOC",       r"VirtualAlloc",              "HIGH"),
     ("WSCRIPT_SHELL",      r"WScript\.Shell",            "HIGH"),
     ("OBFUSCATED_EVAL",    r"eval\s*\(\s*(?:unescape|base64|gzip|rot13)", "HIGH"),
+    ("AUTOEXEC_MACRO",     r"(?:AutoOpen|Auto_Open|Document_Open|Workbook_Open|Presentation_Open|Auto_Close)", "CRITICAL"),
+    ("VBA_MACRO",          r"(?:Attribute\s+VB_Name|vbaProject\.bin|ThisDocument|Sub\s+\w+\s*\()", "HIGH"),
+    ("OFFICE_OBJECT",      r"(?:CreateObject\(|GetObject\(|ShellExecute|Scripting\.FileSystemObject|ADODB\.Stream)", "HIGH"),
+    ("PDF_JAVASCRIPT",     r"/JavaScript|/JS\b|app\.launchURL|this\.submitForm", "MEDIUM"),
+    ("HTML_EMBED",         r"<iframe[^>]+src=|<script[^>]+src=|data:text/html", "MEDIUM"),
+    ("ELF_DYNAMIC_LOADER", r"ld-linux|libc\.so\.6|libdl\.so", "LOW"),
+]
+
+COMPILED_REGEX_SIGNATURES: List[Tuple[str, Any, str]] = [
+    (name, re.compile(pattern, re.IGNORECASE), severity) for name, pattern, severity in REGEX_SIGNATURES
 ]
 
 MAGIC_BYTES: Dict[bytes, Tuple[str, bool]] = {
@@ -112,13 +137,47 @@ MAX_FILE_SIZE            = 500 * 1024 * 1024   # 500 MB
 SUSPICIOUS_STRING_PATTERNS = [
     r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
     r"/etc/passwd", r"/etc/shadow",
-    r"cmd\.exe", r"powershell",
+    r"cmd\.exe", r"powershell", r"rundll32", r"mshta", r"regsvr32", r"certutil",
     r"\\AppData\\Roaming",
     r"CreateRemoteThread", r"VirtualAlloc", r"WriteProcessMemory",
     r"ShellExecute", r"WScript\.Shell",
     r"eval\s*\(", r"exec\s*\(",
     r"base64_decode", r"gzinflate", r"str_rot13",
+    r"AutoOpen", r"Document_Open", r"Workbook_Open", r"Presentation_Open",
+    r"vbaProject\.bin", r"ThisDocument", r"ADODB\.Stream",
 ]
+
+IOC_PATTERNS: Dict[str, str] = {
+    "url": r"https?://[a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]{4,}",
+    "ipv4": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+    "domain": r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b",
+    "sha256": r"\b[a-fA-F0-9]{64}\b",
+    "sha1": r"\b[a-fA-F0-9]{40}\b",
+    "md5": r"\b[a-fA-F0-9]{32}\b",
+    "email": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
+}
+
+PACKER_SECTION_NAMES = {
+    "upx0", "upx1", "upx2", ".packed", ".aspack", ".petite", ".mpress1", ".mpress2", ".boom", ".vmp0", ".vmp1"
+}
+
+PE_SUSPICIOUS_DLLS = {"kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll", "wininet.dll", "urlmon.dll", "shell32.dll", "mpr.dll"}
+PE_SUSPICIOUS_FUNCS = {
+    "CreateRemoteThread", "VirtualAlloc", "VirtualAllocEx", "WriteProcessMemory", "ReadProcessMemory",
+    "CreateProcess", "CreateProcessA", "CreateProcessW", "ShellExecute", "ShellExecuteA", "ShellExecuteW",
+    "WinExec", "LoadLibrary", "LoadLibraryA", "LoadLibraryW", "GetProcAddress", "InternetOpenUrl",
+    "URLDownloadToFile", "WinHttpOpen", "WinHttpConnect", "WinHttpSendRequest", "InternetReadFile"
+}
+
+OLE_MACRO_MARKERS = {
+    "autoopen", "auto_open", "document_open", "workbook_open", "presentation_open", "auto_close",
+    "attribute vb_name", "thisdocument", "vba", "sub autoopen", "private sub document_open"
+}
+
+OLE_EMBEDDED_OBJECT_MARKERS = {
+    "vba/dir", "vba/project", "vbaproject.bin", "compobj", "ole10native", "objectpool", "package",
+    "macros", "_rels/.rels", "word/document.xml", "xl/workbook.xml", "ppt/presentation.xml"
+}
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +296,7 @@ class FileScanner:
             "filepath": filepath, "sha256": "", "md5": "", "size": 0,
             "entropy": 0.0, "extension": "", "magic_type": "", "risk_level": "UNKNOWN",
             "signatures": [], "suspicious_strings": [], "quarantined": False, "error": None,
+            "analysis_family": "unknown", "forensic_metadata": {},
         }
         try:
             p = Path(filepath)
@@ -259,8 +319,21 @@ class FileScanner:
 
             result["entropy"]   = _entropy(sample)
             result["magic_type"] = self._identify_magic(sample)
+            result["analysis_family"] = self._classify_family(result["magic_type"], result["extension"])
             result["signatures"] = self._match_signatures(sample)
             result["suspicious_strings"] = self._extract_suspicious_strings(sample)
+            ioc_summary = self._extract_iocs(sample)
+            result["iocs"] = ioc_summary
+            result["deobfuscated_strings"] = self._extract_deobfuscated_strings(sample)
+
+            if result["analysis_family"] == "office_ole":
+                ole_info = self._analyse_ole_container(sample, result)
+                if ole_info:
+                    result["ole_info"] = ole_info
+                    result["forensic_metadata"]["container_type"] = ole_info.get("container_type")
+                    result["forensic_metadata"]["macro_indicators"] = ole_info.get("macro_indicators", [])
+                    if ole_info.get("macro_indicators"):
+                        result["signatures"].append("OLE_MACRO_ACTIVITY")
             
             # YARA scanning
             yara_matches = self._scan_yara(sample)
@@ -269,6 +342,9 @@ class FileScanner:
             pe_info = self._analyse_pe(sample)
             if pe_info:
                 result["pe_info"] = pe_info
+                result["analysis_family"] = "pe_coff"
+                result["forensic_metadata"]["pe_machine"] = pe_info.get("coff_info", {}).get("machine")
+                result["forensic_metadata"]["imphash"] = pe_info.get("imphash")
                 if pe_info.get("suspicious"):
                     result["signatures"].append("PE_ANOMALY")
                 
@@ -289,6 +365,23 @@ class FileScanner:
                 result["ml_classification"] = {"prediction": "UNKNOWN", "confidence": 0.0}
 
             result["risk_level"] = self._score_risk(result)
+            score_value, score_reasons, score_confidence = self._score_risk_detailed(result)
+            result["risk_contract"] = {
+                "version": "1.0",
+                "numeric_score": score_value,
+                "confidence": score_confidence,
+                "reason_codes": score_reasons,
+                "threat_model": "static+heuristic+pe+ml+disassembly",
+            }
+            result["analysis_methods_used"] = self._collect_analysis_methods(result)
+            result["forensic_metadata"].update({
+                "analysis_family": result.get("analysis_family", "unknown"),
+                "magic_type": result.get("magic_type", "Unknown"),
+                "extension": result.get("extension", ""),
+                "signature_count": len(result.get("signatures", [])),
+                "ioc_count": sum(len(values) for values in (result.get("iocs") or {}).values()),
+                "analysis_methods_used": result.get("analysis_methods_used", []),
+            })
 
             if self.threat_analyzer and result["sha256"] and \
                result["extension"] in DANGEROUS_EXTENSIONS:
@@ -351,9 +444,9 @@ class FileScanner:
                     matched.append(name)
             except Exception:
                 pass
-        for name, pattern, _ in REGEX_SIGNATURES:
+        for name, pattern, _ in COMPILED_REGEX_SIGNATURES:
             try:
-                if re.search(pattern, text, re.IGNORECASE):
+                if pattern.search(text):
                     matched.append(name)
             except Exception:
                 pass
@@ -364,12 +457,206 @@ class FileScanner:
         try:
             text = data.decode("latin-1", errors="replace")
             for pat in SUSPICIOUS_STRING_PATTERNS:
-                m = re.search(pat, text, re.IGNORECASE)
-                if m:
-                    found.append(m.group(0)[:100])
+                for m in re.finditer(pat, text, re.IGNORECASE):
+                    ctx_start = max(0, m.start() - 24)
+                    ctx_end = min(len(text), m.end() + 24)
+                    context = text[ctx_start:ctx_end].replace("\n", " ").replace("\r", " ")
+                    found.append(context[:160])
+                    if len(found) >= 40:
+                        break
+                if len(found) >= 40:
+                    break
         except Exception:
             pass
         return list(set(found))[:20]
+
+    def _extract_iocs(self, data: bytes) -> Dict[str, List[str]]:
+        text = data.decode("latin-1", errors="replace")
+        iocs: Dict[str, List[str]] = {k: [] for k in IOC_PATTERNS}
+        for ioc_type, pattern in IOC_PATTERNS.items():
+            try:
+                matches = re.findall(pattern, text, flags=re.IGNORECASE)
+                normalized = []
+                for match in matches[:100]:
+                    value = str(match).strip().lower()
+                    if not value:
+                        continue
+                    if ioc_type == "ipv4":
+                        parts = value.split(".")
+                        if len(parts) != 4:
+                            continue
+                        try:
+                            if any(int(p) > 255 for p in parts):
+                                continue
+                        except Exception:
+                            continue
+                    normalized.append(value)
+                iocs[ioc_type] = sorted(list(set(normalized)))[:25]
+            except Exception:
+                iocs[ioc_type] = []
+        return iocs
+
+    def _extract_deobfuscated_strings(self, data: bytes) -> List[str]:
+        text = data.decode("latin-1", errors="replace")
+        candidates: List[str] = []
+        # Capture likely base64 blobs for analyst review (lightweight, no heavy decode loop).
+        for m in re.finditer(r"\b[A-Za-z0-9+/]{40,}={0,2}\b", text):
+            chunk = m.group(0)
+            # Keep only reasonably sized chunks to avoid huge memory usage.
+            if 40 <= len(chunk) <= 400:
+                candidates.append(chunk[:120])
+            if len(candidates) >= 10:
+                break
+        return candidates
+
+    def _collect_analysis_methods(self, result: Dict) -> List[Dict[str, Any]]:
+        """Summarize which analysis methods contributed evidence for the scan."""
+        methods: List[Dict[str, Any]] = []
+        family = str(result.get("analysis_family", "unknown") or "unknown")
+        signatures = result.get("signatures", []) or []
+        suspicious_strings = result.get("suspicious_strings", []) or []
+        iocs = result.get("iocs", {}) or {}
+        pe_info = result.get("pe_info", {}) or {}
+        ole_info = result.get("ole_info", {}) or {}
+        disassembly = result.get("disassembly_info", {}) or {}
+        ml_result = result.get("ml_classification", {}) or {}
+
+        methods.append({
+            "name": "Entropy Heuristics",
+            "status": "COMPLETED",
+            "details": f"Shannon entropy analyzed at {float(result.get('entropy', 0.0) or 0.0):.3f} for packing/encryption indicators.",
+        })
+        methods.append({
+            "name": "Signature Matching",
+            "status": "COMPLETED",
+            "details": f"Byte-pattern, regex, and YARA matching produced {len(signatures)} match(es).",
+        })
+        methods.append({
+            "name": "IOC Extraction",
+            "status": "COMPLETED" if any(iocs.values()) else "LIMITED",
+            "details": f"Extracted {sum(len(v) for v in iocs.values())} IOC value(s) across URL, IP, domain, hash, and email patterns.",
+        })
+        methods.append({
+            "name": "Suspicious String Heuristics",
+            "status": "COMPLETED" if suspicious_strings else "LIMITED",
+            "details": f"Captured {len(suspicious_strings)} contextual string hit(s) for command, macro, and obfuscation markers.",
+        })
+
+        if family == "pe_coff" or pe_info:
+            methods.append({
+                "name": "PE/COFF Structural Analysis",
+                "status": "COMPLETED",
+                "details": (
+                    f"PE parsing inspected {len(pe_info.get('sections', []))} section(s), "
+                    f"{len(pe_info.get('imports', []))} import table entr{('y' if len(pe_info.get('imports', [])) == 1 else 'ies')}, "
+                    f"and {len(pe_info.get('anomalies', []))} anomaly indicator(s)."
+                ),
+            })
+        elif family == "office_ole" or ole_info:
+            methods.append({
+                "name": "OLE / Office Container Heuristics",
+                "status": "COMPLETED",
+                "details": (
+                    f"Detected {len(ole_info.get('macro_indicators', []))} macro marker(s) and "
+                    f"{ole_info.get('embedded_object_count', 0)} embedded object signal(s)."
+                ),
+            })
+        elif family == "archive":
+            methods.append({
+                "name": "Archive Heuristics",
+                "status": "COMPLETED",
+                "details": "Archive/container file type identified for follow-on inspection.",
+            })
+        elif family == "script":
+            methods.append({
+                "name": "Script Heuristics",
+                "status": "COMPLETED",
+                "details": "Script file family identified; obfuscation and execution markers were prioritized.",
+            })
+
+        if disassembly:
+            methods.append({
+                "name": "Code Disassembly",
+                "status": "COMPLETED",
+                "details": f"Disassembly produced {disassembly.get('total_instructions', 0)} instruction(s) and {len(disassembly.get('suspicious_patterns', []))} suspicious pattern(s).",
+            })
+
+        if ml_result:
+            methods.append({
+                "name": "Machine Learning Classification",
+                "status": "COMPLETED",
+                "details": f"Model predicted {ml_result.get('prediction', 'UNKNOWN')} with confidence {float(ml_result.get('confidence', 0.0) or 0.0):.2f}.",
+            })
+
+        return methods
+
+    def _classify_family(self, magic_type: str, extension: str) -> str:
+        ext = (extension or "").lower().strip()
+        magic = (magic_type or "").lower()
+        if magic.startswith("windows pe") or magic == "windows pe":
+            return "pe_coff"
+        if magic.startswith("ole2") or ext in {".doc", ".xls", ".ppt", ".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".ppam"}:
+            return "office_ole"
+        if magic.startswith("linux elf"):
+            return "elf"
+        if magic.startswith("zip") or ext in {".zip", ".rar", ".7z", ".cab", ".iso", ".tar", ".gz", ".bz2", ".xz", ".zst"}:
+            return "archive"
+        if ext in {".ps1", ".bat", ".cmd", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".py", ".pl", ".sh"}:
+            return "script"
+        if magic.startswith("pdf") or ext == ".pdf":
+            return "pdf"
+        return "generic"
+
+    def _analyse_ole_container(self, data: bytes, result: Dict) -> Dict:
+        """Best-effort OLE/Office macro analysis using lightweight string heuristics."""
+        text = data.decode("latin-1", errors="replace")
+        lower_text = text.lower()
+        macro_markers = [
+            ("AutoOpen", "document auto-open macro entry point"),
+            ("Auto_Open", "document auto-open macro entry point"),
+            ("Workbook_Open", "Excel workbook open macro"),
+            ("Presentation_Open", "PowerPoint open macro"),
+            ("Document_Open", "Word document open macro"),
+            ("Auto_Close", "document auto-close macro"),
+            ("Attribute VB_Name", "embedded VBA module metadata"),
+            ("VBA/dir", "VBA project directory stream"),
+            ("vbaProject.bin", "embedded VBA project stream"),
+            ("VBA", "Visual Basic for Applications marker"),
+            ("CreateObject(", "COM automation object creation"),
+            ("GetObject(", "COM object lookup"),
+            ("WScript.Shell", "command shell automation"),
+            ("powershell", "PowerShell execution string"),
+            ("Shell(", "shell execution call"),
+            ("ShellExecute", "shell execution API usage"),
+            ("URLDownloadToFile", "payload download API usage"),
+            ("ADODB.Stream", "file write/download staging"),
+            ("MSXML2.XMLHTTP", "HTTP request automation"),
+            ("WinHttp.WinHttpRequest", "HTTP request automation"),
+            ("Scripting.FileSystemObject", "filesystem automation"),
+            ("ThisDocument", "Office document object module"),
+            ("Environ(", "environment probing or command staging"),
+            ("Chr(", "string obfuscation marker"),
+            ("StrReverse", "string obfuscation marker"),
+        ]
+
+        indicators = []
+        for marker, description in macro_markers:
+            if marker.lower() in lower_text:
+                indicators.append({"marker": marker, "description": description})
+
+        embedded_objects = []
+        for pattern in (r"Package\b", r"ObjectPool", r"Mso\w+", r"\x00VBA\x00", r"vbaProject\.bin", r"VBA/dir"):
+            if re.search(pattern, text, re.IGNORECASE):
+                embedded_objects.append(pattern)
+
+        return {
+            "container_type": "OLE2",
+            "macro_indicators": indicators,
+            "embedded_object_signals": embedded_objects,
+            "embedded_object_count": len(embedded_objects),
+            "has_macro_activity": bool(indicators),
+            "is_macro_capable": result.get("extension", "").lower() in {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".ppam", ".doc", ".xls", ".ppt"} or bool(indicators),
+        }
 
     def _analyse_pe(self, data: bytes) -> Optional[Dict]:
         if not PE_ANALYSIS_AVAILABLE:
@@ -381,7 +668,26 @@ class FileScanner:
             binary = lief.parse(data)
             
             if isinstance(binary, lief.PE.Binary):
-                return self._analyse_pe_binary(binary)
+                pe_info = self._analyse_pe_binary(binary)
+                # Deepen PE/COFF evidence with imphash and symbol artifacts where possible.
+                try:
+                    if pefile is not None:
+                        pe_obj = pefile.PE(data=data, fast_load=True)
+                        pe_obj.parse_data_directories()
+                        pe_info["imphash"] = pe_obj.get_imphash()
+                except Exception:
+                    pe_info["imphash"] = ""
+
+                try:
+                    text_preview = data.decode("latin-1", errors="ignore")
+                    pdb_paths = re.findall(r"[A-Za-z]:\\\\[^\x00\n\r]{4,}\.pdb", text_preview, flags=re.IGNORECASE)
+                    pe_info["pdb_paths"] = sorted(list(set(pdb_paths)))[:5]
+                    if pe_info["pdb_paths"]:
+                        pe_info["anomalies"].append("Debug symbol path(s) embedded")
+                except Exception:
+                    pe_info["pdb_paths"] = []
+
+                return pe_info
             elif isinstance(binary, lief.ELF.Binary):
                 return self._analyse_elf_binary(binary)
             else:
@@ -542,7 +848,8 @@ class FileScanner:
             "resources": [],
             "anomalies": [],
             "suspicious": False,
-            "coff_info": {}
+            "coff_info": {},
+            "suspicious_exports": [],
         }
         
         # COFF header analysis
@@ -556,8 +863,18 @@ class FileScanner:
             "size_of_optional_header": coff_header.sizeof_optional_header,
             "characteristics": [str(char) for char in coff_header.characteristics_list]
         }
+        try:
+            opt_header = binary.optional_header
+            pe_info["coff_info"]["checksum"] = int(getattr(opt_header, "checksum", 0) or 0)
+            pe_info["coff_info"]["subsystem"] = str(getattr(opt_header, "subsystem", "unknown"))
+            pe_info["coff_info"]["dll_characteristics"] = [str(char) for char in getattr(opt_header, "dll_characteristics_lists", []) or []]
+        except Exception:
+            pe_info["coff_info"].setdefault("checksum", 0)
+            pe_info["coff_info"].setdefault("subsystem", "unknown")
+            pe_info["coff_info"].setdefault("dll_characteristics", [])
         
         # Section analysis
+        suspicious_section_names = PACKER_SECTION_NAMES
         for section in binary.sections:
             section_info = {
                 "name": section.name,
@@ -573,6 +890,10 @@ class FileScanner:
             # Check for suspicious sections
             if section.entropy > 7.5:
                 pe_info["anomalies"].append(f"High entropy section: {section.name}")
+                pe_info["suspicious"] = True
+
+            if str(section.name or "").strip().lower() in suspicious_section_names:
+                pe_info["anomalies"].append(f"Packer-like section name: {section.name}")
                 pe_info["suspicious"] = True
             
             # Check for executable sections with RWX
@@ -592,24 +913,26 @@ class FileScanner:
                 pe_info["imports"].append(dll_imports)
                 
                 # Check for suspicious imports
-                suspicious_dlls = ["kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll"]
-                if imp.name.lower() in suspicious_dlls:
+                if imp.name.lower() in PE_SUSPICIOUS_DLLS:
                     # Check for malware-common functions
-                    malware_funcs = ["CreateRemoteThread", "VirtualAlloc", "WriteProcessMemory", 
-                                   "CreateProcess", "ShellExecute", "WinExec", "LoadLibrary"]
                     for func in dll_imports["functions"]:
-                        if func in malware_funcs:
+                        if func in PE_SUSPICIOUS_FUNCS:
                             pe_info["anomalies"].append(f"Suspicious import: {imp.name}.{func}")
                             pe_info["suspicious"] = True
         
         # Export analysis
         if binary.has_exports:
             for exp in binary.exports:
+                export_name = str(exp.name or "").strip()
                 pe_info["exports"].append({
-                    "name": exp.name,
+                    "name": export_name,
                     "ordinal": exp.ordinal,
                     "address": exp.address
                 })
+                if export_name and (export_name.startswith("_") or export_name.lower() in {"dllmain", "main", "start"}):
+                    pe_info["suspicious_exports"].append(export_name)
+                    pe_info["anomalies"].append(f"Suspicious export name: {export_name}")
+                    pe_info["suspicious"] = True
         
         # Resource analysis
         if binary.has_resources:
@@ -632,6 +955,30 @@ class FileScanner:
             if opt_header.addressof_entrypoint == 0:
                 pe_info["anomalies"].append("Entry point at 0")
                 pe_info["suspicious"] = True
+
+        # TLS callbacks are not inherently malicious, but often used by evasive loaders.
+        try:
+            if getattr(binary, "has_tls", False):
+                callbacks = list(getattr(binary.tls, "callbacks", []) or [])
+                if callbacks:
+                    pe_info["tls_callbacks"] = [hex(int(c)) for c in callbacks[:16]]
+                    pe_info["anomalies"].append("TLS callback(s) present")
+        except Exception:
+            pass
+
+        try:
+            ts = int(coff_header.time_date_stamp or 0)
+            if ts <= 0:
+                pe_info["anomalies"].append("Invalid COFF timestamp")
+                pe_info["suspicious"] = True
+            else:
+                now_ts = int(datetime.utcnow().timestamp())
+                # Treat far-future timestamps as suspicious tampering.
+                if ts > (now_ts + 7 * 24 * 3600):
+                    pe_info["anomalies"].append("COFF timestamp set in future")
+                    pe_info["suspicious"] = True
+        except Exception:
+            pass
         
         # Check for packer signatures or anomalies
         if len(pe_info["sections"]) == 0:
@@ -895,34 +1242,78 @@ class FileScanner:
             return {"prediction": "UNKNOWN", "confidence": 0.0, "error": str(e)}
 
     def _score_risk(self, result: Dict) -> str:
+        score, _, _ = self._score_risk_detailed(result)
+        if score >= 5:
+            return "HIGH"
+        elif score >= 2:
+            return "MEDIUM"
+        elif score >= 1:
+            return "LOW"
+        return "CLEAN"
+
+    def _score_risk_detailed(self, result: Dict) -> Tuple[int, List[Dict[str, Any]], float]:
         score = 0
+        reasons: List[Dict[str, Any]] = []
+
+        def add(points: int, code: str, explanation: str) -> None:
+            nonlocal score
+            score += points
+            reasons.append({
+                "code": code,
+                "points": points,
+                "explanation": explanation,
+            })
+
         if result["entropy"] >= HIGH_ENTROPY_THRESHOLD:
-            score += 3
+            add(3, "HIGH_ENTROPY", f"File entropy {result['entropy']:.2f} indicates packed/encrypted payload characteristics")
         elif result["entropy"] >= MEDIUM_ENTROPY_THRESHOLD:
-            score += 1
+            add(1, "ELEVATED_ENTROPY", f"File entropy {result['entropy']:.2f} above normal baseline")
         if result["extension"] in DANGEROUS_EXTENSIONS:
-            score += 2
+            add(2, "DANGEROUS_EXTENSION", f"Extension {result['extension']} is in executable/script high-risk set")
         critical_sigs = {"EICAR", "REVERSE_SHELL", "MSFVENOM", "SHELLCODE_NOP", "CREATEREMOTETHREAD",
                           "suspicious_pe_imports", "shellcode_patterns", "ransomware_indicators", "rootkit_indicators"}
         high_sigs     = {"POWERSHELL_ENCODED", "WGET_SH", "CURL_SH", "PE_ANOMALY",
                           "NET_USER_ADD", "SCHTASK_CREATE", "VIRTUALALLOC", "packed_executable", "keylogger_imports"}
         for sig in result.get("signatures", []):
             if sig in critical_sigs:
-                score += 5
+                add(5, "CRITICAL_SIGNATURE", f"Critical signature matched: {sig}")
             elif sig in high_sigs:
-                score += 3
+                add(3, "HIGH_SIGNATURE", f"High-risk signature matched: {sig}")
             else:
-                score += 1
-        score += min(len(result.get("suspicious_strings", [])), 5)
-        if result.get("magic_type") == "OLE2 (Office/macro)":
-            score += 2
+                add(1, "GENERIC_SIGNATURE", f"Signature matched: {sig}")
+
+        suspicious_count = min(len(result.get("suspicious_strings", [])), 5)
+        if suspicious_count:
+            add(suspicious_count, "SUSPICIOUS_STRINGS", f"Detected {suspicious_count} suspicious string context matches")
+
+        ioc_counts = sum(len(v) for v in (result.get("iocs") or {}).values())
+        if ioc_counts:
+            add(min(4, max(1, ioc_counts // 5)), "IOC_DENSITY", f"Extracted {ioc_counts} potential IOC values from artifact")
+
+        if result.get("magic_type") == "OLE2 (Office/macro)" or result.get("analysis_family") == "office_ole":
+            add(2, "OLE2_MACRO_CONTAINER", "OLE2 macro-capable container detected")
+            ole_info = result.get("ole_info", {})
+            if ole_info.get("has_macro_activity"):
+                add(4, "OLE_MACRO_ACTIVITY", "Office/OLE content contains macro execution markers")
+            elif ole_info.get("is_macro_capable"):
+                add(2, "OLE_MACRO_CAPABLE", "Office/OLE file is macro-capable even without explicit macro strings")
+            embedded_object_count = int(ole_info.get("embedded_object_count", 0) or 0)
+            if embedded_object_count:
+                add(min(3, embedded_object_count), "OLE_EMBEDDED_OBJECTS", f"Detected {embedded_object_count} embedded Office object signal(s)")
+            macro_markers = {str(item.get("marker", "")).lower() for item in ole_info.get("macro_indicators", []) if isinstance(item, dict)}
+            if macro_markers & OLE_MACRO_MARKERS:
+                add(2, "OLE_MACRO_MARKERS", "Canonical macro markers were observed in the Office container")
+            if any(str(signal).lower() in OLE_EMBEDDED_OBJECT_MARKERS for signal in ole_info.get("embedded_object_signals", [])):
+                add(1, "OLE_EMBEDDED_OBJECT_MARKERS", "Embedded object markers matched Office container heuristics")
         
         # PE/ELF-specific scoring
         binary_info = result.get("pe_info", {})
         if binary_info:
             # Anomalies increase score
             anomalies = binary_info.get("anomalies", [])
-            score += min(len(anomalies) * 2, 10)  # Up to 10 points for anomalies
+            anomaly_points = min(len(anomalies) * 2, 10)
+            if anomaly_points:
+                add(anomaly_points, "BINARY_ANOMALIES", f"Binary analysis reported {len(anomalies)} anomaly indicators")
             
             # Check format-specific suspicious indicators
             if binary_info.get("format") == "PE":
@@ -931,14 +1322,13 @@ class FileScanner:
                 suspicious_imports = 0
                 for imp in imports:
                     dll = imp.get("dll", "").lower()
-                    if dll in ["kernel32.dll", "user32.dll", "advapi32.dll", "ws2_32.dll"]:
+                    if dll in PE_SUSPICIOUS_DLLS:
                         functions = imp.get("functions", [])
-                        malware_funcs = ["CreateRemoteThread", "VirtualAlloc", "WriteProcessMemory", 
-                                       "CreateProcess", "ShellExecute", "WinExec", "LoadLibrary"]
                         for func in functions:
-                            if func in malware_funcs:
+                            if func in PE_SUSPICIOUS_FUNCS:
                                 suspicious_imports += 1
-                score += min(suspicious_imports, 5)
+                if suspicious_imports:
+                    add(min(suspicious_imports, 5), "SUSPICIOUS_IMPORTS", f"Detected {suspicious_imports} suspicious imported API functions")
                 
                 # RWX sections are highly suspicious
                 sections = binary_info.get("sections", [])
@@ -947,31 +1337,55 @@ class FileScanner:
                     chars = section.get("characteristics", [])
                     if ("MEM_EXECUTE" in str(chars) and "MEM_READ" in str(chars) and "MEM_WRITE" in str(chars)):
                         rwx_sections += 1
-                score += rwx_sections * 3
+                if rwx_sections:
+                    add(rwx_sections * 3, "RWX_SECTIONS", f"Detected {rwx_sections} executable-writable section(s)")
                 
                 # High entropy sections
                 high_entropy_sections = sum(1 for s in sections if s.get("entropy", 0) > 7.5)
-                score += high_entropy_sections * 2
+                if high_entropy_sections:
+                    add(high_entropy_sections * 2, "HIGH_ENTROPY_SECTIONS", f"Detected {high_entropy_sections} high-entropy PE section(s)")
+
+                coff_info = binary_info.get("coff_info", {})
+                if coff_info:
+                    if not coff_info.get("time_date_stamp"):
+                        add(1, "EMPTY_COFF_TIMESTAMP", "PE COFF header is missing a meaningful timestamp")
+                    if int(coff_info.get("checksum", 0) or 0) == 0 and binary_info.get("is_exe"):
+                        add(1, "EMPTY_COFF_CHECKSUM", "PE checksum is zero for an executable image")
+                    if int(coff_info.get("number_of_sections", 0) or 0) <= 0:
+                        add(3, "INVALID_COFF_SECTION_COUNT", "PE COFF header reports no sections")
+                    if int(coff_info.get("number_of_symbols", 0) or 0) > 0:
+                        add(1, "COFF_SYMBOL_TABLE_PRESENT", "PE COFF symbol table is present and should be reviewed")
+
+                if not binary_info.get("imports") and binary_info.get("is_exe"):
+                    add(1, "NO_IMPORTS", "Executable image has no imports, which is uncommon outside staged loaders")
+                if binary_info.get("pdb_paths"):
+                    add(1, "PDB_PATH_PRESENT", "PE exposes debug symbol path(s)")
+                if binary_info.get("tls_callbacks"):
+                    add(2, "TLS_CALLBACKS", "TLS callbacks are present and require analyst review")
+                if binary_info.get("suspicious_exports"):
+                    add(len(binary_info.get("suspicious_exports", [])), "SUSPICIOUS_EXPORT_NAMES", "Suspicious export naming pattern detected")
+                if binary_info.get("format") == "PE" and binary_info.get("suspicious"):
+                    add(3, "PE_SUSPICIOUS_BINARY", "PE analysis flagged suspicious loader or section behavior")
         
         # ML classification scoring
         ml_result = result.get("ml_classification", {})
         if ml_result.get("prediction") == "MALWARE":
-            score += int(ml_result.get("confidence", 0) * 5)  # Up to 5 points
+            ml_points = int(ml_result.get("confidence", 0) * 5)
+            if ml_points:
+                add(ml_points, "ML_MALWARE_PREDICTION", f"ML model predicts MALWARE with confidence {ml_result.get('confidence', 0):.2f}")
         elif ml_result.get("prediction") == "SUSPICIOUS":
-            score += int(ml_result.get("confidence", 0) * 3)  # Up to 3 points
+            ml_points = int(ml_result.get("confidence", 0) * 3)
+            if ml_points:
+                add(ml_points, "ML_SUSPICIOUS_PREDICTION", f"ML model predicts SUSPICIOUS with confidence {ml_result.get('confidence', 0):.2f}")
         
         # Disassembly analysis scoring
         disassembly = result.get("disassembly_info", {})
         suspicious_disasm = len(disassembly.get("suspicious_patterns", []))
-        score += min(suspicious_disasm, 5)  # Up to 5 points for suspicious disassembly
+        if suspicious_disasm:
+            add(min(suspicious_disasm, 5), "SUSPICIOUS_DISASSEMBLY", f"Detected {suspicious_disasm} suspicious opcode/pattern indicators")
         
-        if score >= 5:
-            return "HIGH"
-        elif score >= 2:
-            return "MEDIUM"
-        elif score >= 1:
-            return "LOW"
-        return "CLEAN"
+        confidence = min(0.99, 0.3 + (score / 20.0)) if score > 0 else 0.15
+        return score, reasons, float(round(confidence, 3))
 
     def _save_result(self, result: Dict):
         try:
