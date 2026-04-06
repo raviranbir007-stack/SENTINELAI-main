@@ -6,6 +6,7 @@ import sys
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -1118,12 +1119,28 @@ async def http_exception_handler(request, exc):
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request, exc):
     """Log request validation failures with enough detail to debug 422 responses."""
-    logger.warning("Request validation failed for %s %s: %s", request.method, request.url.path, exc.errors())
+    raw_errors = exc.errors()
+
+    def _sanitize(value):
+        if isinstance(value, dict):
+            return {str(k): _sanitize(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [_sanitize(v) for v in value]
+        if isinstance(value, BaseException):
+            return str(value)
+        try:
+            jsonable_encoder(value)
+            return value
+        except Exception:
+            return str(value)
+
+    safe_errors = _sanitize(raw_errors)
+    logger.warning("Request validation failed for %s %s: %s", request.method, request.url.path, safe_errors)
     return JSONResponse(
         status_code=422,
         content={
             "error": "Request validation failed",
-            "detail": exc.errors(),
+            "detail": safe_errors,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "path": request.url.path,
         },

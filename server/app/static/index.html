@@ -2344,7 +2344,7 @@
                         <p>Monitor threats, review posture, scan targets, and investigate incidents from one clean operational console powered by 5 threat intelligence APIs with based AI and ML analysis.</p>
                         
                         <div class="scan-form">
-                            <input type="text" class="scan-input" id="scanInput" placeholder="Enter IP, URL, or hash to scan...">
+                            <input type="text" class="scan-input" id="scanInput" maxlength="2048" placeholder="Enter IP, URL, or hash to scan...">
                             <button class="btn btn-cyber" id="scanBtn">⚡ SCAN</button>
                         </div>
                         <div class="scan-helper">Supports IPs, domains, URLs, and hashes. Results appear below and in scan history.</div>
@@ -3014,6 +3014,7 @@
                         <label id="newScanTargetLabel" style="display:block;font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.05em;">Scan Target — IP · Domain · URL · Hash</label>
                         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
                             <input type="text" id="newScanInput" class="scan-input"
+                                maxlength="2048"
                                    placeholder="192.168.1.1 · example.com · https://site.com · sha256..."
                                    style="flex:1;min-width:280px;">
                             <button class="btn btn-cyber" id="newScanBtn" style="white-space:nowrap;min-width:130px;">🔍 Start Scan</button>
@@ -8973,6 +8974,12 @@
             
             if (!target) {
                 showToast('Please enter a target to scan', 'error');
+                return;
+            }
+
+            if (target.length > 2048) {
+                showToast('Target is too long. Maximum allowed length is 2048 characters.', 'error');
+                addNotification('Scan Rejected', 'Target exceeds maximum length (2048).', 'warning');
                 return;
             }
 
