@@ -1,5 +1,11 @@
 import asyncio
-from server.app.core.report_generator import report_generator
+import os
+import sys
+
+# Allow running this script from workspace root without PYTHONPATH tweaks.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server")))
+
+from app.core.report_generator import report_generator
 
 sample = {
     "input": "example.com",

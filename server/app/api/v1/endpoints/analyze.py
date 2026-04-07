@@ -102,7 +102,7 @@ Format your response as JSON with keys: risk_level, threats, recommendations
         logger.error(f"URL analysis failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="URL safety analysis failed"
         )
 
 
@@ -165,7 +165,7 @@ Format your response as JSON with keys: risk_level, threats, recommendations
         logger.error(f"IP analysis failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="IP reputation analysis failed"
         )
 
 
@@ -228,7 +228,7 @@ Format your response as JSON with keys: risk_level, threats, recommendations, ma
         logger.error(f"File analysis failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="File safety analysis failed"
         )
 
 

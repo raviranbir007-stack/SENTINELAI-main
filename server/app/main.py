@@ -542,9 +542,15 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 
 # Add CORS middleware with explicit OPTIONS support
+cors_origins = list(getattr(settings, "backend_cors_origins_list", []) or [])
+if settings.DEBUG:
+    # Keep debug convenient without wildcard+credentials ambiguity.
+    for origin in ("http://localhost:3000", "http://localhost:8080", "http://127.0.0.1:3000", "http://127.0.0.1:8080"):
+        if origin not in cors_origins:
+            cors_origins.append(origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.DEBUG else [],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
@@ -693,7 +699,7 @@ async def analyze_with_gemini(request: AnalysisRequest):
         
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Traffic analysis failed")
 
 @app.post("/api/v1/analyze/traffic")
 async def analyze_traffic(request: TrafficAnalysisRequest):
@@ -754,7 +760,7 @@ async def analyze_traffic(request: TrafficAnalysisRequest):
         
     except Exception as e:
         logger.error(f"Traffic analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Traffic analysis failed")
 
 @app.post("/api/v1/analyze/batch")
 async def batch_analyze(request: BatchAnalysisRequest):
@@ -797,7 +803,7 @@ async def batch_analyze(request: BatchAnalysisRequest):
         
     except Exception as e:
         logger.error(f"Batch analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Batch analysis failed")
 
 @app.get("/api/v1/config/gemini")
 async def get_gemini_configuration():
@@ -932,7 +938,7 @@ async def analyst_override_threat(request: AnalystOverrideRequest):
     except Exception as e:
         logger.error(f"Error applying analyst override: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to apply override: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to apply analyst override")
     finally:
         db.close()
 
@@ -978,7 +984,7 @@ async def add_analyst_notes(request: AnalystNotesRequest):
     except Exception as e:
         logger.error(f"Error adding analyst notes: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to add notes: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to add analyst notes")
     finally:
         db.close()
 
@@ -1057,7 +1063,7 @@ async def get_threat_forensics(threat_id: str):
         raise
     except Exception as e:
         logger.error(f"Error retrieving forensic data: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve forensics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve forensics")
     finally:
         db.close()
 

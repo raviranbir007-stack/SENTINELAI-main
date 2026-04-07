@@ -706,7 +706,8 @@ async def submit_scan_feedback(payload: ScanFeedbackRequest):
         )
         return {"status": "ok", "message": "feedback recorded"}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to record feedback: {exc}")
+        logger.error("Failed to record feedback: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to record feedback")
 
 
 async def _store_scan_result(scan_data: dict, db: AsyncSession):
@@ -991,7 +992,7 @@ async def scan_file(
         raise
     except Exception as e:
         logger.error(f"File scan error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Scan failed due to internal server error")
 
 
 @router.post("/url")
@@ -1067,7 +1068,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
 
     except Exception as e:
         logger.error(f"URL scan error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Scan failed due to internal server error")
 
 
 @router.post("/ip")
@@ -1138,7 +1139,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
 
     except Exception as e:
         logger.error(f"IP scan error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Scan failed due to internal server error")
 
 
 @router.post("/hash")
@@ -1208,7 +1209,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
 
     except Exception as e:
         logger.error(f"Hash scan error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Scan failed due to internal server error")
 
 
 @router.post("/scan")
@@ -1292,7 +1293,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
 
     except Exception as e:
         logger.error(f"Universal scan error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Scan failed due to internal server error")
 
 
 @router.post("")
@@ -1327,19 +1328,32 @@ async def get_scan_results(scan_id: str):
             key = api["key"]
             name = api["name"]
             meta = api_status.get(key, {})
-            status = meta.get("status", "unknown")
+            status = str(meta.get("status", "unknown") or "unknown").strip().lower()
             configured = meta.get("configured", False)
             applicable = meta.get("applicable", False)
             error = meta.get("error")
-            if explanation and status == "not_applicable":
-                status_str = "not_applicable (test/demo domain)"
+            
+            # Build human-readable status message
+            if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
+                status_message = "provider data collected successfully"
+            elif explanation and status == "not_applicable":
+                status_message = "intelligence fallback active (reason: test/demo domain; provider not queried)"
             elif status == "not_configured":
-                status_str = "not_configured (API key missing)"
+                status_message = "intelligence fallback active (reason: provider key not configured in environment)"
             elif status == "rate_limited":
-                status_str = "exceed_quota (rate limited)"
+                status_message = "intelligence fallback active (reason: provider quota or rate limit reached)"
+            elif status == "skipped_local_mode":
+                status_message = "intelligence fallback active (reason: external APIs disabled for local-only analysis)"
+            elif not applicable:
+                status_message = f"intelligence fallback active (reason: indicator type is outside provider coverage)"
+            elif status in {"pending", "in_progress", "queued"}:
+                status_message = f"intelligence fallback active (reason: provider analysis did not complete in this scan window)"
+            elif status in {"timeout", "error", "failed", "not_applicable"}:
+                status_message = f"intelligence fallback active (reason: provider request failed during collection)"
             else:
-                status_str = status
-            lines.append(f"- {name}: status={status_str}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
+                status_message = f"intelligence fallback active (reason: provider returned unrecognized status: {status})"
+            
+            lines.append(f"- {name}: {status_message}{' | error: ' + error if error else ''}")
         api_coverage_section = "\n".join(lines)
     return {
         "scan_id": scan_id,

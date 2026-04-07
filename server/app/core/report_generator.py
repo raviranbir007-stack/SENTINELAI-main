@@ -5,13 +5,14 @@ Generates AI-analyzed threat reports in PDF format
 
 import asyncio
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from collections import OrderedDict
+from collections import OrderedDict, Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 import time
@@ -282,20 +283,30 @@ class ReportGenerator:
             key = api["key"]
             name = api["name"]
             meta = api_status.get(key, {})
-            status = meta.get("status", "unknown")
+            status = str(meta.get("status", "unknown") or "unknown").strip().lower()
             configured = meta.get("configured", False)
             applicable = meta.get("applicable", False)
             error = meta.get("error")
-            # For test/demo domains, override status string for clarity
-            if explanation and status == "not_applicable":
-                status_str = "not_applicable (test/demo domain)"
-            elif status == "not_configured":
-                status_str = "not_configured (API key missing)"
-            elif status == "rate_limited":
-                status_str = "exceed_quota (rate limited)"
+            if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
+                status_str = "provider data collected"
+            elif status in {"rate_limited", "quota_exceeded"}:
+                status_str = "collection throttled; fallback intelligence applied"
+            elif status in {"failed", "error", "timeout"}:
+                status_str = "collection failed; fallback intelligence applied"
+            elif status in {"pending", "in_progress", "queued"}:
+                status_str = "provider analysis did not complete in this scan window"
+            elif status == "skipped_local_mode":
+                status_str = "external APIs disabled for local-only analysis"
             else:
-                status_str = status
-            lines.append(f"- {name}: status={status_str}, configured={configured}, applicable={applicable}{' | error: ' + error if error else ''}")
+                reasons = []
+                if not configured:
+                    reasons.append("provider key missing")
+                if not applicable:
+                    reasons.append("indicator outside provider scope")
+                if explanation and status == "not_applicable":
+                    reasons.append("test/demo domain handling")
+                status_str = f"fallback intelligence applied ({'; '.join(reasons) if reasons else 'provider unavailable'})"
+            lines.append(f"- {name}: {status_str}{' | error: ' + error if error else ''}")
         lines.append("")
         threats = threat_analysis.get("threat_indicators", [])
         if threats:
@@ -495,6 +506,908 @@ class ReportGenerator:
             return "executive_summary"
         return "executive_summary"
 
+    def _infer_indicator_type(self, indicator_value: Any, source: str = "") -> str:
+        value = str(indicator_value or "").strip()
+        source_text = str(source or "").lower()
+        if not value:
+            return "Unknown"
+
+        try:
+            ipaddress.ip_address(value)
+            return "IP"
+        except Exception:
+            pass
+
+        lower = value.lower()
+        if lower.startswith(("http://", "https://", "hxxp://", "hxxps://")):
+            return "URL"
+
+        if re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", value):
+            return "File"
+
+        if re.fullmatch(r"(?=.{1,253}$)(?:[a-zA-Z0-9-]{1,63}\.)+[A-Za-z]{2,63}", value):
+            return "Domain"
+
+        if any(token in source_text for token in ("ip", "network", "abuseipdb", "shodan")):
+            return "IP"
+        if any(token in source_text for token in ("url", "web", "domain", "urlscan")):
+            return "URL"
+        if any(token in source_text for token in ("hash", "file", "artifact", "virustotal")):
+            return "File"
+        return "Unknown"
+
+    def _normalize_confidence(self, value: Any) -> float:
+        try:
+            conf = float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if conf > 1.0:
+            conf = conf / 100.0
+        return max(0.0, min(conf, 1.0))
+
+    def _status_from_severity(self, severity: str) -> str:
+        sev = str(severity or "unknown").lower()
+        if sev in {"critical", "high", "malicious"}:
+            return "malicious"
+        if sev in {"medium", "suspicious"}:
+            return "suspicious"
+        if sev in {"safe", "clean", "low", "benign"}:
+            return "safe"
+        return "suspicious"
+
+    def _infer_attack_type(self, indicator_type: str, indicator_value: str, severity: str, source: str) -> str:
+        text = f"{indicator_value} {source}".lower()
+        if any(token in text for token in ("phish", "credential", "login", "bank", "invoice", "spoof")):
+            return "phishing"
+        if any(token in text for token in ("c2", "cnc", "beacon", "callback", "botnet", "command-and-control")):
+            return "c2"
+        if any(token in text for token in ("dropper", "payload", "malware", "trojan", "ransom")):
+            return "malware_delivery"
+        if indicator_type == "File":
+            return "malware_delivery"
+        if indicator_type == "IP" and str(severity or "").lower() in {"critical", "malicious", "high"}:
+            return "c2"
+        if indicator_type in {"URL", "Domain"}:
+            return "phishing"
+        return "unknown"
+
+    def _api_status_text(self, api_results: Dict[str, Any], api_key: str) -> str:
+        api_status = api_results.get("api_status", {}) if isinstance(api_results, dict) else {}
+        meta = api_status.get(api_key, {}) if isinstance(api_status, dict) else {}
+        if not isinstance(meta, dict) or not meta:
+            return "intelligence fallback active (reason: telemetry-only analysis, provider metadata missing)"
+        status = str(meta.get("status", "not_executed") or "not_executed").strip().lower()
+        configured = bool(meta.get("configured", False))
+        applicable = bool(meta.get("applicable", False))
+        if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
+            return "provider data collected successfully"
+        if status == "skipped_local_mode":
+            return "intelligence fallback active (reason: external APIs disabled for local-only analysis)"
+
+        reasons = []
+        if not configured:
+            reasons.append("provider key not configured in environment")
+        if not applicable:
+            reasons.append("indicator type is outside provider coverage")
+        if status in {"rate_limited", "quota_exceeded"}:
+            reasons.append("provider quota or rate limit reached")
+        if status in {"pending", "in_progress", "queued"}:
+            reasons.append("provider analysis did not complete in this scan window")
+        if status in {"timeout", "error", "failed"}:
+            reasons.append("provider request failed during collection")
+        if not reasons:
+            reasons.append(f"provider returned unrecognized status: {status}")
+
+        return f"intelligence fallback active (reason: {'; '.join(reasons)})"
+
+    def _generate_fallback_intelligence(self, indicator_value: str, indicator_type: str, threat_set: list[Dict]) -> Dict[str, str]:
+        """Generate fallback intelligence when APIs are unavailable."""
+        intelligence = {}
+        
+        # GeoIP and ASN inference for IPs
+        if indicator_type == "IP":
+            try:
+                ip_obj = ipaddress.ip_address(indicator_value)
+                if ip_obj.is_private:
+                    intelligence["geoip_status"] = "Private IP range (RFC 1918)"
+                    intelligence["asn_inference"] = "Internal network or VPN"
+                elif ip_obj.is_loopback:
+                    intelligence["geoip_status"] = "Loopback address"
+                else:
+                    intelligence["geoip_status"] = f"Public IP - requires external GeoIP lookup"
+                    intelligence["asn_inference"] = "ASN inference pending API availability"
+            except:
+                pass
+        
+        # Domain pattern analysis
+        if indicator_type in {"Domain", "URL"}:
+            lower_val = indicator_value.lower()
+            suspicious_tlds = {".xyz", ".tk", ".ml", ".ga", ".ru", ".cn", ".ir"}
+            suspicious_keywords = ["secure", "verify", "login", "update", "confirm", "authenticate", "signin", "bank", "paypal"]
+            
+            for tld in suspicious_tlds:
+                if lower_val.endswith(tld):
+                    intelligence["domain_tld_risk"] = f"Suspicious TLD detected: {tld}"
+                    break
+            
+            for keyword in suspicious_keywords:
+                if keyword in lower_val:
+                    intelligence["phishing_indicator"] = f"Phishing keyword detected: {keyword}"
+                    break
+            
+            if "xn--" in lower_val:
+                intelligence["domain_homograph_risk"] = "Possible homograph/IDN abuse detected"
+        
+        # Behavioral classification based on scan set
+        repetition_count = sum(1 for scan in threat_set if str(scan.get("indicator_value", "")) == indicator_value)
+        if repetition_count > 3:
+            intelligence["behavioral_pattern"] = f"Repeated indicator ({repetition_count} times) suggests automated scanning or C2 beaconing"
+        elif repetition_count > 1:
+            intelligence["behavioral_pattern"] = f"Repeated indicator ({repetition_count} times) suggests possible persistence attempt"
+        
+        return intelligence
+
+    def _detect_repetition_pattern(self, indicator_value: str, scans: list[Dict], scan_timestamps: list) -> Dict[str, Any]:
+        """Detect repetition patterns in threat indicators."""
+        pattern = {
+            "count": 0,
+            "first_seen": None,
+            "last_seen": None,
+            "is_repeated": False,
+            "frequency_classification": "single_occurrence",
+            "timeline_gaps": [],
+        }
+        
+        matching_scans = [(i, scan) for i, scan in enumerate(scans) if str(scan.get("indicator_value", "")) == indicator_value]
+        if not matching_scans:
+            return pattern
+        
+        pattern["count"] = len(matching_scans)
+        pattern["is_repeated"] = len(matching_scans) > 1
+        
+        if matching_scans:
+            pattern["first_seen"] = matching_scans[0][1].get("timestamp")
+            pattern["last_seen"] = matching_scans[-1][1].get("timestamp")
+        
+        if pattern["is_repeated"]:
+            if pattern["count"] >= 5:
+                pattern["frequency_classification"] = "high_frequency_persistence"
+            elif pattern["count"] >= 3:
+                pattern["frequency_classification"] = "medium_frequency_scanning"
+            else:
+                pattern["frequency_classification"] = "low_frequency_recurrence"
+        
+        return pattern
+
+    def _analyze_domain_pattern(self, indicator_value: str) -> Dict[str, str]:
+        """Analyze domain structure for impersonation and phishing patterns."""
+        analysis = {}
+        
+        if not indicator_value or "." not in indicator_value:
+            return analysis
+        
+        lower_val = indicator_value.lower()
+        parts = lower_val.split(".")
+        
+        # Check for homograph/similar domain attacks
+        homograph_risk_chars = ["0", "l", "1", "o", "i"]  # Similar looking characters
+        for part in parts[:-1]:
+            for char in homograph_risk_chars:
+                if char in part:
+                    if analysis.get("homograph_risk") is None:
+                        analysis["homograph_risk"] = f"Possible homograph attack - similar characters present"
+        
+        # Check subdomain depth (deeper could indicate CDN abuse or subdomain takeover)
+        if len(parts) > 3:
+            analysis["subdomain_depth"] = f"Deep subdomain structure ({len(parts)} levels) - possible subdomain takeover or advanced evasion"
+        
+        # Check for brand impersonation patterns
+        impersonation_brands = ["microsoft", "apple", "google", "amazon", "paypal", "bank", "admin", "support"]
+        for brand in impersonation_brands:
+            if brand in lower_val and lower_val != f"{brand}.com":
+                analysis["brand_impersonation_risk"] = f"Possible impersonation of {brand.title()}"
+                break
+        
+        return analysis
+
+    def _generate_detection_reason(self, indicator_value: str, indicator_type: str, status: str, severity: str, 
+                                    repetition: Dict[str, Any], api_data: Dict[str, Any]) -> str:
+        """Generate structured, meaningful detection reason."""
+        reason_parts = []
+        
+        # Base classification
+        reason_parts.append(f"Indicator classified as {status.upper()}")
+        
+        # Severity context
+        if severity:
+            reason_parts.append(f"due to {severity.upper()} severity assessment")
+        
+        # API-driven intelligence
+        api_evidence = []
+        if isinstance(api_data.get("virustotal"), dict) and api_data["virustotal"].get("malicious", 0) > 0:
+            api_evidence.append(f"VirusTotal: {api_data['virustotal'].get('malicious')} malicious detections")
+        if isinstance(api_data.get("abuseipdb"), dict) and api_data["abuseipdb"].get("abuse_confidence", 0) > 50:
+            api_evidence.append(f"AbuseIPDB: {api_data['abuseipdb'].get('abuse_confidence')}% abuse confidence")
+        if isinstance(api_data.get("shodan"), dict) and api_data["shodan"].get("vulnerabilities", 0) > 0:
+            api_evidence.append(f"Shodan: {api_data['shodan'].get('vulnerabilities')} known vulnerabilities")
+        if isinstance(api_data.get("urlscan"), dict) and api_data["urlscan"].get("malicious", False):
+            api_evidence.append("URLScan: Classified as malicious")
+        if isinstance(api_data.get("hybrid_analysis"), dict) and api_data["hybrid_analysis"].get("threat_score", 0) > 70:
+            api_evidence.append(f"Hybrid Analysis: Threat score {api_data['hybrid_analysis'].get('threat_score')}/100")
+        
+        if api_evidence:
+            reason_parts.append(f"Corroborated by: {'; '.join(api_evidence)}")
+        else:
+            reason_parts.append("Local telemetry and heuristic analysis applied")
+        
+        # Repetition intelligence
+        if repetition.get("is_repeated"):
+            reason_parts.append(f"Observed {repetition['count']} times in scan window ({repetition['frequency_classification']})")
+        
+        return ". ".join(reason_parts) + "."
+
+    def _generate_behavior_pattern(self, indicator_value: str, indicator_type: str, attack_type: str,
+                                   repetition: Dict[str, Any], scans: list[Dict]) -> str:
+        """Generate real inferred behavior description."""
+        patterns = []
+        
+        if attack_type and attack_type != "unknown":
+            patterns.append(f"Classified attack pattern: {attack_type.replace('_', ' ').title()}")
+        
+        if indicator_type == "IP":
+            if repetition.get("frequency_classification") == "high_frequency_persistence":
+                patterns.append(f"High-frequency repeated access to {indicator_value} indicates possible command-and-control (C2) beaconing or automated scanning activity")
+            elif repetition.get("frequency_classification") == "medium_frequency_scanning":
+                patterns.append(f"Medium-frequency repeated access suggests reconnaissance or brute-force attempt")
+            elif repetition.get("is_repeated"):
+                patterns.append(f"Multiple connections to {indicator_value} within observation window suggest persistent external interaction")
+            else:
+                patterns.append(f"Single detected connection to external IP {indicator_value} warrants monitoring for potential lateral movement")
+        
+        elif indicator_type == "Domain":
+            if repetition.get("is_repeated"):
+                patterns.append(f"Repeated DNS resolution or HTTP requests to {indicator_value} - possible malware C2 or credential harvesting campaign")
+                if repetition["count"] >= 5:
+                    patterns.append("High frequency suggests automated malware callback behavior")
+            else:
+                patterns.append(f"Single access to suspicious domain {indicator_value} - possible user compromise or drive-by download")
+        
+        elif indicator_type == "URL":
+            patterns.append(f"Detected access to suspicious URL path - potential credential harvesting or exploit delivery vector")
+            if "/login" in indicator_value.lower() or "/auth" in indicator_value.lower():
+                patterns.append("URL path structure suggests credential harvesting attack")
+            elif ".exe" in indicator_value.lower() or ".zip" in indicator_value.lower():
+                patterns.append("Executable or archive delivery detected - possible malware distribution")
+        
+        elif indicator_type == "File":
+            patterns.append(f"File hash detected in execution or download context")
+            if "ransom" in attack_type.lower():
+                patterns.append("Behavioral signature consistent with ransomware family")
+            elif "trojan" in attack_type.lower():
+                patterns.append("Behavioral signature consistent with trojan family")
+        
+        if not patterns:
+            patterns.append(f"Detected {indicator_type.lower()} indicator with suspicious characteristics")
+        
+        return " | ".join(patterns)
+
+    def _generate_payload_characteristics(self, indicator_value: str, indicator_type: str,
+                                         api_data: Dict[str, Any], has_api_coverage: bool) -> str:
+        """Analyze delivery method and attack intent from available data."""
+        characteristics = []
+        
+        if indicator_type == "URL":
+            if "/admin" in indicator_value.lower() or "/config" in indicator_value.lower():
+                characteristics.append("Admin interface access attempt - possible privilege escalation")
+            if "/steal" in indicator_value.lower() or "/exfil" in indicator_value.lower():
+                characteristics.append("Data exfiltration endpoint detected")
+            if re.search(r"\.(exe|zip|iso|bat|cmd|ps1|vbs)$", indicator_value.lower()):
+                characteristics.append("Direct executable delivery vector")
+            if "callback" in indicator_value.lower() or "beacon" in indicator_value.lower():
+                characteristics.append("C2 callback or beacon endpoint signature")
+        
+        elif indicator_type == "File":
+            vt_data = api_data.get("virustotal", {})
+            if isinstance(vt_data, dict):
+                malicious_count = vt_data.get("malicious", 0)
+                if malicious_count > 30:
+                    characteristics.append(f"File detected as malicious by {malicious_count} security vendors - strong indicator")
+                elif malicious_count > 10:
+                    characteristics.append(f"File flagged by {malicious_count} vendors - concerning pattern")
+            
+            if "ransom" in indicator_value.lower():
+                characteristics.append("Filename suggests ransomware variant")
+            if "crack" in indicator_value.lower() or "keygen" in indicator_value.lower():
+                characteristics.append("Software piracy/tool delivery detected")
+        
+        elif indicator_type == "IP":
+            shodan_data = api_data.get("shodan", {})
+            if isinstance(shodan_data, dict):
+                if shodan_data.get("open_ports", 0) > 0:
+                    characteristics.append(f"IP has {shodan_data.get('open_ports')} open ports - possible exposed service")
+                if shodan_data.get("vulnerabilities", 0) > 0:
+                    characteristics.append(f"{shodan_data.get('vulnerabilities')} known CVEs associated - active exploitation risk")
+            
+            abuse_data = api_data.get("abuseipdb", {})
+            if isinstance(abuse_data, dict) and abuse_data.get("total_reports", 0) > 10:
+                characteristics.append(f"IP reported {abuse_data.get('total_reports')} times - widespread abuse history")
+        
+        if not characteristics:
+            if has_api_coverage:
+                characteristics.append("Malware analysis: File/Domain characteristics inferred from telemetry correlation")
+            else:
+                characteristics.append("Fallback analysis applied - API data availability limited, using heuristic and local telemetry context")
+        
+        return " | ".join(characteristics)
+
+    def _calculate_dynamic_confidence(self, indicator_value: str, api_data: Dict[str, Any],
+                                     repetition: Dict[str, Any], api_coverage: int) -> float:
+        """Calculate confidence dynamically based on data richness and corroboration."""
+        base_confidence = 0.5
+        
+        # Repetition boost
+        if repetition.get("frequency_classification") == "high_frequency_persistence":
+            base_confidence += 0.25
+        elif repetition.get("frequency_classification") == "medium_frequency_scanning":
+            base_confidence += 0.15
+        elif repetition.get("is_repeated"):
+            base_confidence += 0.10
+        
+        # API corroboration boost
+        corroborating_apis = 0
+        if isinstance(api_data.get("virustotal"), dict) and api_data["virustotal"].get("malicious", 0) > 0:
+            corroborating_apis += 1
+        if isinstance(api_data.get("abuseipdb"), dict) and api_data["abuseipdb"].get("abuse_confidence", 0) > 50:
+            corroborating_apis += 1
+        if isinstance(api_data.get("shodan"), dict) and api_data["shodan"].get("vulnerabilities", 0) > 0:
+            corroborating_apis += 1
+        if isinstance(api_data.get("urlscan"), dict) and api_data["urlscan"].get("malicious", False):
+            corroborating_apis += 1
+        if isinstance(api_data.get("hybrid_analysis"), dict) and api_data["hybrid_analysis"].get("threat_score", 0) > 70:
+            corroborating_apis += 1
+        
+        base_confidence += (corroborating_apis * 0.10)
+        
+        return min(max(base_confidence, 0.0), 1.0)
+
+    def _map_mitre_attack(self, indicator_type: str, attack_type: str, behavior_pattern: str) -> Dict[str, list]:
+        """Map detected threat to MITRE ATT&CK framework."""
+        tactics = []
+        techniques = []
+        
+        # Map attack types to MITRE tactics
+        if "c2" in attack_type.lower() or "beacon" in behavior_pattern.lower():
+            tactics.append("Command and Control")
+            techniques.append("T1071: Application Layer Protocol")
+            techniques.append("T1065: Uncommonly Used Port")
+        elif "phishing" in attack_type.lower():
+            tactics.append("Initial Access")
+            tactics.append("Credential Access")
+            techniques.append("T1598: Phishing")
+            techniques.append("T1056: Input Capture")
+        elif "malware" in attack_type.lower() or "dropper" in attack_type.lower():
+            tactics.append("Execution")
+            tactics.append("Persistence")
+            techniques.append("T1203: Exploitation for Client Execution")
+            techniques.append("T1112: Modify Registry/Config")
+        elif "scanning" in behavior_pattern.lower() or "reconnaissance" in behavior_pattern.lower():
+            tactics.append("Reconnaissance")
+            techniques.append("T1592: Gather Victim Host Information")
+            techniques.append("T1595: Active Scanning")
+        
+        return {"tactics": list(set(tactics)), "techniques": list(set(techniques))}
+
+    def _generate_kill_chain(self, indicator_type: str, attack_type: str, indicator_value: str) -> list[str]:
+        """Generate applicable Lockheed Martin kill chain stages."""
+        chain = []
+        
+        if indicator_type == "IP" or indicator_type == "Domain":
+            chain.append("1. Reconnaissance: IP/Domain identified through network monitoring")
+            if "scanning" in attack_type.lower():
+                chain.append("2. Weaponization: Potential scanning tool or exploit framework enumeration")
+                chain.append("3. Delivery: Active reconnaissance against network")
+            else:
+                chain.append("2. Weaponization: Malicious infrastructure prepared")
+                chain.append("3. Delivery: Malware or payload delivered via network connection")
+        elif indicator_type == "URL":
+            chain.append("1. Reconnaissance: Target identified")
+            chain.append("2. Weaponization: Exploit kit or phishing lure prepared")
+            chain.append("3. Delivery: URL crafted for phishing or drive-by download")
+            chain.append("4. Exploitation: Client-side vulnerability or social engineering")
+        elif indicator_type == "File":
+            chain.append("1. Reconnaissance: System information gathering")
+            chain.append("2. Weaponization: Malware binary created/obfuscated")
+            chain.append("3. Delivery: File transferred to system")
+            chain.append("4. Exploitation: File executed with elevated privileges")
+        
+        chain.append("5. Installation: Malware/tool establishes persistence")
+        chain.append("6. Command & Control: Beacon or C2 callback initiated")
+        chain.append("7. Actions on Objective: Data exfiltration or lateral movement")
+        
+        return chain
+
+    def _detect_contradictions(self, indicator_value: str, scans: list[Dict]) -> list[str]:
+        """Detect contradictions in detection results across same indicator."""
+        contradictions = []
+        matching_scans = [s for s in scans if str(s.get("indicator_value", "")) == indicator_value]
+        
+        if not matching_scans or len(matching_scans) < 2:
+            return contradictions
+        
+        statuses = set(str((s.get("classification", {}) or {}).get("status", "")).lower() for s in matching_scans)
+        if len(statuses) > 1 and "safe" in statuses and ("suspicious" in statuses or "malicious" in statuses):
+            contradictions.append(f"Contradictory detections: Same indicator ({indicator_value}) classified as both SAFE and SUSPICIOUS/MALICIOUS")
+            contradictions.append("→ Possible explanation: Time-based payload mutation, sandbox evasion, or API inconsistency")
+        
+        return contradictions
+
+    def _analyze_attribution(self, indicator_value: str, indicator_type: str, api_data: Dict[str, Any]) -> list[str]:
+        """Basic threat attribution analysis."""
+        attribution = []
+        
+        if indicator_type == "IP":
+            # Port-based attribution
+            shodan_data = api_data.get("shodan", {})
+            if isinstance(shodan_data, dict):
+                # Common exploit framework ports
+                if 4444 in (shodan_data.get("open_ports") or []):
+                    attribution.append("Port 4444 detected - common Metasploit handler port (possible exploitation framework)")
+                if 5555 in (shodan_data.get("open_ports") or []):
+                    attribution.append("Port 5555 detected - Android ADB access (possible mobile compromise)")
+                if 8888 in (shodan_data.get("open_ports") or []):
+                    attribution.append("Port 8888 detected - possible proxy/tunnel server")
+                
+                # Org inference
+                org = shodan_data.get("org", "")
+                if org and "hosting" in org.lower():
+                    attribution.append(f"IP hosted by {org} - likely bulletproof hosting provider")
+                if org and "vpn" in org.lower():
+                    attribution.append(f"IP hosted by VPN provider ({org}) - possible anonymization attempt")
+        
+        elif indicator_type == "Domain":
+            # Domain-based attribution
+            domain_lower = indicator_value.lower()
+            if ".ru" in indicator_value or ".cn" in indicator_value or ".ir" in indicator_value:
+                attribution.append(f"TLD suggests possible state-sponsored or regional threat actor involvement")
+            
+            if "crypto" in domain_lower or "mine" in domain_lower:
+                attribution.append("Domain pattern suggests possible cryptocurrency mining or theft campaign")
+            if "ddos" in domain_lower or "botnet" in domain_lower:
+                attribution.append("Domain pattern suggests botnet or DDoS infrastructure")
+        
+        return attribution if attribution else ["Attribution: Insufficient data for targeted attribution"]
+
+    def _derive_scan_detection_results(self, api_results: Dict[str, Any], item: Dict[str, Any], indicator_type: str) -> Dict[str, Any]:
+        source = str(item.get("source") or item.get("type") or "activity_monitor")
+        heuristic = item.get("heuristic") or f"local correlation from source={source}"
+
+        virustotal_value: Any = self._api_status_text(api_results, "virustotal")
+        vt_data = api_results.get("virustotal") if isinstance(api_results, dict) else None
+        if isinstance(vt_data, dict):
+            attrs = ((vt_data.get("data") or {}).get("attributes") or {})
+            stats = attrs.get("last_analysis_stats") or {}
+            if isinstance(stats, dict) and stats:
+                virustotal_value = {
+                    "malicious": int(stats.get("malicious", 0) or 0),
+                    "suspicious": int(stats.get("suspicious", 0) or 0),
+                    "undetected": int(stats.get("undetected", 0) or 0),
+                    "harmless": int(stats.get("harmless", 0) or 0),
+                    "reputation": int(attrs.get("reputation", 0) or 0),
+                }
+
+        abuseipdb_value: Any = self._api_status_text(api_results, "abuseipdb")
+        abuse_data = ((api_results.get("abuseipdb") or {}).get("data") or {}) if isinstance(api_results, dict) else {}
+        if isinstance(abuse_data, dict) and abuse_data:
+            abuseipdb_value = {
+                "abuse_confidence": int(abuse_data.get("abuseConfidenceScore", 0) or 0),
+                "total_reports": int(abuse_data.get("totalReports", 0) or 0),
+                "country": str(abuse_data.get("countryCode", "Unknown")),
+            }
+
+        shodan_value: Any = self._api_status_text(api_results, "shodan")
+        shodan_data = api_results.get("shodan") if isinstance(api_results, dict) else None
+        if isinstance(shodan_data, dict) and not shodan_data.get("error"):
+            ports = shodan_data.get("ports") or []
+            shodan_value = {
+                "open_ports": ports,
+                "open_port_count": len(ports),
+                "vulnerabilities": len(shodan_data.get("vulns") or []),
+                "org": str(shodan_data.get("org", "Unknown")),
+            }
+
+        urlscan_value: Any = self._api_status_text(api_results, "urlscan")
+        urlscan_data = api_results.get("urlscan") if isinstance(api_results, dict) else None
+        if isinstance(urlscan_data, dict):
+            verdicts = urlscan_data.get("verdicts") or {}
+            overall = verdicts.get("overall") if isinstance(verdicts, dict) else {}
+            if isinstance(overall, dict) and overall:
+                urlscan_value = {
+                    "score": int(overall.get("score", 0) or 0),
+                    "malicious": bool(overall.get("malicious", False)),
+                    "categories": overall.get("categories") or [],
+                }
+            else:
+                data = urlscan_data.get("data") or {}
+                if isinstance(data, dict) and data:
+                    classifications = data.get("classifications") or {}
+                    urlscan_value = {
+                        "phishing": bool((classifications or {}).get("phishing", False)),
+                        "suspicious": bool((classifications or {}).get("suspicious", False)),
+                    }
+
+        hybrid_value: Any = self._api_status_text(api_results, "hybrid_analysis")
+        hybrid_data = api_results.get("hybrid_analysis") if isinstance(api_results, dict) else None
+        if isinstance(hybrid_data, dict):
+            results = hybrid_data.get("results") or []
+            if isinstance(results, list) and results:
+                top = results[0] if isinstance(results[0], dict) else {}
+                hybrid_value = {
+                    "verdict": str(top.get("verdict", "unknown")),
+                    "threat_score": int(top.get("threat_score", 0) or 0),
+                    "family": str(top.get("vx_family", "unknown")),
+                }
+
+        if indicator_type == "IP":
+            if isinstance(urlscan_value, str) and "fallback active" in urlscan_value:
+                urlscan_value = "intelligence fallback active (reason: URLScan does not directly score IP indicators)"
+            if isinstance(hybrid_value, str) and "fallback active" in hybrid_value:
+                hybrid_value = "intelligence fallback active (reason: Hybrid Analysis is file-centric and does not directly score IP indicators)"
+        elif indicator_type == "File":
+            if isinstance(abuseipdb_value, str) and "fallback active" in abuseipdb_value:
+                abuseipdb_value = "intelligence fallback active (reason: AbuseIPDB is IP reputation-focused and does not directly score file indicators)"
+            if isinstance(shodan_value, str) and "fallback active" in shodan_value:
+                shodan_value = "intelligence fallback active (reason: Shodan profiles internet services and does not directly score file artifacts)"
+            if isinstance(urlscan_value, str) and "fallback active" in urlscan_value:
+                urlscan_value = "intelligence fallback active (reason: URLScan evaluates URLs/domains and does not directly score file hashes)"
+
+        return {
+            "heuristic": heuristic,
+            "virustotal": virustotal_value,
+            "abuseipdb": abuseipdb_value,
+            "shodan": shodan_value,
+            "urlscan": urlscan_value,
+            "hybrid_analysis": hybrid_value,
+        }
+
+    def _build_scan_records(self, threat_analysis: Dict[str, Any]) -> list[Dict[str, Any]]:
+        threats = threat_analysis.get("threat_indicators", []) or []
+        api_results = threat_analysis.get("api_results", {}) if isinstance(threat_analysis.get("api_results"), dict) else {}
+        records: list[Dict[str, Any]] = []
+
+        for index, item in enumerate(threats, start=1):
+            if not isinstance(item, dict):
+                item = {"indicator": str(item or "unknown")}
+
+            indicator_value = str(item.get("indicator") or item.get("value") or "unknown")
+            source = str(item.get("source") or item.get("type") or "activity_monitor")
+            severity = str(item.get("severity") or item.get("verdict") or "suspicious").lower()
+            base_confidence = self._normalize_confidence(item.get("confidence", item.get("score", 0.0)))
+            indicator_type = str(item.get("indicator_type") or self._infer_indicator_type(indicator_value, source))
+            status = self._status_from_severity(severity)
+            attack_type = self._infer_attack_type(indicator_type, indicator_value, severity, source)
+
+            detection_results = self._derive_scan_detection_results(api_results, item, indicator_type)
+            heuristic = detection_results.get("heuristic")
+            virustotal = detection_results.get("virustotal")
+            abuseipdb = detection_results.get("abuseipdb")
+            shodan = detection_results.get("shodan")
+            urlscan = detection_results.get("urlscan")
+            hybrid_analysis = detection_results.get("hybrid_analysis")
+
+            # **INTELLIGENT ANALYSIS ENHANCEMENTS**
+            
+            # 1. Detect repetition patterns
+            repetition = self._detect_repetition_pattern(indicator_value, records, [])
+            
+            # 2. Generate intelligent detection reason
+            detection_reason = self._generate_detection_reason(
+                indicator_value, indicator_type, status, severity,
+                repetition, detection_results
+            )
+            
+            # 3. Generate real behavior pattern analysis
+            behavior_pattern = self._generate_behavior_pattern(
+                indicator_value, indicator_type, attack_type,
+                repetition, records
+            )
+            
+            # 4. Generate meaningful payload characteristics
+            has_api_coverage = any(
+                str(v).lower() not in {"", "none", "unavailable", "unknown", "not_executed"}
+                for v in (virustotal, abuseipdb, shodan, urlscan, hybrid_analysis)
+            )
+            payload_characteristics = self._generate_payload_characteristics(
+                indicator_value, indicator_type, detection_results, has_api_coverage
+            )
+            
+            # 5. Calculate dynamic confidence
+            dynamic_confidence = self._calculate_dynamic_confidence(
+                indicator_value, detection_results, repetition, 
+                5 if has_api_coverage else 0
+            ) * 100.0
+            confidence = dynamic_confidence
+            
+            # 6. Generate MITRE ATT&CK mapping
+            mitre_mapping = self._map_mitre_attack(indicator_type, attack_type, behavior_pattern)
+            
+            # 7. Generate kill chain analysis
+            kill_chain = self._generate_kill_chain(indicator_type, attack_type, indicator_value)
+            
+            # 8. Generate attribution analysis
+            attribution_insight = self._analyze_attribution(indicator_value, indicator_type, detection_results)
+            
+            # System risk assessment
+            system_risk = "Critical" if status == "malicious" and confidence >= 80 else (
+                "High" if status == "malicious" else (
+                "Medium" if status == "suspicious" else "Low"
+                )
+            )
+            
+            recommended_action = (
+                "Block immediately and isolate system; preserve forensic evidence and trigger incident response protocol."
+                if status == "malicious"
+                else "Escalate for immediate analyst review; apply temporary containment measures and monitor for lateral movement."
+                if status == "suspicious"
+                else "Continue routine monitoring; maintain logs for historical correlation analysis."
+            )
+
+            records.append(
+                {
+                    "scan_id": str(item.get("scan_id") or item.get("id") or f"SCAN-{index:05d}"),
+                    "timestamp": item.get("timestamp") or item.get("time") or threat_analysis.get("timestamp"),
+                    "indicator_type": indicator_type,
+                    "indicator_value": indicator_value,
+                    "detection_results": {
+                        "heuristic": heuristic,
+                        "virustotal": virustotal,
+                        "abuseipdb": abuseipdb,
+                        "shodan": shodan,
+                        "urlscan": urlscan,
+                        "hybrid_analysis": hybrid_analysis,
+                    },
+                    "classification": {
+                        "status": status,
+                        "confidence": round(confidence, 1),
+                        "severity": severity,
+                    },
+                    "technical_analysis": {
+                        "detection_reason": detection_reason,
+                        "behavior_pattern": behavior_pattern,
+                        "payload_characteristics": payload_characteristics,
+                    },
+                    "impact_analysis": {
+                        "system_risk": system_risk,
+                        "attack_type": attack_type,
+                    },
+                    "forensic_analysis": {
+                        "mitre_att_ck": mitre_mapping,
+                        "kill_chain_stage": kill_chain,
+                        "attribution_indicators": attribution_insight,
+                        "repetition_pattern": repetition,
+                    },
+                    "recommended_action": recommended_action,
+                }
+            )
+
+        return records
+
+    def _build_executive_insights(self, threat_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        scans = self._build_scan_records(threat_analysis)
+        indicator_counts = Counter(str(scan.get("indicator_value", "unknown")) for scan in scans)
+        repeated = [{"indicator": ind, "count": cnt} for ind, cnt in indicator_counts.items() if cnt > 1]
+        repeated.sort(key=lambda item: item.get("count", 0), reverse=True)
+
+        high_risk = [
+            scan for scan in scans
+            if str((scan.get("classification") or {}).get("status", "")).lower() == "malicious"
+            or float((scan.get("classification") or {}).get("confidence", 0.0) or 0.0) >= 80.0
+        ]
+        high_risk.sort(key=lambda item: float((item.get("classification") or {}).get("confidence", 0.0) or 0.0), reverse=True)
+
+        attack_counter = Counter(str((scan.get("impact_analysis") or {}).get("attack_type", "unknown")) for scan in scans)
+        attack_types = [atype for atype, _ in attack_counter.most_common(3) if atype and atype != "unknown"]
+
+        severity_counter = Counter(str((scan.get("classification") or {}).get("severity", "unknown")).lower() for scan in scans)
+        interval_summaries = threat_analysis.get("interval_summaries") or []
+        threat_series = [int((item.get("activity") or {}).get("threats_detected", 0) or 0) for item in interval_summaries if isinstance(item, dict)]
+        trend = "stable"
+        if len(threat_series) >= 2:
+            if threat_series[-1] > threat_series[0]:
+                trend = "increasing"
+            elif threat_series[-1] < threat_series[0]:
+                trend = "decreasing"
+
+        repeated_ips_domains = [
+            item for item in repeated
+            if self._infer_indicator_type(item.get("indicator"), "") in {"IP", "Domain", "URL"}
+        ]
+
+        interval_briefs = []
+        for summary in interval_summaries[:3]:
+            if not isinstance(summary, dict):
+                continue
+            label = str(summary.get("interval", "24h")).upper()
+            activity = summary.get("activity") or {}
+            tdet = int(activity.get("threats_detected", 0) or 0)
+            scans_count = int(activity.get("threat_scans", 0) or 0)
+            density = (tdet / scans_count) if scans_count else 0.0
+            signal = "elevated pressure" if density >= 0.25 or tdet >= 5 else "controlled pressure"
+            interval_briefs.append(f"{label}: {tdet} threats over {scans_count} scans ({signal})")
+
+        narrative = (
+            f"Threat posture reflects {len(scans)} analyzed scans with {len(high_risk)} high-risk indicator(s). "
+            f"Repeated indicators suggest persistence pressure: {', '.join(i['indicator'] for i in repeated_ips_domains[:3]) or 'no sustained repeaters identified'}. "
+            f"Dominant attack patterns include {', '.join(attack_types) if attack_types else 'mixed low-signal activity'}, "
+            f"with trend currently {trend}. Interval intelligence: {'; '.join(interval_briefs) if interval_briefs else 'single-window dataset; longitudinal comparison unavailable'}."
+        )
+
+        return {
+            "scan_count": len(scans),
+            "severity_distribution": dict(severity_counter),
+            "high_risk_indicators": high_risk,
+            "repeated_indicators": repeated,
+            "repeated_ips_domains": repeated_ips_domains,
+            "attack_types": attack_types,
+            "trend": trend,
+            "interval_briefs": interval_briefs,
+            "narrative": narrative,
+        }
+
+    def _build_forensic_intelligence(self, threat_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        scans = self._build_scan_records(threat_analysis)
+        indicator_history: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+        timeline = []
+
+        for scan in scans:
+            indicator = str(scan.get("indicator_value", "unknown"))
+            status = str((scan.get("classification") or {}).get("status", "unknown")).lower()
+            timestamp = scan.get("timestamp")
+            indicator_history[indicator].append(
+                {
+                    "timestamp": timestamp,
+                    "status": status,
+                    "scan_id": scan.get("scan_id"),
+                    "attack_type": (scan.get("impact_analysis") or {}).get("attack_type", "unknown"),
+                }
+            )
+            timeline.append(
+                {
+                    "timestamp": timestamp,
+                    "scan_id": scan.get("scan_id"),
+                    "indicator": indicator,
+                    "status": status,
+                    "indicator_type": scan.get("indicator_type", "Unknown"),
+                }
+            )
+
+        for indicator, events in indicator_history.items():
+            indicator_history[indicator] = sorted(events, key=lambda e: str(e.get("timestamp") or ""))
+
+        timeline = sorted(timeline, key=lambda e: str(e.get("timestamp") or ""))
+
+        transitions = []
+        contradictions_detected = []
+        for indicator, events in indicator_history.items():
+            statuses = [str(event.get("status", "unknown")).lower() for event in events]
+            if "safe" in statuses and "malicious" in statuses:
+                transitions.append(
+                    {
+                        "indicator": indicator,
+                        "transition": "SAFE -> MALICIOUS",
+                        "events": events,
+                    }
+                )
+            if len(set(statuses)) > 1:
+                contradictions_detected.append(
+                    {
+                        "indicator": indicator,
+                        "statuses": sorted(set(statuses)),
+                        "possible_reasons": [
+                            "Time-based payload mutation",
+                            "Sandbox evasion techniques",
+                            "API-specific detection logic variance",
+                            "Geographic or behavioral context change",
+                        ],
+                    }
+                )
+
+        repeated_entities = [
+            {
+                "indicator": indicator,
+                "count": len(events),
+                "indicator_type": self._infer_indicator_type(indicator, ""),
+                "behavioral_classification": "high_frequency_persistence" if len(events) >= 5 else (
+                    "medium_frequency_scanning" if len(events) >= 3 else "low_frequency_recurrence"
+                ),
+            }
+            for indicator, events in indicator_history.items()
+            if len(events) > 1
+        ]
+        repeated_entities.sort(key=lambda item: item.get("count", 0), reverse=True)
+
+        grouped_threats: dict[str, list[str]] = defaultdict(list)
+        attack_vector_counts = Counter()
+        confidence_model_counts = Counter()
+        attribution = Counter()
+        mitre_tactics = Counter()
+        kill_chain_coverage = Counter()
+
+        for scan in scans:
+            attack_type = str((scan.get("impact_analysis") or {}).get("attack_type", "unknown"))
+            indicator = str(scan.get("indicator_value", "unknown"))
+            grouped_threats[attack_type].append(indicator)
+            attribution[attack_type] += 1
+
+            # Collect MITRE ATT&CK tactics
+            forensic = scan.get("forensic_analysis", {})
+            mitre_data = forensic.get("mitre_att_ck", {})
+            for tactic in mitre_data.get("tactics", []):
+                mitre_tactics[tactic] += 1
+            
+            # Collect kill chain coverage
+            for stage in forensic.get("kill_chain_stage", []):
+                if "Reconnaissance" in stage:
+                    kill_chain_coverage["Reconnaissance"] += 1
+                elif "Weaponization" in stage:
+                    kill_chain_coverage["Weaponization"] += 1
+                elif "Delivery" in stage:
+                    kill_chain_coverage["Delivery"] += 1
+                elif "Exploitation" in stage:
+                    kill_chain_coverage["Exploitation"] += 1
+                elif "Installation" in stage:
+                    kill_chain_coverage["Installation"] += 1
+                elif "Command" in stage:
+                    kill_chain_coverage["C&C"] += 1
+                elif "Actions" in stage:
+                    kill_chain_coverage["Actions on Objective"] += 1
+
+            indicator_type = str(scan.get("indicator_type", "Unknown"))
+            if indicator_type == "IP":
+                attack_vector_counts["Network-based"] += 1
+            elif indicator_type in {"URL", "Domain"}:
+                attack_vector_counts["Web-based"] += 1
+            elif indicator_type == "File":
+                attack_vector_counts["File-based"] += 1
+            else:
+                attack_vector_counts["Unclassified"] += 1
+
+            detection_results = scan.get("detection_results") or {}
+            non_empty_sources = sum(
+                1
+                for key in ("heuristic", "virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis")
+                if str(detection_results.get(key, "")).strip().lower() not in {"", "none", "unavailable", "unknown"}
+            )
+            status = str((scan.get("classification") or {}).get("status", "unknown")).lower()
+            if status == "safe":
+                confidence_model_counts["VERIFIED SAFE (High Confidence)"] += 1
+            elif non_empty_sources >= 3:
+                confidence_model_counts["MULTI-SOURCE CORROBORATION (High Confidence)"] += 1
+            elif non_empty_sources >= 2:
+                confidence_model_counts["DUAL-SOURCE EVIDENCE (Medium Confidence)"] += 1
+            else:
+                confidence_model_counts["SINGLE SOURCE / HEURISTIC (Lower Confidence)"] += 1
+
+        return {
+            "timeline": timeline,
+            "safe_to_malicious_transitions": transitions,
+            "pattern_correlation": {
+                "repeated_entities": repeated_entities,
+                "grouped_threats": {key: values[:12] for key, values in grouped_threats.items()},
+                "repetition_behavioral_classification": {
+                    item["indicator"]: item["behavioral_classification"]
+                    for item in repeated_entities
+                },
+            },
+            "contradictions_detected": contradictions_detected,
+            "contradictions": contradictions_detected,
+            "threat_attribution_analysis": dict(attribution),
+            "threat_attribution": dict(attribution),
+            "mitre_att_ck_coverage": dict(mitre_tactics),
+            "kill_chain_coverage": dict(kill_chain_coverage),
+            "confidence_scoring_model": dict(confidence_model_counts),
+            "attack_vector_classification": dict(attack_vector_counts),
+        }
+
     def _resolve_timezone_name(self, threat_data: Dict[str, Any]) -> str:
         configured = str(
             threat_data.get("report_timezone")
@@ -623,14 +1536,14 @@ class ReportGenerator:
                 "Required sections (exact order):\\n"
                 "1. Technical Overview\\n"
                 "2. Scan Metadata and Time Context\\n"
-                "3. Detection Pipeline Summary\\n"
-                "4. Intelligence Source Correlation\\n"
-                "5. Detailed Findings and Evidence Quality\\n"
-                "6. Severity and Confidence Assessment\\n"
-                "7. Detection Logic Notes and Telemetry Gaps\\n"
-                "8. Recommended Technical Mitigations (prioritized)\\n"
-                "9. Technical Conclusion\\n"
-                "Constraints: do not invent indicators, APIs, or timestamps; mark missing data explicitly as unavailable.\\n"
+                "3. Per-Scan Structured Technical Records (include every scan)\\n"
+                "4. Detection Engine Results (heuristic, virustotal, abuseipdb, shodan, urlscan, hybrid_analysis)\\n"
+                "5. Classification, Technical Analysis, Impact Analysis, Recommended Action per scan\\n"
+                "6. Detection Logic Notes and Telemetry Gaps\\n"
+                "7. Recommended Technical Mitigations (prioritized)\\n"
+                "8. Technical Conclusion\\n"
+                "Constraints: do not invent indicators, APIs, or timestamps; when provider data is missing, provide fallback intelligence and explicit reason.\\n"
+                "Constraints: per-scan records must use keys scan_id, timestamp, indicator_type, indicator_value, detection_results, classification, technical_analysis, impact_analysis, recommended_action.\\n"
                 "Tone: concise but deep technical reasoning with implementation-level language."
             )
         if normalized == "forensic_investigation":
@@ -639,12 +1552,12 @@ class ReportGenerator:
                 "Audience: digital forensic reviewer, IR lead, investigator, compliance reviewer.\\n"
                 "Required sections (exact order):\\n"
                 "1. Forensic Evaluation Overview\\n"
-                "2. Case and Time Context\\n"
-                "3. Evidence Summary and Sources\\n"
-                "4. Observed Indicators and Artifact Analysis\\n"
-                "5. Behavioral Interpretation (facts vs inference clearly separated)\\n"
-                "6. Corroboration and Cross-Source Validation\\n"
-                "7. Confidence, Limitations, and Potential Attack Relevance\\n"
+                "2. Timeline Analysis (including SAFE -> MALICIOUS transitions)\\n"
+                "3. Pattern Correlation (repeated IP/domain/URL grouping)\\n"
+                "4. Contradiction Detection and Possible Reasons (API delay, payload switching, geo-based behavior)\\n"
+                "5. Threat Attribution (C2, phishing kits, malware delivery patterns)\\n"
+                "6. Confidence Scoring Model (single source low, corroborated medium, verified safe high)\\n"
+                "7. Attack Vector Classification (network, web, file based)\\n"
                 "8. Investigative Next Steps\\n"
                 "9. Final Forensic Assessment\\n"
                 "Constraints: separate observed facts from analytic judgement; avoid legal over-claims; never fabricate evidence.\\n"
@@ -655,12 +1568,12 @@ class ReportGenerator:
             "Audience: management, supervisors, project evaluators, non-technical decision makers.\\n"
             "Required sections (exact order):\\n"
             "1. Executive Overview\\n"
-            "2. Assessment Scope and Time Range\\n"
-            "3. High-Level Threat Summary\\n"
-            "4. Key Findings and Risk Distribution\\n"
-            "5. Operational and Security Impact\\n"
-            "6. Immediate Actions (24-72h)\\n"
-            "7. Long-Term Actions and Residual Risk\\n"
+            "2. Threat Overview\\n"
+            "3. Risk Level Summary\\n"
+            "4. Key Incident Highlights\\n"
+            "5. Repeated Threat Indicators (include repeated IPs/domains)\\n"
+            "6. Attack Trend Summary (phishing, C2, malware delivery if present)\\n"
+            "7. Immediate Actions (24-72h)\\n"
             "8. Executive Conclusion\\n"
             "Constraints: keep strategic and readable; avoid low-level dump; do not invent unavailable data.\\n"
             "Tone: formal, decision-support, concise with meaningful insight."
@@ -729,7 +1642,7 @@ class ReportGenerator:
         
         activity = interval_data.get("activity", {})
         threats_detected = activity.get("threats_detected", 0)
-        scans_performed = activity.get("scans", 0)
+        scans_performed = activity.get("threat_scans", activity.get("scans", 0))
         
         if interval == "24h":
             focus = "IMMEDIATE & RECENT activity patterns"
@@ -751,6 +1664,30 @@ class ReportGenerator:
             f"Key Interpretation: The {interval} window shows {severity_phrase}."
         )
         return narrative.replace("{{trend_indicator}}", trend_indicator)
+
+    def _interval_report_interpretation(self, interval: str, threat_data: Dict[str, Any], report_type: str) -> str:
+        """Generate report-type specific interval intelligence narrative."""
+        base = self._interval_analysis_text(interval, threat_data)
+        interval_summaries = threat_data.get("interval_summaries", [])
+        current = next((item for item in interval_summaries if isinstance(item, dict) and str(item.get("interval", "")).lower() == interval.lower()), None)
+        activity = (current or {}).get("activity", {}) if isinstance(current, dict) else {}
+        threats_detected = int(activity.get("threats_detected", 0) or 0)
+        scans_performed = int(activity.get("threat_scans", activity.get("scans", 0)) or 0)
+        density = (threats_detected / scans_performed) if scans_performed else 0.0
+
+        normalized = self._normalize_report_type(report_type)
+        if normalized == "technical_analysis":
+            return (
+                f"{base} Technical interpretation: detection density={density:.2f}. "
+                f"Focus on repeat indicators, telemetry blind spots, and provider corroboration depth for {interval.upper()}."
+            )
+        if normalized == "forensic_investigation":
+            return (
+                f"{base} Forensic interpretation: prioritize timeline clustering, contradiction review, and persistence signals in {interval.upper()} evidence."
+            )
+        return (
+            f"{base} Executive interpretation: use this interval to align containment urgency and resource allocation with observed threat pressure."
+        )
 
     def _interval_focus_rows(self, interval: str, threat_data: Dict[str, Any]) -> list[list[str]]:
         """Per-interval analysis matrix for distinct report focus"""
@@ -1879,29 +2816,53 @@ Time Range Covered: {time_range_label}
     def _get_api_coverage_rows(self, threat_analysis: Dict[str, Any]) -> list[list[str]]:
         """Build report rows summarizing which intelligence sources participated."""
         input_type = str(threat_analysis.get("input_type") or "").strip().lower()
-        api_status = threat_analysis.get("api_results", {}).get("api_status", {}) or {}
+        api_results = threat_analysis.get("api_results", {}) if isinstance(threat_analysis.get("api_results"), dict) else {}
+        api_status = api_results.get("api_status", {}) if isinstance(api_results.get("api_status"), dict) else {}
         rows = [["Source", "Status", "Configured", "Applicable"]]
 
-        if not api_status:
-            if input_type == "advanced_report":
-                rows.append(["Local telemetry", "Used for IDS/IPS and activity analysis", "Yes", "Yes"])
-                rows.append(["External threat intel APIs", "Not executed in this run", "No", "No"])
+        provider_meta = [
+            ("virustotal", "VirusTotal"),
+            ("abuseipdb", "AbuseIPDB"),
+            ("shodan", "Shodan"),
+            ("urlscan", "URLScan.io"),
+            ("hybrid_analysis", "Hybrid Analysis"),
+        ]
+        for api_key, fallback_name in provider_meta:
+            api_meta = api_status.get(api_key, {}) if isinstance(api_status, dict) else {}
+            api_data = api_results.get(api_key)
+            if not isinstance(api_meta, dict):
+                api_meta = {}
+            raw_status = str(api_meta.get("status", "not_executed") or "not_executed").strip().lower()
+            configured = bool(api_meta.get("configured", bool(api_data)))
+            applicable = bool(api_meta.get("applicable", input_type not in {"advanced_report"}))
+            if raw_status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
+                status = "Data collected"
+            elif raw_status in {"rate_limited", "quota_exceeded"}:
+                status = "Quota limited; fallback intelligence used"
+            elif raw_status in {"error", "failed", "timeout"}:
+                status = "Collection failed; fallback intelligence used"
+            elif raw_status in {"pending", "in_progress", "queued"}:
+                status = "Provider analysis did not complete in this scan window"
+            elif raw_status == "skipped_local_mode":
+                status = "External APIs disabled for local-only analysis"
             else:
-                rows.append(["N/A", "No telemetry", "No", "No"])
-            return rows
-
-        for api_key in ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"]:
-            api_meta = api_status.get(api_key)
-            if not api_meta:
-                continue
+                reason = []
+                if not configured:
+                    reason.append("not configured")
+                if not applicable:
+                    reason.append("out of scope")
+                status = f"Fallback intelligence used ({', '.join(reason) if reason else 'provider unavailable'})"
             rows.append(
                 [
-                    str(api_meta.get("name", api_key)),
-                    str(api_meta.get("status", "unknown")).replace("_", " ").title(),
-                    "Yes" if api_meta.get("configured") else "No",
-                    "Yes" if api_meta.get("applicable") else "No",
+                    str(api_meta.get("name", fallback_name)),
+                    status,
+                    "Yes" if configured else "No",
+                    "Yes" if applicable else "No",
                 ]
             )
+
+        if input_type == "advanced_report":
+            rows.append(["Local telemetry", "Used for IDS/IPS and activity analysis", "Yes", "Yes"])
 
         return rows
 
@@ -2228,6 +3189,9 @@ Time Range Covered: {time_range_label}
         elements.append(Spacer(1, 0.3 * inch))
 
         threats = threat_analysis.get("threat_indicators", [])
+        scan_records = self._build_scan_records(threat_analysis)
+        executive_insights = self._build_executive_insights(threat_analysis)
+        forensic_intelligence = self._build_forensic_intelligence(threat_analysis)
         action_plan = self._get_report_action_plan(threat_analysis)
         is_advanced_report = str(threat_analysis.get("input_type") or "").strip().lower() == "advanced_report"
         file_analysis = self._normalize_file_analysis(threat_analysis)
@@ -2353,13 +3317,21 @@ Time Range Covered: {time_range_label}
             pipeline_rows = [["Layer", "Evidence"]]
             behavioral_events = threat_analysis.get('behavioral_sequence', []) or threat_analysis.get('forensic_metadata', {}).get('behavioral_sequence', []) or []
             api_call_count = len(threat_analysis.get('api_results', {}).get('apis_called', []) or [])
+            api_checked_count = int(forensic_metadata.get('apis_checked', api_call_count) or 0)
+            api_applicable_count = int(forensic_metadata.get('total_apis_available', api_call_count) or 0)
+            if api_applicable_count > 0:
+                api_pipeline_text = f"{api_checked_count}/{api_applicable_count} applicable source(s) completed"
+                if api_checked_count == 0:
+                    api_pipeline_text += " (fallback intelligence mode)"
+            else:
+                api_pipeline_text = "No applicable external source for this input type"
             if is_advanced_report:
                 elements.append(Paragraph("IDS / IPS & TELEMETRY PIPELINE", heading_style))
                 total_scan_events = sum(int((item.get('activity') or {}).get('threat_scans', 0) or 0) for item in interval_summaries if isinstance(item, dict))
                 pipeline_rows.append(["IDS / IPS Decision", f"{verdict.upper()} | {confidence * 100:.1f}% confidence"])
                 pipeline_rows.append(["Activity Logging", f"{len(interval_summaries)} interval window(s), {total_scan_events} scan event(s)"])
                 pipeline_rows.append(["Behavior / Monitor", f"{len(behavioral_events)} ordered event(s)"])
-                pipeline_rows.append(["Threat Intel", f"{api_call_count} API source(s)"])
+                pipeline_rows.append(["Threat Intel", api_pipeline_text])
                 pipeline_rows.append(["IOC / Indicator Correlation", f"{len(threats)} threat indicator(s), {forensic_metadata.get('corroboration_count', 0)} corroborating source(s)"])
                 pipeline_rows.append(["Static / PE", "Not applicable to telemetry report"])
                 pipeline_rows.append(["Signature / YARA", "Not applicable to telemetry report"])
@@ -2371,7 +3343,7 @@ Time Range Covered: {time_range_label}
                 pipeline_rows.append(["Signature / YARA", ", ".join(file_analysis.get("signatures", [])[:6]) or "No signature hits"])
                 pipeline_rows.append(["IOC Extraction", ", ".join(sum((file_analysis.get("iocs", {}) or {}).values(), [])[:8]) or "None"])
                 pipeline_rows.append(["Behavior / Network", f"{len(behavioral_events)} ordered events"])
-                pipeline_rows.append(["Threat Intel", f"{api_call_count} API source(s)"])
+                pipeline_rows.append(["Threat Intel", api_pipeline_text])
                 pipeline_rows.append(["ML / Heuristic", f"Score {risk_contract.get('numeric_score', 'n/a')} | Confidence {risk_contract.get('confidence', 'n/a')}"])
             pipeline_table = Table(_wrap_rows(pipeline_rows), colWidths=[1.6 * inch, 4.4 * inch])
             pipeline_table.setStyle(TableStyle([
@@ -2552,6 +3524,97 @@ Time Range Covered: {time_range_label}
             ]))
             elements.append(exec_table)
             elements.append(Spacer(1, 0.2 * inch))
+
+            elements.append(Paragraph("THREAT OVERVIEW", heading_style))
+            elements.append(Paragraph(executive_insights.get("narrative", "No overview available."), normal_style))
+
+            elements.append(Paragraph("RISK LEVEL SUMMARY", heading_style))
+            sev_dist = executive_insights.get("severity_distribution", {}) if isinstance(executive_insights.get("severity_distribution"), dict) else {}
+            risk_rows = [["Risk Tier", "Count"]]
+            for tier in ("critical", "high", "malicious", "suspicious", "medium", "low", "safe"):
+                count = int(sev_dist.get(tier, 0) or 0)
+                if count > 0:
+                    risk_rows.append([tier.upper(), str(count)])
+            if len(risk_rows) == 1:
+                risk_rows.append(["NO ALERTED TIERS", "0"])
+            risk_table = Table(_wrap_rows(risk_rows), colWidths=[2.2 * inch, 3.8 * inch])
+            risk_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#9ca3af")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ]))
+            elements.append(risk_table)
+            elements.append(Spacer(1, 0.15 * inch))
+
+            elements.append(Paragraph("KEY INCIDENT HIGHLIGHTS", heading_style))
+            top_incidents = executive_insights.get("high_risk_indicators", []) if isinstance(executive_insights.get("high_risk_indicators"), list) else []
+            if top_incidents:
+                for incident in top_incidents[:5]:
+                    cls = incident.get("classification", {}) if isinstance(incident.get("classification"), dict) else {}
+                    impact = incident.get("impact_analysis", {}) if isinstance(incident.get("impact_analysis"), dict) else {}
+                    elements.append(
+                        Paragraph(
+                            f"• {incident.get('indicator_value', 'unknown')} | status={str(cls.get('status', 'unknown')).upper()} | "
+                            f"confidence={float(cls.get('confidence', 0.0) or 0.0):.1f}% | attack={impact.get('attack_type', 'unknown')}",
+                            normal_style,
+                        )
+                    )
+            else:
+                elements.append(Paragraph("No high-risk incidents identified in this interval.", normal_style))
+
+            elements.append(Paragraph("REPEATED THREAT INDICATORS", heading_style))
+            repeated_network = executive_insights.get("repeated_ips_domains", []) if isinstance(executive_insights.get("repeated_ips_domains"), list) else []
+            if repeated_network:
+                for item in repeated_network[:8]:
+                    elements.append(
+                        Paragraph(
+                            f"• {item.get('indicator', 'unknown')} repeated {int(item.get('count', 0) or 0)} time(s)",
+                            normal_style,
+                        )
+                    )
+            else:
+                elements.append(Paragraph("No repeated IP/domain/URL indicators detected in this reporting window.", normal_style))
+
+            elements.append(Paragraph("ATTACK TREND SUMMARY", heading_style))
+            attack_types = executive_insights.get("attack_types", []) if isinstance(executive_insights.get("attack_types"), list) else []
+            trend = str(executive_insights.get("trend", "stable")).upper()
+            elements.append(
+                Paragraph(
+                    f"Trend direction: {trend}. Dominant attack classifications: {', '.join(attack_types) if attack_types else 'none identified'}.",
+                    normal_style,
+                )
+            )
+            elements.append(Paragraph("EXECUTIVE PER-SCAN SUMMARY", heading_style))
+            if scan_records:
+                per_scan_rows = [["Scan ID", "Indicator", "Status", "Confidence", "Attack Type", "Action"]]
+                for scan in scan_records[:20]:
+                    cls = scan.get("classification", {}) if isinstance(scan.get("classification"), dict) else {}
+                    impact = scan.get("impact_analysis", {}) if isinstance(scan.get("impact_analysis"), dict) else {}
+                    per_scan_rows.append([
+                        str(scan.get("scan_id", "unknown")),
+                        _shorten_text(scan.get("indicator_value", ""), 45),
+                        str(cls.get("status", "unknown")).upper(),
+                        f"{float(cls.get('confidence', 0.0) or 0.0):.1f}%",
+                        str(impact.get("attack_type", "unknown")),
+                        _shorten_text(scan.get("recommended_action", ""), 52),
+                    ])
+                per_scan_table = Table(_wrap_rows(per_scan_rows), colWidths=[0.9 * inch, 1.35 * inch, 0.7 * inch, 0.7 * inch, 0.95 * inch, 1.4 * inch])
+                per_scan_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#9ca3af")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.8),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]))
+                elements.append(per_scan_table)
+            else:
+                elements.append(Paragraph("No scan records available for executive scan summary.", normal_style))
+            elements.append(Spacer(1, 0.2 * inch))
         else:
             # Analysis Methods Used Section
             elements.append(Paragraph("ANALYSIS METHODS USED", heading_style))
@@ -2653,6 +3716,62 @@ Time Range Covered: {time_range_label}
             )
             elements.append(interval_table)
             elements.append(Spacer(1, 0.2 * inch))
+
+            elements.append(Paragraph("INTERVAL INTELLIGENCE INTERPRETATION", heading_style))
+            for item in interval_summaries[:3]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("interval", "24h")).lower()
+                interpretation = self._interval_report_interpretation(label, threat_analysis, report_type)
+                elements.append(Paragraph(_shorten_text(interpretation, 420), normal_style))
+            elements.append(Spacer(1, 0.2 * inch))
+
+        if is_technical_report:
+            elements.append(Paragraph("PER-SCAN TECHNICAL ANALYSIS RECORDS", heading_style))
+            if scan_records:
+                for scan in scan_records:
+                    detection = scan.get("detection_results", {}) if isinstance(scan.get("detection_results"), dict) else {}
+                    classification = scan.get("classification", {}) if isinstance(scan.get("classification"), dict) else {}
+                    technical = scan.get("technical_analysis", {}) if isinstance(scan.get("technical_analysis"), dict) else {}
+                    impact = scan.get("impact_analysis", {}) if isinstance(scan.get("impact_analysis"), dict) else {}
+
+                    rows = [
+                        ["scan_id", str(scan.get("scan_id", "unknown"))],
+                        ["timestamp", str(scan.get("timestamp", "unknown"))],
+                        ["indicator_type", str(scan.get("indicator_type", "Unknown"))],
+                        ["indicator_value", _shorten_text(scan.get("indicator_value", ""), 120)],
+                        ["detection.heuristic", _shorten_text(detection.get("heuristic", "heuristic analysis applied"), 110)],
+                        ["detection.virustotal", _shorten_text(detection.get("virustotal", "no provider result recorded"), 110)],
+                        ["detection.abuseipdb", _shorten_text(detection.get("abuseipdb", "no provider result recorded"), 110)],
+                        ["detection.shodan", _shorten_text(detection.get("shodan", "no provider result recorded"), 110)],
+                        ["detection.urlscan", _shorten_text(detection.get("urlscan", "no provider result recorded"), 110)],
+                        ["detection.hybrid_analysis", _shorten_text(detection.get("hybrid_analysis", "no provider result recorded"), 110)],
+                        ["classification.status", str(classification.get("status", "unknown"))],
+                        ["classification.confidence", f"{float(classification.get('confidence', 0.0) or 0.0):.1f}%"],
+                        ["classification.severity", str(classification.get("severity", "unknown"))],
+                        ["technical.detection_reason", _shorten_text(technical.get("detection_reason", ""), 120)],
+                        ["technical.behavior_pattern", _shorten_text(technical.get("behavior_pattern", ""), 120)],
+                        ["technical.payload_characteristics", _shorten_text(technical.get("payload_characteristics", ""), 120)],
+                        ["impact.system_risk", str(impact.get("system_risk", "unknown"))],
+                        ["impact.attack_type", str(impact.get("attack_type", "unknown"))],
+                        ["recommended_action", _shorten_text(scan.get("recommended_action", ""), 120)],
+                    ]
+
+                    scan_table = Table(_wrap_rows([["Field", "Value"]] + rows), colWidths=[2.1 * inch, 3.9 * inch])
+                    scan_table.setStyle(TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8.2),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ]))
+                    elements.append(scan_table)
+                    elements.append(Spacer(1, 0.12 * inch))
+            else:
+                elements.append(Paragraph("No scan records available for technical per-scan analysis.", normal_style))
+                elements.append(Spacer(1, 0.12 * inch))
 
         # Prioritized action plan
         elements.append(Paragraph("PRIORITIZED ACTION PLAN", heading_style))
@@ -2767,6 +3886,162 @@ Time Range Covered: {time_range_label}
             elements.append(advanced_table)
             elements.append(Spacer(1, 0.1 * inch))
 
+            elements.append(Spacer(1, 0.2 * inch))
+
+        if is_forensic_report:
+            elements.append(Paragraph("FORENSIC TIMELINE ANALYSIS", heading_style))
+            timeline_events = forensic_intelligence.get("timeline", []) if isinstance(forensic_intelligence.get("timeline"), list) else []
+            if timeline_events:
+                timeline_rows = [["Timestamp", "Scan ID", "Indicator", "Status", "Type"]]
+                for event in timeline_events[:30]:
+                    timeline_rows.append([
+                        str(event.get("timestamp", "unknown")),
+                        str(event.get("scan_id", "unknown")),
+                        _shorten_text(event.get("indicator", ""), 60),
+                        str(event.get("status", "unknown")).upper(),
+                        str(event.get("indicator_type", "Unknown")),
+                    ])
+                timeline_table = Table(_wrap_rows(timeline_rows), colWidths=[1.35 * inch, 1.05 * inch, 2.0 * inch, 0.8 * inch, 0.8 * inch])
+                timeline_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(timeline_table)
+            else:
+                elements.append(Paragraph("No timeline events available.", normal_style))
+
+            transitions = forensic_intelligence.get("safe_to_malicious_transitions", []) if isinstance(forensic_intelligence.get("safe_to_malicious_transitions"), list) else []
+            elements.append(Paragraph("SAFE TO MALICIOUS TRANSITIONS", heading_style))
+            if transitions:
+                for transition in transitions[:10]:
+                    elements.append(Paragraph(f"• {transition.get('indicator', 'unknown')} transitioned SAFE -> MALICIOUS", normal_style))
+            else:
+                elements.append(Paragraph("No SAFE -> MALICIOUS transitions detected.", normal_style))
+
+            elements.append(Paragraph("PATTERN CORRELATION", heading_style))
+            pattern = forensic_intelligence.get("pattern_correlation", {}) if isinstance(forensic_intelligence.get("pattern_correlation"), dict) else {}
+            repeated_entities = pattern.get("repeated_entities", []) if isinstance(pattern.get("repeated_entities"), list) else []
+            grouped_threats = pattern.get("grouped_threats", {}) if isinstance(pattern.get("grouped_threats"), dict) else {}
+            if repeated_entities:
+                for item in repeated_entities[:10]:
+                    elements.append(
+                        Paragraph(
+                            f"• {item.get('indicator', 'unknown')} ({item.get('indicator_type', 'Unknown')}) repeated {int(item.get('count', 0) or 0)} time(s)",
+                            normal_style,
+                        )
+                    )
+            else:
+                elements.append(Paragraph("No repeated indicator entities identified.", normal_style))
+            for attack_type, related in list(grouped_threats.items())[:6]:
+                elements.append(Paragraph(f"• Group {attack_type}: {', '.join(str(v) for v in related[:4])}", normal_style))
+
+            elements.append(Paragraph("CONTRADICTION DETECTION", heading_style))
+            contradictions = forensic_intelligence.get("contradictions_detected", []) if isinstance(forensic_intelligence.get("contradictions_detected"), list) else []
+            if contradictions:
+                for contradiction in contradictions[:8]:
+                    reasons = contradiction.get("possible_reasons", []) if isinstance(contradiction.get("possible_reasons"), list) else []
+                    elements.append(
+                        Paragraph(
+                            f"• {contradiction.get('indicator', 'unknown')} reported conflicting statuses {', '.join(contradiction.get('statuses', []))}. "
+                            f"Possible causes: {', '.join(reasons)}.",
+                            normal_style,
+                        )
+                    )
+            else:
+                elements.append(Paragraph("No conflicting scan contradictions detected.", normal_style))
+
+            elements.append(Paragraph("THREAT ATTRIBUTION", heading_style))
+            attribution = forensic_intelligence.get("threat_attribution_analysis", {}) if isinstance(forensic_intelligence.get("threat_attribution_analysis"), dict) else {}
+            if attribution:
+                for key, value in sorted(attribution.items(), key=lambda kv: int(kv[1]), reverse=True):
+                    elements.append(Paragraph(f"• {key}: {int(value)} correlated event(s)", normal_style))
+            else:
+                elements.append(Paragraph("No attribution patterns detected.", normal_style))
+
+            elements.append(Paragraph("MITRE ATT&CK COVERAGE", heading_style))
+            mitre_cov = forensic_intelligence.get("mitre_att_ck_coverage", {}) if isinstance(forensic_intelligence.get("mitre_att_ck_coverage"), dict) else {}
+            if mitre_cov:
+                for tactic, count in sorted(mitre_cov.items(), key=lambda kv: int(kv[1]), reverse=True):
+                    elements.append(Paragraph(f"• {tactic}: {int(count)} mapped event(s)", normal_style))
+            else:
+                elements.append(Paragraph("No MITRE tactic mapping available for this interval.", normal_style))
+
+            elements.append(Paragraph("KILL CHAIN COVERAGE", heading_style))
+            kill_chain_cov = forensic_intelligence.get("kill_chain_coverage", {}) if isinstance(forensic_intelligence.get("kill_chain_coverage"), dict) else {}
+            if kill_chain_cov:
+                for stage, count in sorted(kill_chain_cov.items(), key=lambda kv: int(kv[1]), reverse=True):
+                    elements.append(Paragraph(f"• {stage}: {int(count)} mapped event(s)", normal_style))
+            else:
+                elements.append(Paragraph("No kill-chain stage mapping available for this interval.", normal_style))
+
+            elements.append(Paragraph("CONFIDENCE SCORING MODEL", heading_style))
+            confidence_model = forensic_intelligence.get("confidence_scoring_model", {}) if isinstance(forensic_intelligence.get("confidence_scoring_model"), dict) else {}
+            confidence_rows = [["Model Rule", "Count"]]
+            for label in (
+                "SINGLE SOURCE / HEURISTIC (Lower Confidence)",
+                "DUAL-SOURCE EVIDENCE (Medium Confidence)",
+                "MULTI-SOURCE CORROBORATION (High Confidence)",
+                "VERIFIED SAFE (High Confidence)",
+            ):
+                confidence_rows.append([label, str(int(confidence_model.get(label, 0) or 0))])
+            confidence_table = Table(_wrap_rows(confidence_rows), colWidths=[3.6 * inch, 2.4 * inch])
+            confidence_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ]))
+            elements.append(confidence_table)
+
+            elements.append(Paragraph("ATTACK VECTOR CLASSIFICATION", heading_style))
+            vectors = forensic_intelligence.get("attack_vector_classification", {}) if isinstance(forensic_intelligence.get("attack_vector_classification"), dict) else {}
+            vector_rows = [["Vector", "Count"]]
+            for label in ("Network-based", "Web-based", "File-based", "Unclassified"):
+                vector_rows.append([label, str(int(vectors.get(label, 0) or 0))])
+            vector_table = Table(_wrap_rows(vector_rows), colWidths=[3.0 * inch, 3.0 * inch])
+            vector_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ]))
+            elements.append(vector_table)
+
+            elements.append(Paragraph("FORENSIC PER-SCAN CASE RECORDS", heading_style))
+            if scan_records:
+                forensic_rows = [["Scan ID", "Timestamp", "Indicator", "Status", "Confidence", "Forensic Interpretation"]]
+                for scan in scan_records[:30]:
+                    cls = scan.get("classification", {}) if isinstance(scan.get("classification"), dict) else {}
+                    technical = scan.get("technical_analysis", {}) if isinstance(scan.get("technical_analysis"), dict) else {}
+                    forensic_rows.append([
+                        str(scan.get("scan_id", "unknown")),
+                        str(scan.get("timestamp", "unknown")),
+                        _shorten_text(scan.get("indicator_value", ""), 45),
+                        str(cls.get("status", "unknown")).upper(),
+                        f"{float(cls.get('confidence', 0.0) or 0.0):.1f}%",
+                        _shorten_text(technical.get("detection_reason", ""), 90),
+                    ])
+                forensic_scan_table = Table(_wrap_rows(forensic_rows), colWidths=[0.8 * inch, 1.1 * inch, 1.2 * inch, 0.7 * inch, 0.7 * inch, 1.5 * inch])
+                forensic_scan_table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), profile_palette["table_header"]),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, profile_palette["soft"]]),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.7),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]))
+                elements.append(forensic_scan_table)
+            else:
+                elements.append(Paragraph("No scan records available for forensic case records.", normal_style))
             elements.append(Spacer(1, 0.2 * inch))
 
         # Threat Summary (audience-specific rendering)

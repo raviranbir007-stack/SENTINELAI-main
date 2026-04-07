@@ -109,7 +109,7 @@ async def receive_defense_event(
         logger.error(f"Failed to process defense event: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to process defense event"
         )
 
 
@@ -156,7 +156,7 @@ async def initiate_quarantine(
         logger.error(f"Failed to process quarantine request: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to process quarantine action"
         )
 
 
@@ -198,7 +198,7 @@ async def add_block(
         logger.error(f"Failed to record block: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to process block action"
         )
 
 
@@ -272,7 +272,7 @@ async def get_defense_status(
         logger.error(f"Failed to get defense status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to retrieve defense status"
         )
 
 
@@ -333,5 +333,5 @@ async def get_defense_statistics(
         logger.error(f"Failed to get defense statistics: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to retrieve defense statistics"
         )

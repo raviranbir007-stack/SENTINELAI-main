@@ -4,6 +4,7 @@ Advanced Reports API endpoints
 import io
 import logging
 import time
+import ipaddress
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,75 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
+
+
+def _infer_indicator_type(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    try:
+        ipaddress.ip_address(text)
+        return "ip"
+    except Exception:
+        pass
+    lower = text.lower()
+    if lower.startswith(("http://", "https://", "hxxp://", "hxxps://")):
+        return "url"
+    if "." in text and "/" not in text and " " not in text:
+        return "domain"
+    if len(text) in {32, 40, 64} and all(ch in "0123456789abcdefABCDEF" for ch in text):
+        return "file_hash"
+    return "unknown"
+
+
+def _build_api_status(threat_indicators: list[dict] | None) -> dict:
+    # Import locally to avoid heavy imports at module import time
+    from ....config import settings
+
+    indicators = threat_indicators or []
+    observed_types = {
+        _infer_indicator_type(item.get("indicator") or item.get("value"))
+        for item in indicators
+        if isinstance(item, dict)
+    }
+    if not observed_types:
+        observed_types = {"ip", "domain", "url", "file_hash"}
+
+    key_presence = {
+        "virustotal": bool(getattr(settings, "VIRUSTOTAL_API_KEY", "")),
+        "abuseipdb": bool(getattr(settings, "ABUSEIPDB_API_KEY", "")),
+        "shodan": bool(getattr(settings, "SHODAN_API_KEY", "")),
+        "urlscan": bool(getattr(settings, "URLSCAN_API_KEY", "")),
+        "hybrid_analysis": bool(getattr(settings, "HYBRIDANALYSIS_API_KEY", "")),
+    }
+
+    supported = {
+        "virustotal": {"ip", "domain", "url", "file_hash"},
+        "abuseipdb": {"ip", "domain", "url"},
+        "shodan": {"ip", "domain", "url"},
+        "urlscan": {"domain", "url"},
+        "hybrid_analysis": {"file_hash"},
+    }
+
+    names = {
+        "virustotal": "VirusTotal",
+        "abuseipdb": "AbuseIPDB",
+        "shodan": "Shodan",
+        "urlscan": "URLScan.io",
+        "hybrid_analysis": "Hybrid Analysis",
+    }
+
+    result = {}
+    for provider in ("virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"):
+        applicable = bool(observed_types & supported[provider])
+        configured = key_presence[provider]
+        result[provider] = {
+            "name": names[provider],
+            "status": "not_executed",
+            "configured": configured,
+            "applicable": applicable,
+        }
+    return result
 
 
 def _safe_report_name(raw_name: str) -> str:
@@ -206,8 +276,8 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
             "threat_indicators": threat_indicators,
             "api_results": {
                 "apis_called": [],
-                "apis_expected": ["abuseipdb", "virustotal", "urlvoid", "otx", "shodan"],
-                "api_status": {},
+                "apis_expected": ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"],
+                "api_status": _build_api_status(threat_indicators),
             },
             "summary": req.scan_summary or f"Generated for intervals: {interval_label}",
             "report_type": normalized_report_type,
@@ -239,36 +309,130 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                 "technical_analysis",
                 "forensic_investigation",
             ]
-            for idx, report_type in enumerate(suite_types, start=1):
-                suite_id = _safe_report_name(f"advanced_{report_type}_{int(time.time())}_{idx}")
-                suite_payload = dict(threat_analysis)
-                suite_payload["report_type"] = report_type
-                suite_payload["report_id"] = suite_id
+            suite_intervals = ["24h", "7d", "30d"]
+            suite_counter = 0
+            for interval in suite_intervals:
+                hours = interval_hours_map.get(interval, 24)
+                interval_activity = activity_db.get_activity_summary(hours=hours)
+                interval_vulns = report_generator._get_endpoint_vuln_summary(hours=hours)
+                interval_recent_threats = activity_db.get_recent_threats(limit=200, hours=hours)
+                interval_distribution = activity_db.get_threat_distribution(hours=hours)
 
-                logger.debug("Generating suite report | type=%s | intervals=%s", report_type, interval_label)
-                suite_bytes = await report_generator.generate_analysis_report(suite_payload)
-                if not suite_bytes:
-                    raise HTTPException(status_code=500, detail=f"Report generation failed for {report_type}")
+                interval_indicators = [
+                    {
+                        "indicator": str(item.get("value") or "unknown"),
+                        "severity": str(item.get("verdict") or "suspicious").lower(),
+                        "source": str(item.get("type") or "activity_monitor"),
+                        "confidence": _normalize_conf(item.get("confidence")),
+                        "timestamp": item.get("time"),
+                    }
+                    for item in interval_recent_threats
+                ]
 
-                suite_meta = {
-                    "report_id": suite_id,
-                    "title": f"{report_target} - {report_type.replace('_', ' ').title()}",
-                    "target": report_target,
-                    "type": report_type,
-                    "threats_detected": len(threat_indicators),
-                    "verdict": computed_verdict,
-                    "confidence": computed_confidence,
-                    "created": datetime.utcnow().isoformat(),
-                    "download_url": f"/api/v1/reports/download/{suite_id}",
+                interval_verdict_counts = interval_distribution.get("by_verdict", {}) if isinstance(interval_distribution, dict) else {}
+                interval_malicious_count = int(interval_verdict_counts.get("malicious", 0) or 0) + int(interval_verdict_counts.get("critical", 0) or 0)
+                interval_suspicious_count = int(interval_verdict_counts.get("suspicious", 0) or 0)
+                if interval_malicious_count > 0:
+                    interval_verdict = "malicious"
+                elif interval_suspicious_count > 0:
+                    interval_verdict = "suspicious"
+                elif interval_indicators:
+                    interval_verdict = "suspicious"
+                else:
+                    interval_verdict = "safe"
+
+                interval_conf_samples = [item.get("confidence", 0.0) for item in interval_indicators if isinstance(item, dict)]
+                interval_confidence = sum(interval_conf_samples) / len(interval_conf_samples) if interval_conf_samples else 0.0
+
+                interval_source_names = sorted({str(item.get("source", "unknown")) for item in interval_indicators if isinstance(item, dict)})
+                interval_forensic_metadata = {
+                    "corroboration_count": len(interval_source_names),
+                    "corroboration_threshold_met": len(interval_source_names) >= 2,
+                    "unique_sources": interval_source_names,
+                    "total_indicators": len(interval_indicators),
+                    "critical_indicators": sum(1 for t in interval_indicators if str(t.get("severity", "")).lower() in {"critical", "malicious"}),
+                    "medium_indicators": sum(1 for t in interval_indicators if str(t.get("severity", "")).lower() in {"medium", "suspicious"}),
+                    "low_indicators": sum(1 for t in interval_indicators if str(t.get("severity", "")).lower() in {"low", "safe", "clean"}),
+                    "apis_checked": 0,
+                    "total_apis_available": sum(1 for meta in _build_api_status(interval_indicators).values() if meta.get("configured")),
+                    "source_details": [
+                        {
+                            "source": str(item.get("type") or "activity_monitor"),
+                            "severity": str(item.get("verdict") or "suspicious"),
+                            "indicator": str(item.get("value") or "unknown"),
+                            "timestamp": item.get("time"),
+                            "score": _normalize_conf(item.get("confidence")),
+                        }
+                        for item in interval_recent_threats[:50]
+                    ],
                 }
-                _store_generated_report(suite_meta, suite_bytes)
-                suite_reports.append(suite_meta)
+
+                interval_summaries_payload = [{
+                    "interval": interval,
+                    "hours": hours,
+                    "activity": interval_activity,
+                    "vulns": interval_vulns,
+                }]
+
+                for report_type in suite_types:
+                    suite_counter += 1
+                    suite_id = _safe_report_name(f"advanced_{interval}_{report_type}_{int(time.time())}_{suite_counter}")
+                    suite_payload = {
+                        "input": report_target,
+                        "input_type": "advanced_report",
+                        "verdict": interval_verdict,
+                        "confidence": interval_confidence,
+                        "threat_indicators": interval_indicators,
+                        "api_results": {
+                            "apis_called": [],
+                            "apis_expected": ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"],
+                            "api_status": _build_api_status(interval_indicators),
+                        },
+                        "summary": f"Generated for interval: {interval}",
+                        "report_type": report_type,
+                        "report_timezone": req.report_timezone,
+                        "intervals": [interval],
+                        "interval_summaries": interval_summaries_payload,
+                        "forensic_metadata": interval_forensic_metadata,
+                        "behavioral_sequence": [
+                            {
+                                "timestamp": str(item.get("time") or "unknown"),
+                                "stage": "threat_detection",
+                                "source": str(item.get("type") or "activity_monitor"),
+                                "details": f"{item.get('value', 'unknown')} detected as {str(item.get('verdict', 'suspicious')).upper()}",
+                                "confidence": _normalize_conf(item.get("confidence")),
+                            }
+                            for item in interval_recent_threats[:50]
+                        ],
+                        "timestamp": int(time.time()),
+                        "report_id": suite_id,
+                    }
+
+                    logger.debug("Generating suite report | interval=%s | type=%s", interval, report_type)
+                    suite_bytes = await report_generator.generate_analysis_report(suite_payload)
+                    if not suite_bytes:
+                        raise HTTPException(status_code=500, detail=f"Report generation failed for {interval}:{report_type}")
+
+                    suite_meta = {
+                        "report_id": suite_id,
+                        "title": f"{report_target} - {interval.upper()} - {report_type.replace('_', ' ').title()}",
+                        "target": report_target,
+                        "interval": interval,
+                        "type": report_type,
+                        "threats_detected": len(interval_indicators),
+                        "verdict": interval_verdict,
+                        "confidence": interval_confidence,
+                        "created": datetime.utcnow().isoformat(),
+                        "download_url": f"/api/v1/reports/download/{suite_id}",
+                    }
+                    _store_generated_report(suite_meta, suite_bytes)
+                    suite_reports.append(suite_meta)
 
             return JSONResponse(
                 {
                     "status": "success",
-                    "message": "Generated report suite for executive, technical, and forensic formats",
-                    "intervals": selected_intervals,
+                    "message": "Generated report suite for executive, technical, and forensic formats across 24h, 7d, and 30d",
+                    "intervals": suite_intervals,
                     "count": len(suite_reports),
                     "reports": suite_reports,
                 }
@@ -315,7 +479,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
         raise
     except Exception as e:
         logger.error(f"Advanced report failed: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)[:100]}")
+        raise HTTPException(status_code=500, detail="Report generation failed")
 
 
 @router.post("/generate-interval-analysis")
@@ -404,7 +568,7 @@ async def generate_interval_analysis_report(req: AdvancedReportRequest):
             "medium_indicators": sum(1 for t in threat_indicators if str(t.get("severity", "")).lower() in {"medium", "suspicious"}),
             "low_indicators": sum(1 for t in threat_indicators if str(t.get("severity", "")).lower() in {"low", "safe", "clean"}),
             "apis_checked": 0,
-            "total_apis_available": 0,
+            "total_apis_available": sum(1 for meta in _build_api_status(threat_indicators).values() if meta.get("configured")),
             "source_details": [
                 {
                     "source": str(item.get("type") or "activity_monitor"),
@@ -427,8 +591,8 @@ async def generate_interval_analysis_report(req: AdvancedReportRequest):
             "threat_indicators": threat_indicators,
             "api_results": {
                 "apis_called": [],
-                "apis_expected": ["abuseipdb", "virustotal", "urlvoid", "otx", "shodan"],
-                "api_status": {},
+                "apis_expected": ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"],
+                "api_status": _build_api_status(threat_indicators),
             },
             "summary": f"Multi-interval analysis comparing immediate (24h), trending (7d), and strategic (30d) threat postures.",
             "report_type": normalized_report_type,
@@ -485,4 +649,4 @@ async def generate_interval_analysis_report(req: AdvancedReportRequest):
         raise
     except Exception as e:
         logger.error(f"Interval analysis report failed: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)[:100]}")
+        raise HTTPException(status_code=500, detail="Report generation failed")

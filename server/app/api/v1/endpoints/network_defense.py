@@ -1069,7 +1069,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
     except Exception as e:
         logger.error(f"Client registration failed: {str(e)}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Client registration failed")
 
 
 @router.post("/client/heartbeat")
@@ -1226,7 +1226,7 @@ async def client_heartbeat(
         raise
     except Exception as e:
         logger.error(f"Heartbeat failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Client heartbeat failed")
 
 
 class ClientApprovalRequest(BaseModel):
@@ -1336,7 +1336,7 @@ async def list_clients(
 
     except Exception as e:
         logger.error(f"Failed to list clients: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list clients")
 
 
 @router.post("/attack/report")
@@ -1445,7 +1445,7 @@ async def report_attack(
     except Exception as e:
         logger.error(f"Attack report failed: {str(e)}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to ingest attack report")
 
 
 @router.post("/defense/action")
@@ -1530,7 +1530,7 @@ async def execute_defense_action(
     except Exception as e:
         logger.error(f"Defense action failed: {str(e)}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to apply defense action")
 
 
 @router.post("/event")
@@ -1772,7 +1772,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
     except Exception as e:
         await db.rollback()
         logger.error(f"Defense event ingestion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to ingest defense event")
 
 
 @router.post("/event/respond")
@@ -1969,7 +1969,7 @@ async def respond_to_defense_event(
     except Exception as e:
         await db.rollback()
         logger.error(f"Defense response failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to process defense response")
 
 
 @router.post("/ingest/nids")
@@ -2066,7 +2066,7 @@ async def ingest_nids_events(request: NIDSBatchIngestRequest, db: AsyncSession =
     except Exception as e:
         await db.rollback()
         logger.error(f"NIDS ingestion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to ingest NIDS events")
 
 
 @router.post("/replay/simulate")
@@ -2194,7 +2194,7 @@ async def list_defense_events(
         return {"total": len(events), "events": events}
     except Exception as e:
         logger.error(f"Failed to list defense events: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list defense events")
 
 
 @router.get("/attacks")
@@ -2253,7 +2253,7 @@ async def list_attacks(
 
     except Exception as e:
         logger.error(f"Failed to list attacks: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list attacks")
 
 
 @router.get("/incidents")
@@ -2544,7 +2544,7 @@ async def list_incidents(
         }
     except Exception as e:
         logger.error(f"Failed to list incidents: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list incidents")
 
 
 @router.get("/alerts")
@@ -2596,7 +2596,7 @@ async def list_network_alerts(
 
     except Exception as e:
         logger.error(f"Failed to list alerts: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list alerts")
 
 
 # Background task functions
@@ -2920,7 +2920,7 @@ async def revert_defense_action(
     except Exception as e:
         await db.rollback()
         logger.error(f"Defense action rollback failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to rollback defense action")
 
 
 @router.post("/defense/action/rollback/sweep")
@@ -2994,4 +2994,4 @@ async def sweep_expired_rollbacks(
     except Exception as exc:
         await db.rollback()
         logger.error("Rollback sweep failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Rollback sweep failed")

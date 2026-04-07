@@ -368,7 +368,7 @@ async def predict_threat(request: ThreatPredictionRequest, db: AsyncSession = De
         
     except Exception as e:
         logger.error(f"Threat prediction failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Threat prediction failed")
 
 
 @router.post("/ai/analyze-attack-patterns")
@@ -446,7 +446,7 @@ Response in JSON format:
         
     except Exception as e:
         logger.error(f"Attack pattern analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Attack pattern analysis failed")
 
 
 @router.post("/ai/defensive-recommendations")
@@ -484,4 +484,4 @@ Response in JSON format with actionable recommendations.
         
     except Exception as e:
         logger.error(f"Defensive recommendations failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Defensive recommendations failed")

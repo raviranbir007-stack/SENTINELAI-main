@@ -66,8 +66,8 @@ class Settings(BaseSettings):
     VIRUSTOTAL_API_KEY: str = os.getenv("VIRUSTOTAL_API_KEY", "")
     ABUSEIPDB_API_KEY: str = os.getenv("ABUSEIPDB_API_KEY", "")
     SHODAN_API_KEY: str = os.getenv("SHODAN_API_KEY", "")
-    HYBRIDANALYSIS_API_KEY: str = os.getenv("HYBRIDANALYSIS_API_KEY", "")
-    URLSCAN_API_KEY: str = os.getenv("URLSCAN_API_KEY", "")
+    HYBRIDANALYSIS_API_KEY: str = os.getenv("HYBRIDANALYSIS_API_KEY", "") or os.getenv("HYBRID_ANALYSIS_API_KEY", "")
+    URLSCAN_API_KEY: str = os.getenv("URLSCAN_API_KEY", "") or os.getenv("URLSCANIO_API_KEY", "")
 
     # Database
     DATABASE_URL: str = "sqlite:///./server/test.db"

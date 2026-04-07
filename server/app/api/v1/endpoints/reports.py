@@ -176,8 +176,6 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
                     "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
                 }
 
-                from ....core.report_generator import report_generator
-
                 report_bytes = await report_generator.generate_analysis_report(threat_analysis)
                 if not report_bytes:
                     fallback_text = report_generator._get_fallback_analysis(threat_analysis)
