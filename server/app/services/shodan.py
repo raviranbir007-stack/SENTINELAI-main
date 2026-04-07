@@ -12,6 +12,14 @@ class ShodanService:
     BASE_URL = "https://api.shodan.io"
 
     @staticmethod
+    def _clean_api_key(raw_key: str) -> str:
+        """Normalize API key values copied from env/UI with quotes or bearer prefix."""
+        key = str(raw_key or "").strip().strip('"').strip("'")
+        if key.lower().startswith("bearer "):
+            key = key.split(" ", 1)[1].strip()
+        return key
+
+    @staticmethod
     async def search_ip(ip_address: str):
         """
         Search IP on Shodan for exposed services and vulnerabilities
@@ -23,7 +31,7 @@ class ShodanService:
             Dict with Shodan results or error
         """
         logger.debug(f"Shodan.search_ip called for {ip_address}")
-        api_key = settings.SHODAN_API_KEY
+        api_key = ShodanService._clean_api_key(settings.SHODAN_API_KEY)
         if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
             logger.error("Shodan API key is missing, empty, or not set properly.")
             return {"error": "Shodan API key is missing, empty, or not set properly."}

@@ -923,7 +923,10 @@ async def get_api_status(
         for key, meta in api_status_dict.items():
             if isinstance(meta, dict):
                 mapped_key = key_aliases.get(_norm(key), str(key or "").strip().lower())
-                api_status_map[mapped_key] = meta
+                # Rows are already sorted newest -> oldest. Keep first seen status per API
+                # so recent state is not overwritten by stale historical failures.
+                if mapped_key not in api_status_map:
+                    api_status_map[mapped_key] = meta
 
     # Build response with all external APIs
     apis = []
@@ -1001,7 +1004,7 @@ async def get_api_status(
     total_online = sum(1 for a in apis if a["online"])
     total_calls = sum(a["usage_24h"] for a in apis)
 
-    return {
+    payload = {
         "time_range": _label(normalized_range),
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "summary": {

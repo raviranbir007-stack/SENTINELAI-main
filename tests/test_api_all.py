@@ -15,6 +15,18 @@ HEADERS = {"Content-Type": "application/json"}
 REQUEST_TIMEOUT = 30  # seconds - prevent tests from hanging
 
 
+def _get_first_threat_id():
+    """Fetch the first available threat ID from the API, if any."""
+    response = requests.get(f"{API_BASE_URL}/threats?time_range=24h", timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    payload = response.json() if response.content else {}
+    threats = payload.get("threats") if isinstance(payload, dict) else []
+    if not threats:
+        return None
+    first = threats[0] if isinstance(threats[0], dict) else {}
+    return first.get("threat_id") or first.get("id") or first.get("scan_id")
+
+
 class Colors:
     GREEN = "\033[92m"
     RED = "\033[91m"
@@ -112,10 +124,16 @@ def test_threat_detail():
     """Test threat detail endpoint"""
     print_test("Get Threat Details")
     try:
-        response = requests.get(f"{API_BASE_URL}/threats/THR001", timeout=REQUEST_TIMEOUT)
+        threat_id = _get_first_threat_id()
+        if not threat_id:
+            print_info("No current threats available; skipping detail test")
+            return
+
+        response = requests.get(f"{API_BASE_URL}/threats/{threat_id}", timeout=REQUEST_TIMEOUT)
         assert response.status_code == 200, f"Failed with status {response.status_code}"
         data = response.json()
         print_success(f"Retrieved threat details: {data.get('name')}")
+        print_info(f"Threat ID: {data.get('threat_id')}")
         print_info(f"Severity: {data.get('severity')}")
         print_info(f"Source: {data.get('source')}")
         print_info(f"Location: {data.get('location')}")
@@ -301,8 +319,13 @@ def test_respond_to_threat():
     """Test threat response endpoint"""
     print_test("Respond to Threat")
     try:
+        threat_id = _get_first_threat_id()
+        if not threat_id:
+            print_info("No current threats available; skipping response test")
+            return
+
         response = requests.post(
-            f"{API_BASE_URL}/threats/THR001/respond", headers=HEADERS, timeout=REQUEST_TIMEOUT
+            f"{API_BASE_URL}/threats/{threat_id}/respond", headers=HEADERS, timeout=REQUEST_TIMEOUT
         )
         assert response.status_code == 200, f"Failed with status {response.status_code}"
         data = response.json()

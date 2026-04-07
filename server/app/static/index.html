@@ -1902,6 +1902,244 @@
             gap: 2rem;
         }
 
+        .report-analytics-shell {
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .report-analytics-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        .report-interval-pills {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .report-interval-pill {
+            min-width: 86px;
+            justify-content: center;
+            border-radius: 999px;
+        }
+
+        .report-interval-pill.active {
+            border-color: rgba(45, 212, 191, 0.65);
+            background: rgba(45, 212, 191, 0.12);
+            color: var(--foreground);
+        }
+
+        .report-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.85rem;
+        }
+
+        .report-summary-metric {
+            padding: 1rem 1.05rem;
+            border-radius: 14px;
+            background: linear-gradient(180deg, rgba(8, 16, 27, 0.95), rgba(7, 13, 22, 0.98));
+            border: 1px solid rgba(45, 212, 191, 0.12);
+        }
+
+        .report-summary-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted-foreground);
+            margin-bottom: 0.35rem;
+        }
+
+        .report-summary-value {
+            font-size: 1.55rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+
+        .report-summary-note {
+            margin-top: 0.35rem;
+            font-size: 0.74rem;
+            color: var(--muted-foreground);
+        }
+
+        .report-analytics-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 1rem;
+        }
+
+        .report-chart-card {
+            padding: 1.1rem;
+            min-width: 0;
+        }
+
+        .report-chart-wrap {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .report-panel-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.85rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.85rem;
+        }
+
+        .report-panel-head h3,
+        .report-panel-head h4 {
+            margin: 0;
+        }
+
+        .report-panel-head p {
+            margin-top: 0.2rem;
+            color: var(--muted-foreground);
+            font-size: 0.82rem;
+        }
+
+        .report-donut-row {
+            display: grid;
+            grid-template-columns: 230px 1fr;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .report-donut-shell {
+            position: relative;
+            width: 210px;
+            height: 210px;
+            border-radius: 50%;
+            margin: 0 auto;
+            background: conic-gradient(from 180deg, rgba(45, 212, 191, 0.9), rgba(59, 130, 246, 0.9), rgba(251, 191, 36, 0.9), rgba(239, 68, 68, 0.9));
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04), 0 18px 32px rgba(0,0,0,0.25);
+        }
+
+        .report-donut-shell::after {
+            content: '';
+            position: absolute;
+            inset: 20px;
+            background: linear-gradient(180deg, rgba(8, 16, 27, 0.98), rgba(5, 10, 16, 0.98));
+            border-radius: 50%;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+        }
+
+        .report-donut-center {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            z-index: 1;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .report-donut-center strong {
+            display: block;
+            font-size: 1.8rem;
+            line-height: 1;
+        }
+
+        .report-donut-center span {
+            display: block;
+            margin-top: 0.35rem;
+            font-size: 0.72rem;
+            color: var(--muted-foreground);
+        }
+
+        .report-donut-legend {
+            display: grid;
+            gap: 0.55rem;
+        }
+
+        .report-legend-item {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.75rem 0.85rem;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .report-legend-left {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            min-width: 0;
+        }
+
+        .report-legend-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .report-legend-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .report-legend-value {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--muted-foreground);
+            font-size: 0.8rem;
+        }
+
+        .report-trend-svg {
+            width: 100%;
+            height: 260px;
+            overflow: visible;
+            display: block;
+        }
+
+        .report-trend-meta {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.65rem;
+        }
+
+        .report-snapshot-grid {
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        .report-snapshot-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.85rem;
+            padding: 0.85rem 0.95rem;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .report-snapshot-item strong {
+            font-size: 0.92rem;
+        }
+
+        .report-snapshot-item span {
+            color: var(--muted-foreground);
+            font-size: 0.8rem;
+        }
+
+        .report-archive-shell {
+            display: grid;
+            gap: 1rem;
+            max-height: 560px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 0.25rem;
+        }
+
         .report-card {
             padding: 1.5rem;
             min-width: 0;
@@ -2254,6 +2492,10 @@
             .hero-grid { grid-template-columns: 1fr; }
             .api-grid { grid-template-columns: repeat(2, 1fr); }
             .report-grid { grid-template-columns: 1fr; }
+            .report-summary-grid { grid-template-columns: 1fr 1fr; }
+            .report-analytics-grid { grid-template-columns: 1fr; }
+            .report-donut-row { grid-template-columns: 1fr; }
+            .report-donut-shell { width: 190px; height: 190px; }
             .footer-grid { grid-template-columns: 1fr 1fr; }
             .nav { display: none; }
             .search-input { display: none; }
@@ -2286,6 +2528,7 @@
             .scan-form .btn { width: 100%; }
             .container, .header-container { padding-left: 1rem; padding-right: 1rem; }
             .posture-metrics-grid { grid-template-columns: 1fr; }
+            .report-summary-grid { grid-template-columns: 1fr; }
         }
     </style>
     <!-- disabled api.js to avoid API_BASE_URL conflict -->
@@ -3706,6 +3949,7 @@
         let uiState = {
             activePage: 'dashboard',
             selectedReportType: 'executive_summary',
+            selectedReportInterval: '24h',
             selectedScanType: 'ip',
             searchQuery: '',
             scansHistoryCollapsed: false,
@@ -3714,6 +3958,14 @@
             liveActivityCollapsed: false,
             lastThreatReviewAt: 0,
             threatReviewSuppressedUntil: 0,
+        };
+        let selectedReportInterval = '24h';
+        let latestReportAnalytics = {
+            timeRange: '24h',
+            stats: null,
+            trends: [],
+            reports: [],
+            fetchedAt: null,
         };
         let isPageVisible = true;
         let panelState = {
@@ -3781,6 +4033,7 @@
         const API_ENDPOINTS = {
             // Dashboard
             dashboardStats: '/api/v1/dashboard/stats',
+            dashboardTrends: '/api/v1/dashboard/trends',
             dashboardLogs: '/api/v1/dashboard/logs',
             dashboardApiStatus: '/api/v1/dashboard/api-status',
             dashboardSystemHealth: '/api/v1/dashboard/system-health',
@@ -3865,8 +4118,10 @@
         let promptSuppressedByQuarantine = false;
         let activeEscalationPrompt = null;
         const THREAT_REVIEW_SUPPRESSION_MS = 10 * 60 * 1000;
+        const PROMPT_RESPONSE_TIMEOUT_MS = 60 * 1000;
         const PROMPT_ESCALATION_UNANSWERED_THRESHOLD = 5;
         const PROMPT_ESCALATION_BLOCK_THRESHOLD = 5;
+        let activeSecurityPromptTimer = null;
         const securityEscalationState = {
             consecutiveBlocks: 0,
             unansweredPromptSignals: 0,
@@ -5990,6 +6245,304 @@
             }
         }
 
+        function normalizeReportInterval(interval) {
+            const normalized = String(interval || '24h').trim().toLowerCase();
+            return ['24h', '7d', '30d'].includes(normalized) ? normalized : '24h';
+        }
+
+        function getReportIntervalConfig(interval) {
+            const normalized = normalizeReportInterval(interval);
+            const configs = {
+                '24h': { label: 'Last 24 Hours', minutes: 60, description: 'Operator scans in the last 24 hours' },
+                '7d': { label: 'Last 7 Days', minutes: 360, description: 'Operator scans across the last 7 days' },
+                '30d': { label: 'Last 30 Days', minutes: 1440, description: 'Operator scans across the last 30 days' },
+            };
+            return { interval: normalized, ...configs[normalized] };
+        }
+
+        function buildReportSeverityBreakdown(stats = {}) {
+            const critical = Number(stats.critical_threats || 0);
+            const high = Number(stats.high_threats || 0);
+            const medium = Number(stats.medium_threats || 0);
+            const low = Number(stats.low_threats || 0);
+            const clean = Number(stats.clean_scans || 0);
+            return [
+                { label: 'Critical', value: critical, color: 'rgba(239, 68, 68, 0.96)' },
+                { label: 'High', value: high, color: 'rgba(245, 158, 11, 0.96)' },
+                { label: 'Medium', value: medium, color: 'rgba(59, 130, 246, 0.96)' },
+                { label: 'Low', value: low, color: 'rgba(45, 212, 191, 0.96)' },
+                { label: 'Clean', value: clean, color: 'rgba(148, 163, 184, 0.92)' },
+            ].filter((item) => Number(item.value || 0) > 0);
+        }
+
+        function renderReportIntervalPills(container) {
+            if (!container) return;
+            const options = ['24h', '7d', '30d'];
+            const active = normalizeReportInterval(selectedReportInterval);
+            container.innerHTML = options.map((interval) => {
+                const meta = getReportIntervalConfig(interval);
+                const isActive = interval === active;
+                return `
+                    <button type="button" class="btn btn-outline btn-sm report-interval-pill ${isActive ? 'active' : ''}" onclick="selectReportAnalyticsInterval('${interval}')">
+                        ${escHtml(meta.label)}
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function renderReportSeverityDonut() {
+            const target = document.getElementById('reportSeverityDonutHost');
+            const legend = document.getElementById('reportSeverityLegend');
+            const stats = asObject(latestReportAnalytics.stats) || {};
+            if (!target || !legend) return;
+
+            const breakdown = buildReportSeverityBreakdown(stats);
+            const total = breakdown.reduce((sum, item) => sum + Number(item.value || 0), 0);
+
+            if (!total) {
+                target.innerHTML = `
+                    <div class="report-donut-shell" style="background: radial-gradient(circle at center, rgba(45,212,191,0.18), rgba(8,16,27,0.4) 65%, rgba(8,16,27,0.9));">
+                        <div class="report-donut-center">
+                            <div>
+                                <strong>0</strong>
+                                <span>No scan history in this interval</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                legend.innerHTML = '<div style="color:var(--muted-foreground);font-size:0.85rem;">No severity data available for the selected interval.</div>';
+                return;
+            }
+
+            let start = 0;
+            const segments = breakdown.map((item) => {
+                const portion = (Number(item.value || 0) / total) * 100;
+                const end = start + portion;
+                const segment = `${item.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+                start = end;
+                return segment;
+            }).join(', ');
+
+            target.innerHTML = `
+                <div class="report-donut-shell" style="background: conic-gradient(from 180deg, ${segments});">
+                    <div class="report-donut-center">
+                        <div>
+                            <strong>${total}</strong>
+                            <span>Total threats in ${getReportIntervalConfig(selectedReportInterval).label}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            legend.innerHTML = breakdown.map((item) => `
+                <div class="report-legend-item">
+                    <div class="report-legend-left">
+                        <span class="report-legend-swatch" style="background:${item.color};"></span>
+                        <span class="report-legend-label">${escHtml(item.label)}</span>
+                    </div>
+                    <div class="report-legend-value">${Number(item.value || 0)} (${total > 0 ? Math.round((Number(item.value || 0) / total) * 100) : 0}%)</div>
+                </div>
+            `).join('');
+        }
+
+        function renderReportTrendChart() {
+            const chartHost = document.getElementById('reportTrendChart');
+            if (!chartHost) return;
+
+            const trendSeries = Array.isArray(latestReportAnalytics.trends) ? latestReportAnalytics.trends : [];
+            if (!trendSeries.length) {
+                chartHost.innerHTML = '<div style="min-height:240px;display:grid;place-items:center;color:var(--muted-foreground);">No trend points available for this interval.</div>';
+                return;
+            }
+
+            const formatTrendLabel = (rawTs, index) => {
+                const parsed = rawTs ? new Date(rawTs) : null;
+                if (!parsed || Number.isNaN(parsed.getTime())) {
+                    return `P${index + 1}`;
+                }
+                const interval = normalizeReportInterval(selectedReportInterval);
+                if (interval === '24h') {
+                    return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                }
+                return parsed.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            };
+
+            const points = trendSeries.map((point, index) => ({
+                label: formatTrendLabel(point.timestamp || point.time || '', index),
+                value: Number(point.total_threats ?? point.manual_threats ?? point.total_scans ?? 0),
+                scans: Number(point.total_scans ?? point.manual_scans ?? 0),
+            }));
+            const width = 760;
+            const height = 240;
+            const padding = 24;
+            const innerWidth = width - padding * 2;
+            const innerHeight = height - padding * 2;
+            const maxValue = Math.max(1, ...points.map((point) => point.value));
+            const stepX = points.length > 1 ? innerWidth / (points.length - 1) : innerWidth;
+            const coords = points.map((point, index) => {
+                const x = padding + (stepX * index);
+                const y = padding + (innerHeight - ((point.value / maxValue) * innerHeight));
+                return { x, y, ...point };
+            });
+            const linePoints = coords.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+            const areaPoints = `${padding},${height - padding} ${linePoints} ${padding + innerWidth},${height - padding}`;
+
+            chartHost.innerHTML = `
+                <svg class="report-trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Threat trend over time">
+                    <defs>
+                        <linearGradient id="reportTrendFill" x1="0" x2="0" y1="0" y2="1">
+                            <stop offset="0%" stop-color="rgba(45,212,191,0.34)" />
+                            <stop offset="100%" stop-color="rgba(45,212,191,0.02)" />
+                        </linearGradient>
+                    </defs>
+                    <rect x="0" y="0" width="${width}" height="${height}" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.04)" />
+                    <path d="M ${areaPoints}" fill="url(#reportTrendFill)" opacity="0.95"></path>
+                    <polyline points="${linePoints}" fill="none" stroke="rgba(45,212,191,0.95)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+                    ${coords.map((point) => `
+                        <g>
+                            <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4.5" fill="rgba(8,16,27,0.95)" stroke="rgba(45,212,191,0.95)" stroke-width="2"></circle>
+                            <text x="${point.x.toFixed(1)}" y="${(height - 8).toFixed(1)}" text-anchor="middle" fill="rgba(170,199,195,0.9)" font-size="10">${escHtml(point.label)}</text>
+                        </g>
+                    `).join('')}
+                </svg>
+                <div class="report-trend-meta">
+                    <span class="badge badge-safe">${coords.length} points</span>
+                    <span class="badge">Peak ${Math.max(...coords.map((point) => point.value))}</span>
+                    <span class="badge">Range ${escHtml(getReportIntervalConfig(selectedReportInterval).label)}</span>
+                </div>
+            `;
+        }
+
+        function renderReportSnapshot() {
+            const snapshot = document.getElementById('reportIntervalSnapshot');
+            const stats = asObject(latestReportAnalytics.stats) || {};
+            if (!snapshot) return;
+
+            const totalScans = Number(stats.total ?? stats.total_scans ?? 0);
+            const threatsDetected = Number(stats.threats_detected ?? stats.manual_threats_detected ?? 0);
+            const criticalThreats = Number(stats.critical_threats ?? 0);
+            const highThreats = Number(stats.high_threats ?? 0);
+            const mediumThreats = Number(stats.medium_threats ?? 0);
+            const lowThreats = Number(stats.low_threats ?? 0);
+            const cleanScans = Number(stats.clean_scans ?? 0);
+            const filesScanned = Number(stats.files_scanned ?? 0);
+            const urlsScanned = Number(stats.urls_scanned ?? 0);
+            const ipsScanned = Number(stats.ips_scanned ?? 0);
+            const domainsScanned = Number(stats.domains_scanned ?? 0);
+            const hashesScanned = Number(stats.hashes_scanned ?? 0);
+
+            const rows = [
+                ['Total scans', totalScans, 'All DB-backed scans in interval'],
+                ['Threats detected', threatsDetected, 'Threat-bearing scans only'],
+                ['Critical / High', criticalThreats + highThreats, 'Escalated verdicts'],
+                ['Medium / Low', mediumThreats + lowThreats, 'Lower-confidence detections'],
+                ['Clean scans', cleanScans, 'No threat indicators'],
+                ['Assets covered', filesScanned + urlsScanned + ipsScanned + domainsScanned + hashesScanned, 'Files, URLs, IPs, domains, hashes'],
+            ];
+
+            snapshot.innerHTML = rows.map(([label, value, note]) => `
+                <div class="report-snapshot-item">
+                    <div>
+                        <strong>${escHtml(label)}</strong><br>
+                        <span>${escHtml(note)}</span>
+                    </div>
+                    <div class="report-summary-value" style="font-size:1.15rem;">${Number(value || 0)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderReportAnalyticsMeta() {
+            const rangeEl = document.getElementById('reportAnalyticsRange');
+            const updatedEl = document.getElementById('reportAnalyticsUpdatedAt');
+            const sourceEl = document.getElementById('reportAnalyticsSource');
+            const stats = asObject(latestReportAnalytics.stats) || {};
+            if (rangeEl) rangeEl.textContent = getReportIntervalConfig(selectedReportInterval).label;
+            if (updatedEl) updatedEl.textContent = latestReportAnalytics.fetchedAt ? new Date(latestReportAnalytics.fetchedAt).toLocaleString() : 'Pending refresh';
+            if (sourceEl) {
+                const total = Number(stats.total ?? stats.total_scans ?? 0);
+                sourceEl.textContent = total > 0 ? `${total} scan-history records` : 'No scan-history records in interval';
+            }
+        }
+
+        function renderReportAnalytics() {
+            renderReportIntervalPills(document.getElementById('reportIntervalPills'));
+            renderReportAnalyticsMeta();
+            renderReportSeverityDonut();
+            renderReportTrendChart();
+            renderReportSnapshot();
+
+            const stats = asObject(latestReportAnalytics.stats) || {};
+            const summaryTarget = document.getElementById('reportSummaryGrid');
+            if (summaryTarget) {
+                const totalScans = Number(stats.total ?? stats.total_scans ?? 0);
+                const threatsDetected = Number(stats.threats_detected ?? stats.manual_threats_detected ?? 0);
+                const criticalThreats = Number(stats.critical_threats ?? 0);
+                const cleanScans = Number(stats.clean_scans ?? 0);
+                const detectionRate = totalScans > 0 ? ((threatsDetected / totalScans) * 100) : 0;
+                summaryTarget.innerHTML = [
+                    { label: 'Total scans', value: totalScans, note: 'History-backed scans in range', tone: 'primary' },
+                    { label: 'Threats detected', value: threatsDetected, note: `${detectionRate.toFixed(1)}% detection rate`, tone: 'destructive' },
+                    { label: 'Critical threats', value: criticalThreats, note: 'Escalations requiring attention', tone: 'warning' },
+                    { label: 'Clean scans', value: cleanScans, note: 'No threat indicators found', tone: 'success' },
+                ].map((item) => `
+                    <div class="report-summary-metric">
+                        <div class="report-summary-label">${escHtml(item.label)}</div>
+                        <div class="report-summary-value ${item.tone}" style="color:${item.tone === 'destructive' ? 'var(--destructive)' : item.tone === 'warning' ? 'var(--warning)' : item.tone === 'success' ? 'var(--success)' : 'var(--primary)'};">${Number(item.value || 0)}</div>
+                        <div class="report-summary-note">${escHtml(item.note)}</div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function selectReportAnalyticsInterval(interval) {
+            selectedReportInterval = normalizeReportInterval(interval);
+            uiState.selectedReportInterval = selectedReportInterval;
+            persistUIState();
+            refreshReportAnalytics(true);
+        }
+
+        async function refreshReportAnalytics(force = false) {
+            const requestId = Date.now();
+            latestReportAnalytics.requestId = requestId;
+            const interval = normalizeReportInterval(selectedReportInterval);
+            selectedReportInterval = interval;
+            uiState.selectedReportInterval = interval;
+            if (force) persistUIState();
+            const config = getReportIntervalConfig(interval);
+
+            const statsPromise = apiRequest(`${API_ENDPOINTS.dashboardStats}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
+            const trendsPromise = apiRequest(`${API_ENDPOINTS.dashboardTrends}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
+            const reportsPromise = fetchAllReports();
+
+            const [statsResult, trendsResult, reportsResult] = await Promise.allSettled([statsPromise, trendsPromise, reportsPromise]);
+
+            const stats = statsResult.status === 'fulfilled' ? asObject(statsResult.value) : null;
+            const trends = trendsResult.status === 'fulfilled'
+                ? asObject(trendsResult.value)
+                : null;
+            const reports = Array.isArray(reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
+                ? (reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
+                : [];
+
+            // Ignore stale async responses when a newer refresh was started.
+            if (latestReportAnalytics.requestId !== requestId) {
+                return;
+            }
+
+            latestReportAnalytics = {
+                requestId,
+                timeRange: interval,
+                config,
+                stats,
+                trends: Array.isArray(trends?.series) ? trends.series : [],
+                reports,
+                fetchedAt: new Date().toISOString(),
+            };
+
+            renderReportAnalytics();
+            renderRecentReports();
+        }
+
         function setScanType(type) {
             const allowedTypes = new Set(['ip', 'domain', 'url', 'file', 'file_type', 'hash']);
             const normalized = allowedTypes.has(String(type || '').toLowerCase()) ? String(type).toLowerCase() : 'ip';
@@ -6906,20 +7459,103 @@
             const container = document.getElementById('allReportsPage');
             
             if (!container) return; // Not on reports page
-            
-            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">Loading reports...</div>';
-            
+
+            container.innerHTML = `
+                <div class="report-analytics-shell">
+                    <div class="report-analytics-top">
+                        <div>
+                            <span class="badge">SCAN HISTORY REPORTING</span>
+                            <h2 style="margin:0.7rem 0 0.35rem;">Threat Analytics Overview</h2>
+                            <p style="margin:0; color: var(--muted-foreground);">DB-backed interval analytics and report history. Refresh updates from the latest scan records only.</p>
+                        </div>
+                        <div style="display:grid; gap:0.65rem; justify-items:end;">
+                            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;">
+                                <span class="badge badge-safe" id="reportAnalyticsSource">Scan-history synced</span>
+                                <span class="badge" id="reportAnalyticsRange">Last 24 Hours</span>
+                                <span class="badge" id="reportAnalyticsUpdatedAt">Pending refresh</span>
+                            </div>
+                            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;">
+                                <button class="btn btn-outline btn-sm" type="button" onclick="refreshReportAnalytics(true)">↺ Refresh</button>
+                                <button class="btn btn-cyber btn-sm" type="button" onclick="generateReportForInterval(selectedReportInterval || '24h')">Generate Interval Report</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="report-interval-pills" id="reportIntervalPills"></div>
+
+                    <div class="report-summary-grid" id="reportSummaryGrid">
+                        <div class="report-summary-metric"><div class="report-summary-label">Total scans</div><div class="report-summary-value">0</div><div class="report-summary-note">Loading interval history…</div></div>
+                        <div class="report-summary-metric"><div class="report-summary-label">Threats detected</div><div class="report-summary-value">0</div><div class="report-summary-note">Loading interval history…</div></div>
+                        <div class="report-summary-metric"><div class="report-summary-label">Critical threats</div><div class="report-summary-value">0</div><div class="report-summary-note">Loading interval history…</div></div>
+                        <div class="report-summary-metric"><div class="report-summary-label">Clean scans</div><div class="report-summary-value">0</div><div class="report-summary-note">Loading interval history…</div></div>
+                    </div>
+
+                    <div class="report-analytics-grid">
+                        <div class="card card-cyber report-chart-card">
+                            <div class="report-panel-head">
+                                <div>
+                                    <h3>Threat Trend Over Time</h3>
+                                    <p>Severity distribution and time-series events built from scan history only.</p>
+                                </div>
+                            </div>
+                            <div class="report-donut-row">
+                                <div id="reportSeverityDonutHost"></div>
+                                <div id="reportSeverityLegend" class="report-donut-legend"></div>
+                            </div>
+                            <div style="margin-top:1rem;">
+                                <div class="report-panel-head">
+                                    <div>
+                                        <h4>Event Over Time</h4>
+                                        <p>Refresh updates the chart with the latest interval data.</p>
+                                    </div>
+                                </div>
+                                <div id="reportTrendChart"></div>
+                            </div>
+                        </div>
+
+                        <div class="card card-glass report-chart-card">
+                            <div class="report-panel-head">
+                                <div>
+                                    <h3>Interval Snapshot</h3>
+                                    <p>Breakdown of scans and threat intensity for the selected window.</p>
+                                </div>
+                            </div>
+                            <div id="reportIntervalSnapshot" class="report-snapshot-grid"></div>
+                        </div>
+                    </div>
+
+                    <div class="card card-glass report-chart-card">
+                        <div class="report-panel-head">
+                            <div>
+                                <h3>Recent Reports</h3>
+                                <p>Generated reports stay linked to the scan history interval they were created from.</p>
+                            </div>
+                            <button class="btn btn-ghost btn-sm" id="viewAllReportsBtnInline" type="button" onclick="viewAllReports()">View All →</button>
+                        </div>
+                        <div id="recentReports"></div>
+                    </div>
+
+                    <div class="card card-glass report-chart-card">
+                        <div class="report-panel-head">
+                            <div>
+                                <h3>Full Report Archive</h3>
+                                <p>All report artifacts currently stored in the report history cache.</p>
+                            </div>
+                        </div>
+                        <div id="allReportsArchiveList" class="report-archive-shell"></div>
+                    </div>
+                </div>
+            `;
+
             try {
-                await fetchAllReports();
-                
-                if (!Array.isArray(allReports) || allReports.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--muted-foreground);"><div style="font-size: 3rem; margin-bottom: 1rem;">📄</div><div style="font-size: 1.125rem; margin-bottom: 0.5rem;">No Reports Generated Yet</div><div style="font-size: 0.875rem;">Click "Generate New Report" to create your first report</div></div>';
-                    return;
-                }
-                
-                container.innerHTML = `
-                    <div style="display: grid; gap: 1rem;">
-                        ${allReports.map(report => `
+                await refreshReportAnalytics(true);
+
+                const archiveContainer = document.getElementById('allReportsArchiveList');
+                if (archiveContainer) {
+                    if (!Array.isArray(allReports) || allReports.length === 0) {
+                        archiveContainer.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted-foreground);">No reports generated yet. Create an interval report or a scan report to populate this archive.</div>';
+                    } else {
+                        archiveContainer.innerHTML = allReports.map(report => `
                             <div class="report-item">
                                 <div class="report-item-left">
                                     <div class="report-item-icon">📄</div>
@@ -6938,9 +7574,10 @@
                                     <button class="btn btn-outline btn-sm" onclick="downloadReportById('${report.download_url || report.report_id}')">⬇️ Download PDF</button>
                                 </div>
                             </div>
-                        `).join('')}
-                    </div>
-                `;
+                        `).join('');
+                    }
+                }
+
                 if (currentSearchQuery) applyDashboardSearch(currentSearchQuery);
             } catch (error) {
                 container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--destructive);">Failed to load reports: ${error.message}</div>`;
@@ -8508,6 +9145,10 @@
         function openSecurityPrompt(prompt) {
             if (!prompt) return;
             activeSecurityPrompt = prompt;
+            if (activeSecurityPromptTimer) {
+                clearTimeout(activeSecurityPromptTimer);
+                activeSecurityPromptTimer = null;
+            }
             addNotification(
                 'Defense action requested',
                 `${prompt.title} on ${prompt.targetDisplay || prompt.target}. Choose BLOCK / IGNORE / QUARANTINE from logs or alerts.`,
@@ -8515,16 +9156,145 @@
                 `prompt_open:${prompt.promptKey}`,
                 12000
             );
+
+            const modal = document.getElementById('securityPromptModal');
+            if (modal) {
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.78);z-index:1600;display:flex;align-items:center;justify-content:center;padding:1rem;';
+                modal.innerHTML = `
+                    <div style="width:min(560px,96vw);background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,0.5);overflow:hidden;">
+                        <div style="padding:1rem 1.15rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:0.8rem;">
+                            <div>
+                                <div style="font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--warning);font-family:'JetBrains Mono', monospace;">Incident Response Prompt</div>
+                                <div style="font-size:1rem;font-weight:700;margin-top:0.2rem;">${escHtml(prompt.title || 'Security Incident')}</div>
+                            </div>
+                            <button class="icon-btn" onclick="closeSecurityPrompt(true,false)">✖️</button>
+                        </div>
+                        <div style="padding:1rem 1.15rem;display:grid;gap:0.8rem;">
+                            <div style="font-size:0.9rem;line-height:1.55;">Target: <code>${escHtml(prompt.targetDisplay || prompt.target || 'unknown')}</code></div>
+                            <div style="font-size:0.84rem;color:var(--muted-foreground);">Respond within 60 seconds. Unanswered prompts are escalated and after 5 misses the system enters automatic quarantine.</div>
+                            <div style="display:flex;gap:0.55rem;justify-content:flex-end;flex-wrap:wrap;">
+                                <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="respondToSecurityPrompt('IGNORE')">Ignore</button>
+                                <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="respondToSecurityPrompt('BLOCK')">Block</button>
+                                <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="respondToSecurityPrompt('QUARANTINE')">Quarantine</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            activeSecurityPromptTimer = setTimeout(async () => {
+                if (!activeSecurityPrompt || activeSecurityPrompt.promptKey !== prompt.promptKey) {
+                    return;
+                }
+                securityEscalationState.unansweredPromptSignals += 1;
+                addNotification(
+                    'Prompt timed out',
+                    `No response within 60 seconds for ${prompt.title}.`,
+                    'warning',
+                    `prompt_timeout:${prompt.promptKey}:${securityEscalationState.unansweredPromptSignals}`,
+                    10000
+                );
+
+                const unanswered = securityEscalationState.unansweredPromptSignals;
+                closeSecurityPrompt(true, false);
+
+                if (unanswered >= PROMPT_ESCALATION_UNANSWERED_THRESHOLD) {
+                    await triggerSystemWideQuarantine(
+                        `Auto quarantine activated after ${unanswered} unanswered prompts`,
+                        prompt,
+                        'auto_quarantine_unanswered_threshold',
+                        {
+                            auto_global_quarantine: true,
+                            unanswered_prompt_count: unanswered,
+                            source: 'security_prompt_timeout',
+                        }
+                    );
+                    securityEscalationState.unansweredPromptSignals = 0;
+                } else {
+                    openEscalationPrompt(
+                        `No response after ${unanswered} attack prompts`,
+                        prompt,
+                        'no_response_threshold'
+                    );
+                }
+            }, PROMPT_RESPONSE_TIMEOUT_MS);
         }
 
         function closeSecurityPrompt(showNext = true, markAnswered = true) {
+            if (activeSecurityPromptTimer) {
+                clearTimeout(activeSecurityPromptTimer);
+                activeSecurityPromptTimer = null;
+            }
             if (markAnswered) {
                 securityEscalationState.unansweredPromptSignals = 0;
             }
             activeSecurityPrompt = null;
+            const modal = document.getElementById('securityPromptModal');
+            if (modal) {
+                modal.style.display = 'none';
+                modal.innerHTML = '';
+            }
             if (showNext && securityPromptQueue.length > 0) {
                 const next = securityPromptQueue.shift();
                 if (next) openSecurityPrompt(next);
+            }
+        }
+
+        async function triggerSystemWideQuarantine(reason = 'System-wide quarantine requested', prompt = null, dedupeKey = 'system_wide_quarantine', extraMetadata = {}) {
+            if (globalQuarantineInProgress) {
+                showToast('System-wide quarantine is already running', 'warning');
+                return { successful: false, skipped: true };
+            }
+
+            globalQuarantineInProgress = true;
+            try {
+                const payload = {
+                    action: 'QUARANTINE',
+                    client_id: asPayloadString(prompt?.clientId),
+                    attack_id: asPayloadString(prompt?.attackId),
+                    event_id: asPayloadString(prompt?.eventId),
+                    target: 'SYSTEM_ALL',
+                    target_type: 'system',
+                    reason: String(reason || 'System-wide quarantine requested'),
+                    metadata: {
+                        user_confirmed_quarantine: true,
+                        auto_global_quarantine: Boolean(extraMetadata?.auto_global_quarantine),
+                        unanswered_prompt_count: Number(extraMetadata?.unanswered_prompt_count || 0),
+                        source: extraMetadata?.source || 'dashboard_response',
+                        prompt_key: prompt?.promptKey || null,
+                        ...extraMetadata,
+                    },
+                };
+
+                const response = await apiRequest(API_ENDPOINTS.dashboardDefenseResponse, {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    timeoutMs: 25000,
+                });
+
+                addNotification(
+                    'System-wide quarantine activated',
+                    `${reason}. Attack events isolated: ${Number(response?.affected_attack_events || 0)}.`,
+                    'error',
+                    dedupeKey,
+                    30000
+                );
+                showToast('System-wide quarantine activated', 'success');
+                activateQuarantineReviewMode();
+                await Promise.allSettled([
+                    fetchIncidents(activeIncidentFilter || 'all'),
+                    fetchQuarantineInventory(),
+                    fetchThreats(),
+                    fetchLogs(),
+                    fetchDashboardStats(),
+                ]);
+                return response;
+            } catch (error) {
+                showToast(formatDefenseActionError('QUARANTINE', error), 'error');
+                addNotification('Quarantine activation failed', String(error?.message || error || 'Unknown error'), 'error', `${dedupeKey}:failed`, 15000);
+                throw error;
+            } finally {
+                globalQuarantineInProgress = false;
             }
         }
 
@@ -8547,13 +9317,8 @@
             if (activeSecurityPrompt && activeSecurityPrompt.promptKey === prompt.promptKey) return;
             if (securityPromptQueue.some(item => item.promptKey === prompt.promptKey)) return;
 
-            securityEscalationState.unansweredPromptSignals += 1;
-            if (securityEscalationState.unansweredPromptSignals >= PROMPT_ESCALATION_UNANSWERED_THRESHOLD) {
-                openEscalationPrompt(
-                    `No response after ${securityEscalationState.unansweredPromptSignals} attack prompts`,
-                    prompt,
-                    'no_response_threshold'
-                );
+            if (activeSecurityPrompt) {
+                securityPromptQueue.push(prompt);
                 return;
             }
 
@@ -10258,6 +11023,7 @@
                     console.log('✅ Initial data load complete');
                     // Render the initial page
                     const initialPage = uiState.activePage || 'dashboard';
+                    selectedReportInterval = normalizeReportInterval(uiState.selectedReportInterval || selectedReportInterval);
                     switchPage(initialPage);
                     setReportType(uiState.selectedReportType || 'executive_summary');
                     setScanType(uiState.selectedScanType || 'ip');

@@ -65,7 +65,7 @@ async def get_threats(
     ),
     end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
 ):
-    """Get all detected threats filtered by time range - shows actual scanned items"""
+    """Get detected threats filtered by time range from real scan history only."""
 
     # Import scan history
     from .scan import _scan_history
@@ -91,132 +91,69 @@ async def get_threats(
     
     # Convert scan history to threat format
     threats_from_scans = []
+    seen_ids = set()
+    seen_fingerprints = set()
     for scan in _scan_history:
-        scan_time = datetime.fromisoformat(scan['timestamp'])
+        scan_time = datetime.fromisoformat(scan["timestamp"])
         if scan_time >= start:
-            threat_level = scan.get('threat_level', 'unknown')
-            threats_count = scan.get('threats_detected', 0)
+            threat_level = scan.get("threat_level", "unknown")
+            threats_count = scan.get("threats_detected", 0)
             
             # Determine severity based on threat level
             severity_map = {
-                'malicious': 'critical',
-                'suspicious': 'high',
-                'clean': 'low',
-                'safe': 'low',
-                'unknown': 'medium'
+                "malicious": "critical",
+                "critical": "critical",
+                "suspicious": "high",
+                "high": "high",
+                "clean": "low",
+                "safe": "low",
+                "unknown": "medium",
             }
-            severity = severity_map.get(threat_level, 'medium')
+            severity = severity_map.get(str(threat_level).lower(), "medium")
             
             # Determine status
-            status = 'active' if severity in ['critical', 'high'] else 'resolved'
+            status = "active" if severity in ["critical", "high"] else "resolved"
+
+            scan_id = scan.get("scan_id")
+            if scan_id:
+                if scan_id in seen_ids:
+                    continue
+                seen_ids.add(scan_id)
+
+            # Deduplicate repeated equivalent records (common after restarts/replays)
+            fingerprint = (
+                str(scan.get("target_type", "unknown")).lower(),
+                str(scan.get("target_name", "unknown")).lower(),
+                severity,
+                scan_time.replace(minute=0, second=0, microsecond=0).isoformat(),
+            )
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
             
             threat_item = {
-                "threat_id": scan['scan_id'],
-                "name": f"{scan['target_type'].upper()} Scan: {scan['target_name']}",
-                "type": f"{scan['target_type']} Analysis",
+                "threat_id": scan.get("scan_id") or f"SCANLESS_{len(threats_from_scans)+1}",
+                "name": f"{str(scan.get('target_type', 'unknown')).upper()} Scan: {scan.get('target_name', 'unknown')}",
+                "type": f"{scan.get('target_type', 'unknown')} Analysis",
                 "details": f"Threat Level: {threat_level}, Threats Found: {threats_count}",
                 "severity": severity,
-                "timestamp": scan['timestamp'],
+                "timestamp": scan.get("timestamp"),
                 "status": status,
-                "source": scan['target_name'],
+                "source": scan.get("target_name", "unknown"),
                 "location": "SENTINEL-AI System",
                 "source_country": "N/A",
-                "detected_by": f"Multi-API Scan ({scan['target_type']})",
-                "report_url": scan.get('report_url'),
-                "confidence": scan.get('confidence', 0.0),
-                "target_type": scan['target_type']
+                "detected_by": f"Multi-API Scan ({scan.get('target_type', 'unknown')})",
+                "report_url": scan.get("report_url"),
+                "confidence": scan.get("confidence", 0.0),
+                "target_type": scan.get("target_type", "unknown"),
             }
             threats_from_scans.append(threat_item)
-
-    # Add mock threats for demonstration (optional)
-    mock_threats = [
-        {
-            "threat_id": "THR001",
-            "name": "Suspicious Process Activity",
-            "type": "Process Injection",
-            "details": "Process_monitor.exe attempting network connection",
-            "severity": "critical",
-            "timestamp": (datetime.now() - timedelta(hours=1)).isoformat(),
-            "status": "active",
-            "source": "192.168.1.50",
-            "location": "Bangalore, India",
-            "source_country": "IN",
-            "detected_by": "Network Scanner",
-        },
-        {
-            "threat_id": "THR002",
-            "name": "Malware Signature Detected",
-            "type": "Malware",
-            "details": "file_download.exe matches Trojan.Generic pattern",
-            "severity": "critical",
-            "timestamp": (datetime.now() - timedelta(hours=2)).isoformat(),
-            "status": "active",
-            "source": "192.168.1.75",
-            "location": "Mumbai, India",
-            "source_country": "IN",
-            "detected_by": "File Scanner",
-        },
-        {
-            "threat_id": "THR003",
-            "name": "Suspicious URL Access",
-            "type": "Phishing",
-            "details": "Attempted access to malicious domain: fake-bank.com",
-            "severity": "medium",
-            "timestamp": (datetime.now() - timedelta(hours=3)).isoformat(),
-            "status": "resolved",
-            "source": "192.168.1.100",
-            "location": "Delhi, India",
-            "source_country": "IN",
-            "detected_by": "URL Scanner",
-        },
-        {
-            "threat_id": "THR004",
-            "name": "Port Scan Detected",
-            "type": "Reconnaissance",
-            "details": "Multiple open ports detected via Shodan scan",
-            "severity": "high",
-            "timestamp": (datetime.now() - timedelta(days=1, hours=5)).isoformat(),
-            "status": "mitigated",
-            "source": "10.0.0.1",
-            "location": "Hyderabad, India",
-            "source_country": "IN",
-            "detected_by": "Shodan API",
-        },
-        {
-            "threat_id": "THR005",
-            "name": "Abusive IP Detected",
-            "type": "Abuse/Spam",
-            "details": "IP flagged for spamming activity on AbuseIPDB",
-            "severity": "medium",
-            "timestamp": (datetime.now() - timedelta(days=2)).isoformat(),
-            "status": "active",
-            "source": "203.100.50.75",
-            "location": "Chennai, India",
-            "source_country": "IN",
-            "detected_by": "AbuseIPDB",
-        },
-        {
-            "threat_id": "THR006",
-            "name": "VirusTotal Detection",
-            "type": "File Hash Malicious",
-            "details": "File hash detected as malicious by multiple vendors",
-            "severity": "critical",
-            "timestamp": (datetime.now() - timedelta(days=5)).isoformat(),
-            "status": "quarantined",
-            "source": "192.168.1.120",
-            "location": "Pune, India",
-            "source_country": "IN",
-            "detected_by": "VirusTotal",
-        },
-    ]
-
-    # Filter mock threats by date range if needed
-    filtered_mock = [
-        t for t in mock_threats if datetime.fromisoformat(t["timestamp"]) >= start
-    ]
-    
-    # Combine scan history threats with mock data
-    all_threats = threats_from_scans + filtered_mock
+    # Sort newest first for stable dashboard order
+    all_threats = sorted(
+        threats_from_scans,
+        key=lambda item: item.get("timestamp", ""),
+        reverse=True,
+    )
 
     return {
         "time_range": time_range,
@@ -234,82 +171,81 @@ async def get_threats(
 
 @router.get("/{threat_id}")
 async def get_threat_details(threat_id: str):
-    """Get comprehensive details of a specific threat"""
-    threat_details_map = {
-        "THR001": {
-            "threat_id": "THR001",
-            "name": "Suspicious Process Activity",
-            "type": "Process Injection",
-            "description": "Unauthorized process attempting network connection from victim system",
-            "severity": "critical",
-            "timestamp": (datetime.now() - timedelta(hours=1)).isoformat(),
-            "source": "192.168.1.50",
-            "location": "Bangalore, India",
-            "source_country": "IN",
-            "status": "active",
-            "detected_by": "Network Scanner",
-            "api_sources": ["Shodan", "AbuseIPDB"],
-            "confidence_score": 95,
-            "affected_systems": ["VICTIM-PC-01", "VICTIM-PC-02"],
-            "recommended_action": "Isolate affected systems immediately",
-            "details": {
-                "process_name": "Process_monitor.exe",
-                "target_ports": [80, 443, 8080],
-                "connection_attempts": 45,
-                "failed_auth_attempts": 12,
-            },
-        },
-        "THR002": {
-            "threat_id": "THR002",
-            "name": "Malware Signature Detected",
-            "type": "Malware",
-            "description": "File matched known malware pattern via VirusTotal",
-            "severity": "critical",
-            "timestamp": (datetime.now() - timedelta(hours=2)).isoformat(),
-            "source": "192.168.1.75",
-            "location": "Mumbai, India",
-            "source_country": "IN",
-            "status": "active",
-            "detected_by": "File Scanner",
-            "api_sources": ["VirusTotal", "Hybrid Analysis"],
-            "confidence_score": 98,
-            "file_hash": "d131dd02c5e6eec1...",
-            "file_name": "file_download.exe",
-            "malware_family": "Trojan.Generic",
-            "recommended_action": "Quarantine file immediately",
-            "details": {
-                "detection_ratio": "42/67",
-                "vendors": ["Norton", "McAfee", "Kaspersky"],
-                "file_size": "2.3 MB",
-                "first_seen": (datetime.now() - timedelta(days=30)).isoformat(),
-            },
-        },
-    }
+    """Get details for a specific threat ID from real scan history."""
+    from .scan import _scan_history
 
-    threat = threat_details_map.get(threat_id)
-    if not threat:
+    scan = next((entry for entry in _scan_history if entry.get("scan_id") == threat_id), None)
+    if not scan:
         return {
             "threat_id": threat_id,
             "name": "Unknown Threat",
             "error": "Threat not found",
         }
-    return threat
+
+    threat_level = str(scan.get("threat_level", "unknown")).lower()
+    severity_map = {
+        "malicious": "critical",
+        "critical": "critical",
+        "suspicious": "high",
+        "high": "high",
+        "clean": "low",
+        "safe": "low",
+        "unknown": "medium",
+    }
+    severity = severity_map.get(threat_level, "medium")
+    threat_count = int(scan.get("threats_detected", 0) or 0)
+    status = "active" if severity in {"critical", "high"} else "resolved"
+
+    return {
+        "threat_id": threat_id,
+        "name": f"{str(scan.get('target_type', 'unknown')).upper()} Scan: {scan.get('target_name', 'unknown')}",
+        "type": f"{scan.get('target_type', 'unknown')} Analysis",
+        "description": f"Threat level {threat_level} with {threat_count} indicator(s) detected.",
+        "severity": severity,
+        "timestamp": scan.get("timestamp"),
+        "source": scan.get("target_name", "unknown"),
+        "location": "SENTINEL-AI System",
+        "source_country": "N/A",
+        "status": status,
+        "detected_by": f"Multi-API Scan ({scan.get('target_type', 'unknown')})",
+        "confidence_score": round(float(scan.get("confidence", 0.0) or 0.0) * 100, 1),
+        "recommended_action": (
+            "Isolate and investigate immediately"
+            if severity == "critical"
+            else "Review scan artifacts and monitor for recurrence"
+        ),
+        "details": {
+            "target_type": scan.get("target_type"),
+            "target_name": scan.get("target_name"),
+            "threat_level": threat_level,
+            "threats_detected": threat_count,
+            "report_url": scan.get("report_url"),
+        },
+    }
 
 
 @router.post("/{threat_id}/respond")
 async def respond_to_threat(threat_id: str):
     """Respond to a specific threat with mitigation action"""
+    from .scan import _scan_history
+
+    found = any(scan.get("scan_id") == threat_id for scan in _scan_history)
     return {
         "threat_id": threat_id,
-        "status": "responded",
-        "action": "threat_quarantined",
+        "status": "responded" if found else "not_found",
+        "action": "threat_quarantined" if found else "none",
         "timestamp": datetime.now().isoformat(),
-        "message": "Threat has been quarantined and isolated successfully",
+        "message": (
+            "Threat has been quarantined and isolated successfully"
+            if found
+            else "Threat ID not found in current scan history"
+        ),
         "details": {
-            "action_taken": "Isolated system from network",
-            "files_quarantined": 1,
-            "processes_killed": 1,
-            "logs_generated": True,
+            "action_taken": "Isolated system from network" if found else "No action taken",
+            "files_quarantined": 1 if found else 0,
+            "processes_killed": 1 if found else 0,
+            "logs_generated": found,
+            "threat_exists": found,
         },
     }
 

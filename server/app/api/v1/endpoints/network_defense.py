@@ -1807,7 +1807,8 @@ async def respond_to_defense_event(
 
         if action == "QUARANTINE" and is_global_quarantine:
             confirmed = bool(metadata.get("user_confirmed_quarantine"))
-            if not confirmed:
+            auto_escalated = bool(metadata.get("auto_global_quarantine")) and int(metadata.get("unanswered_prompt_count", 0) or 0) >= 5
+            if not confirmed and not auto_escalated:
                 raise HTTPException(
                     status_code=400,
                     detail="System-wide quarantine requires explicit user confirmation",
@@ -2306,6 +2307,7 @@ async def list_incidents(
         attack_query = attack_query.order_by(AttackEvent.detected_at.desc()).limit(max_items)
 
         action_query = select(DefenseAction).order_by(desc(DefenseAction.created_at)).limit(max_items)
+        action_query = action_query.where(DefenseAction.created_at >= since_time)
         client_fk = None
         if client_id:
             client_fk_res = await db.execute(select(ClientInstallation.id).where(ClientInstallation.client_id == client_id))
@@ -2495,8 +2497,8 @@ async def list_incidents(
                 "severity": severity,
                 "status": normalized_status,
                 "blocked": requested_action == "BLOCK" and normalized_status == "executed",
-                "quarantined": requested_action == "QUARANTINE",
-                "ignored": requested_action == "IGNORE",
+                "quarantined": requested_action == "QUARANTINE" and normalized_status == "executed" and bool(action.successful),
+                "ignored": requested_action == "IGNORE" and normalized_status == "executed",
                 "action": requested_action,
                 "detected_at": action.executed_at.isoformat() if action.executed_at else (action.created_at.isoformat() if action.created_at else None),
                 "client": client_payload,

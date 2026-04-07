@@ -26,6 +26,14 @@ class VirusTotalService:
     BASE_URL = "https://www.virustotal.com/api/v3"
 
     @staticmethod
+    def _clean_api_key(raw_key: str) -> str:
+        """Normalize API key values copied from env/UI with quotes or bearer prefix."""
+        key = str(raw_key or "").strip().strip('"').strip("'")
+        if key.lower().startswith("bearer "):
+            key = key.split(" ", 1)[1].strip()
+        return key
+
+    @staticmethod
     async def scan_domain(domain: str):
         """
         Get domain reputation/analysis from VirusTotal.
@@ -37,7 +45,7 @@ class VirusTotalService:
             Dict with VirusTotal domain results
         """
         logger.debug(f"VirusTotal.scan_domain called for {domain}")
-        api_key = settings.VIRUSTOTAL_API_KEY
+        api_key = VirusTotalService._clean_api_key(settings.VIRUSTOTAL_API_KEY)
         if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
             logger.error("VirusTotal API key is missing, empty, or not set properly.")
             return {"error": "VirusTotal API key is missing, empty, or not set properly."}
@@ -66,6 +74,18 @@ class VirusTotalService:
                     data = response.json()
                     set_cached(cache_key, data, service="virustotal")
                     return data
+                elif response.status_code in (401, 403):
+                    detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            detail = str(body.get("error") or body.get("message") or "").strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    return {
+                        "error": f"VirusTotal authorization failed ({response.status_code})"
+                        + (f": {detail}" if detail else "")
+                    }
                 elif response.status_code == 404:
                     data = {
                         "data": {
@@ -108,7 +128,8 @@ class VirusTotalService:
             Dict with VirusTotal results
         """
         logger.debug(f"VirusTotal.scan_file called for {file_hash}")
-        if not settings.VIRUSTOTAL_API_KEY:
+        api_key = VirusTotalService._clean_api_key(settings.VIRUSTOTAL_API_KEY)
+        if not api_key:
             logger.warning("VirusTotal API key not configured")
             return {"error": "VirusTotal API key not configured"}
 
@@ -124,7 +145,7 @@ class VirusTotalService:
             return {"error": "VirusTotal rate limit reached"}
 
         try:
-            headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
+            headers = {"x-apikey": api_key}
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
                     f"{VirusTotalService.BASE_URL}/files/{file_hash}",
@@ -137,6 +158,18 @@ class VirusTotalService:
                     logger.debug(f"VirusTotal.scan_file success for {file_hash}")
                     set_cached(cache_key, data, service="virustotal")
                     return data
+                elif response.status_code in (401, 403):
+                    detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            detail = str(body.get("error") or body.get("message") or "").strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    return {
+                        "error": f"VirusTotal authorization failed ({response.status_code})"
+                        + (f": {detail}" if detail else "")
+                    }
                 elif response.status_code == 404:
                     data = {
                         "data": {
@@ -176,7 +209,8 @@ class VirusTotalService:
             Dict with VirusTotal results
         """
         logger.debug(f"VirusTotal.scan_url called for {url}")
-        if not settings.VIRUSTOTAL_API_KEY:
+        api_key = VirusTotalService._clean_api_key(settings.VIRUSTOTAL_API_KEY)
+        if not api_key:
             logger.warning("VirusTotal API key not configured")
             return {"error": "VirusTotal API key not configured"}
 
@@ -192,7 +226,7 @@ class VirusTotalService:
             return {"error": "VirusTotal rate limit reached"}
 
         try:
-            headers = {"x-apikey": settings.VIRUSTOTAL_API_KEY}
+            headers = {"x-apikey": api_key}
             
             # Keep URL scans responsive for live monitoring workflows.
             async with httpx.AsyncClient(timeout=20.0) as client:
@@ -253,6 +287,18 @@ class VirusTotalService:
                             data = url_response.json()
                             set_cached(cache_key, data, service="virustotal")
                             return data
+                    elif response.status_code in (401, 403):
+                        detail = ""
+                        try:
+                            body = response.json()
+                            if isinstance(body, dict):
+                                detail = str(body.get("error") or body.get("message") or "").strip()
+                        except Exception:
+                            detail = (response.text or "").strip()
+                        return {
+                            "error": f"VirusTotal authorization failed ({response.status_code})"
+                            + (f": {detail}" if detail else "")
+                        }
                     
                     set_cached(cache_key, result, service="virustotal")
                     return result

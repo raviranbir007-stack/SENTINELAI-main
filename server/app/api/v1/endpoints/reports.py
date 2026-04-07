@@ -1,5 +1,6 @@
 from pathlib import Path
 import io
+import asyncio
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
@@ -136,6 +137,27 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
     return buffer
 
 
+async def _generate_report_bytes_with_timeout(threat_analysis: dict, data: ReportRequest) -> bytes:
+    """Generate report bytes with a bounded AI timeout and deterministic PDF fallback."""
+    timeout_seconds = float(getattr(report_generator, "gemini_request_timeout_seconds", 20.0))
+    timeout_seconds = max(5.0, min(timeout_seconds, 20.0))
+    try:
+        return await asyncio.wait_for(
+            report_generator.generate_analysis_report(threat_analysis),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Report generation exceeded %ss; using fallback PDF",
+            timeout_seconds,
+        )
+        fallback_text = report_generator._get_fallback_analysis(threat_analysis)
+        scan_results = report_generator._format_scan_results_section(threat_analysis)
+        forensic_summary = report_generator._format_forensic_summary(threat_analysis)
+        fallback_blob = f"{fallback_text}\n\n---\n\nSCAN RESULTS\n\n{scan_results}\n\nFORENSIC SUMMARY\n\n{forensic_summary}"
+        return create_pdf(fallback_blob, data).getvalue()
+
+
 # ---------- API Endpoint ----------
 @router.post("/generate")
 async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db)):
@@ -176,7 +198,7 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
                     "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
                 }
 
-                report_bytes = await report_generator.generate_analysis_report(threat_analysis)
+                report_bytes = await _generate_report_bytes_with_timeout(threat_analysis, data)
                 if not report_bytes:
                     fallback_text = report_generator._get_fallback_analysis(threat_analysis)
                     scan_results = report_generator._format_scan_results_section(threat_analysis)
@@ -230,7 +252,7 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
             "intervals": data.intervals or ["24h", "7d", "30d"],
             "timestamp": datetime.utcnow().isoformat(),
         }
-        report_bytes = await report_generator.generate_analysis_report(threat_analysis)
+        report_bytes = await _generate_report_bytes_with_timeout(threat_analysis, data)
         if not report_bytes:
             report_text = generate_ai_report(data)
             report_bytes = report_text.encode("utf-8", "replace")

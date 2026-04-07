@@ -3267,10 +3267,11 @@ Time Range Covered: {time_range_label}
                     ["Entropy", "Not applicable to telemetry report"],
                 ]
             else:
+                static_status, static_detail = self._summarize_static_pe_analysis(threat_analysis, file_analysis, is_advanced_report)
                 report_focus_rows = [
-                    ["Static / PE", "Present" if file_analysis else "Not available"],
+                    ["Static / PE", f"{static_status} - {static_detail}"],
                     ["Signature / YARA", ", ".join(file_analysis.get("signatures", [])[:5]) or "No signature hits"],
-                    ["Entropy", f"{float(file_analysis.get('entropy', 0.0) or 0.0):.3f}"],
+                    ["Entropy", f"{float(file_analysis.get('entropy', 0.0) or 0.0):.3f}" if file_analysis.get('entropy') is not None else "n/a"],
                     ["IOC extraction", str(sum(len(v) for v in (file_analysis.get('iocs', {}) or {}).values()))],
                     ["Behavioral events", str(len(behavioral_events))],
                     ["Threat intel APIs", str(api_call_count)],
@@ -3339,7 +3340,8 @@ Time Range Covered: {time_range_label}
                 pipeline_rows.append(["ML / Heuristic", f"Score {risk_contract.get('numeric_score', round(confidence * 100, 1))} | Confidence {risk_contract.get('confidence', f'{confidence * 100:.1f}%')}"])
             else:
                 elements.append(Paragraph("DETECTION PIPELINE DETAILS", heading_style))
-                pipeline_rows.append(["Static / PE", "Present" if file_analysis else "Not available"])
+                static_status, static_detail = self._summarize_static_pe_analysis(threat_analysis, file_analysis, is_advanced_report)
+                pipeline_rows.append(["Static / PE", f"{static_status} - {static_detail}"])
                 pipeline_rows.append(["Signature / YARA", ", ".join(file_analysis.get("signatures", [])[:6]) or "No signature hits"])
                 pipeline_rows.append(["IOC Extraction", ", ".join(sum((file_analysis.get("iocs", {}) or {}).values(), [])[:8]) or "None"])
                 pipeline_rows.append(["Behavior / Network", f"{len(behavioral_events)} ordered events"])
@@ -4281,6 +4283,57 @@ Time Range Covered: {time_range_label}
                 normalized.update(candidate)
 
         return normalized
+
+    def _summarize_static_pe_analysis(self, threat_analysis: Dict[str, Any], file_analysis: Dict[str, Any], is_advanced_report: bool) -> tuple[str, str]:
+        """Return a readable static/PE summary for report tables."""
+        if is_advanced_report:
+            return "Not applicable to telemetry report", "Static analysis is only shown for file-based technical reports."
+
+        input_type = str(threat_analysis.get("input_type") or "").strip().lower()
+        is_file_scan = input_type in {"file", "file_hash", "hash", "artifact"} or bool(file_analysis)
+        if not is_file_scan:
+            return "Not applicable", "Target profile is not a file artifact in this report payload."
+
+        if not isinstance(file_analysis, dict) or not file_analysis:
+            return "Limited", "File scan context exists, but the static analysis payload was not attached to this report."
+
+        signatures = file_analysis.get("signatures", []) if isinstance(file_analysis.get("signatures"), list) else []
+        entropy_value = file_analysis.get("entropy")
+        try:
+            entropy_text = f"{float(entropy_value):.3f}"
+        except (TypeError, ValueError):
+            entropy_text = "n/a"
+
+        pe_info = file_analysis.get("pe_info") if isinstance(file_analysis.get("pe_info"), dict) else {}
+        disassembly_info = file_analysis.get("disassembly_info") if isinstance(file_analysis.get("disassembly_info"), dict) else {}
+        ml_result = file_analysis.get("ml_classification") if isinstance(file_analysis.get("ml_classification"), dict) else {}
+        ioc_total = sum(len(v) for v in (file_analysis.get("iocs", {}) or {}).values())
+
+        static_components = []
+        if signatures:
+            static_components.append(f"{len(signatures)} signature hit(s)")
+        if entropy_text != "n/a":
+            static_components.append(f"entropy {entropy_text}")
+        if ioc_total:
+            static_components.append(f"{ioc_total} IOC(s)")
+        if disassembly_info:
+            static_components.append(f"{len(disassembly_info.get('suspicious_patterns', []))} suspicious code pattern(s)")
+        if ml_result:
+            static_components.append(f"ML prediction {ml_result.get('prediction', 'UNKNOWN')}")
+
+        if pe_info:
+            arch = str(pe_info.get("arch") or "unknown").upper()
+            pe_bits = [f"PE {arch}"]
+            if pe_info.get("suspicious"):
+                pe_bits.append("suspicious header traits detected")
+            if pe_info.get("is_dll"):
+                pe_bits.append("DLL format")
+            elif pe_info.get("is_dll") is False:
+                pe_bits.append("executable image")
+            return "Available", f"Static analysis completed ({', '.join(static_components) if static_components else 'no extra static signals'}). PE metadata present: {'; '.join(pe_bits)}."
+
+        static_detail = ", ".join(static_components) if static_components else "no static signatures were recorded"
+        return "Available", f"Static analysis completed ({static_detail}). PE header metadata was not present, so this sample is treated as non-PE or PE parsing was unavailable."
 
     def _get_analysis_methods_used(self, threat_analysis: Dict[str, Any]) -> list:
         """Get list of analysis methods used in the scan"""

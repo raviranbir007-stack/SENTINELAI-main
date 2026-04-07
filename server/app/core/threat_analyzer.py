@@ -909,6 +909,8 @@ class ThreatAnalyzer:
                 status = "not_configured"
             elif "not applicable" in error_lower or "not supported" in error_lower:
                 status = "not_applicable"
+            elif "urlscan blocked" in error_lower or "scan prevented" in error_lower:
+                status = "limited"
             elif "authorization failed" in error_lower or "unauthorized" in error_lower or "forbidden" in error_lower:
                 status = "not_authorized"
             elif "rate limit" in error_lower:
@@ -3403,6 +3405,7 @@ class ThreatAnalyzer:
 
             if corroboration_count < 2 and severity_gated in {"high", "critical"} and calibrated_conf < 0.94:
                 result.setdefault("flags", {})["manual_review_required"] = True
+                result["verdict"] = ThreatLevel.SUSPICIOUS
                 result["summary"] = (
                     "SUSPICIOUS - Single-source high-risk signal detected. "
                     "Manual review required before high-severity escalation."

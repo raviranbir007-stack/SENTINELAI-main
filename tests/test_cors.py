@@ -40,7 +40,12 @@ def test_endpoint(method, endpoint, data=None):
 
         content = json.loads(resp.read())
         print(f"✓ {method} {endpoint}: {resp.status}")
-        print(f"  Response keys: {list(content.keys())[:5]}")
+        if isinstance(content, dict):
+            print(f"  Response keys: {list(content.keys())[:5]}")
+        elif isinstance(content, list):
+            print(f"  Response items: {len(content)}")
+        else:
+            print(f"  Response type: {type(content).__name__}")
         return True
     except Exception as e:
         print(f"✗ {method} {endpoint}: {e}")

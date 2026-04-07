@@ -203,11 +203,11 @@ async def main():
     print("="*60)
     
     # Check .env file exists
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
         print("\n⚠️  WARNING: .env file not found!")
         print("   Please copy .env.example to .env and add your API keys")
-        print(f"   Command: cp {Path(__file__).parent}/.env.example {env_path}")
+        print(f"   Command: cp {Path(__file__).resolve().parent.parent}/.env.example {env_path}")
         return
     
     print(f"✓ .env file found at: {env_path}")

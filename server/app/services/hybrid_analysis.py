@@ -13,6 +13,14 @@ class HybridAnalysisService:
     BASE_URL = "https://www.hybrid-analysis.com/api/v2"
 
     @staticmethod
+    def _clean_api_key(raw_key: str) -> str:
+        """Normalize API key values copied from env/UI with quotes or bearer prefix."""
+        key = str(raw_key or "").strip().strip('"').strip("'")
+        if key.lower().startswith("bearer "):
+            key = key.split(" ", 1)[1].strip()
+        return key
+
+    @staticmethod
     async def search_hash(file_hash: str):
         """
         Search file hash on Hybrid Analysis
@@ -24,7 +32,7 @@ class HybridAnalysisService:
             Dict with Hybrid Analysis results
         """
         logger.debug(f"HybridAnalysis.search_hash called for {file_hash}")
-        api_key = settings.HYBRIDANALYSIS_API_KEY
+        api_key = HybridAnalysisService._clean_api_key(settings.HYBRIDANALYSIS_API_KEY)
         if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
             logger.error("Hybrid Analysis API key is missing, empty, or not set properly.")
             return {"error": "Hybrid Analysis API key is missing, empty, or not set properly."}
@@ -63,6 +71,18 @@ class HybridAnalysisService:
                             data = {"results": data}
                         set_cached(cache_key, data, service="hybrid_analysis")
                         return data
+                    elif response.status_code in (401, 403):
+                        detail = ""
+                        try:
+                            body = response.json()
+                            if isinstance(body, dict):
+                                detail = str(body.get("message") or body.get("error") or body.get("detail") or "").strip()
+                        except Exception:
+                            detail = (response.text or "").strip()
+                        return {
+                            "error": f"Hybrid Analysis authorization failed ({response.status_code})"
+                            + (f": {detail}" if detail else "")
+                        }
                     elif response.status_code == 404:
                         # Hash not present in Hybrid Analysis corpus is a valid
                         # lookup outcome, not an integration failure.

@@ -12,6 +12,14 @@ class URLScanService:
     BASE_URL = "https://urlscan.io/api/v1"
 
     @staticmethod
+    def _clean_api_key(raw_key: str) -> str:
+        """Normalize API key values copied from env/UI with quotes or bearer prefix."""
+        key = str(raw_key or "").strip().strip('"').strip("'")
+        if key.lower().startswith("bearer "):
+            key = key.split(" ", 1)[1].strip()
+        return key
+
+    @staticmethod
     async def search_domain(domain: str):
         """
         Query URLScan historical intelligence for a domain.
@@ -23,7 +31,7 @@ class URLScanService:
             Dict with URLScan search results
         """
         logger.debug(f"URLScan.search_domain called for {domain}")
-        api_key = settings.URLSCAN_API_KEY
+        api_key = URLScanService._clean_api_key(settings.URLSCAN_API_KEY)
         if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
             logger.error("URLScan API key is missing, empty, or not set properly.")
             return {"error": "URLScan API key is missing, empty, or not set properly."}
@@ -51,6 +59,18 @@ class URLScanService:
                     data = response.json()
                     set_cached(cache_key, data, service="urlscan")
                     return data
+                elif response.status_code in (401, 403):
+                    detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            detail = str(body.get("message") or body.get("description") or "").strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    return {
+                        "error": f"URLScan authorization failed ({response.status_code})"
+                        + (f": {detail}" if detail else "")
+                    }
                 elif response.status_code == 400:
                     return {"error": "URLScan invalid domain input"}
                 elif response.status_code == 429:
@@ -77,7 +97,7 @@ class URLScanService:
             Dict with URLScan results
         """
         logger.debug(f"URLScan.scan_url called for {url}")
-        api_key = settings.URLSCAN_API_KEY
+        api_key = URLScanService._clean_api_key(settings.URLSCAN_API_KEY)
         if not api_key or api_key.startswith("your_") or len(api_key.strip()) < 10:
             logger.error("URLScan API key is missing, empty, or not set properly.")
             return {"error": "URLScan API key is missing, empty, or not set properly."}
@@ -110,6 +130,18 @@ class URLScanService:
                     data = response.json()
                     set_cached(cache_key, data, service="urlscan")
                     return data
+                elif response.status_code in (401, 403):
+                    detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            detail = str(body.get("message") or body.get("description") or "").strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    return {
+                        "error": f"URLScan authorization failed ({response.status_code})"
+                        + (f": {detail}" if detail else "")
+                    }
                 elif response.status_code == 400:
                     # Handle scan prevention (rate limit, blocked domain, etc.)
                     error_data = response.json()
@@ -144,7 +176,8 @@ class URLScanService:
         Returns:
             Dict with scan results
         """
-        if not settings.URLSCAN_API_KEY:
+        cleaned_key = URLScanService._clean_api_key(settings.URLSCAN_API_KEY)
+        if not cleaned_key:
             logger.warning("URLScan API key not configured")
             return {"error": "URLScan API key not configured"}
 
@@ -157,7 +190,7 @@ class URLScanService:
             return {"error": "URLScan rate limit reached"}
 
         try:
-            headers = {"API-Key": settings.URLSCAN_API_KEY}
+            headers = {"API-Key": cleaned_key}
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
@@ -170,6 +203,18 @@ class URLScanService:
                     data = response.json()
                     set_cached(cache_key, data, service="urlscan")
                     return data
+                elif response.status_code in (401, 403):
+                    detail = ""
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict):
+                            detail = str(body.get("message") or body.get("description") or "").strip()
+                    except Exception:
+                        detail = (response.text or "").strip()
+                    return {
+                        "error": f"URLScan authorization failed ({response.status_code})"
+                        + (f": {detail}" if detail else "")
+                    }
                 elif response.status_code == 404:
                     return {"error": "Scan not found or not yet complete"}
                 elif response.status_code == 429:
