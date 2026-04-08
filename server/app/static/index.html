@@ -2894,7 +2894,7 @@
                         <h2>⚙️ System Health Overview</h2>
                         <p>API, database, ingestion and AI/ML readiness from live backend checks</p>
                     </div>
-                    <button id="refreshSystemHealthBtn" class="btn btn-outline btn-sm" onclick="fetchSystemHealth()" title="Refresh system health">↺ Refresh</button>
+                    <button id="refreshSystemHealthBtn" class="btn btn-outline btn-sm" onclick="fetchSystemHealth(true)" title="Refresh system health">↺ Refresh</button>
                 </div>
                 <div id="systemHealthCard" class="card card-glass dashboard-card" style="padding: 1.25rem;">
                     <div style="text-align:center; color:var(--muted-foreground); padding:1rem;"><div id="systemHealthContent">Loading system health...</div></div>
@@ -2910,7 +2910,7 @@
                         <h2>👥 Active Clients & Users</h2>
                         <p>Real-time endpoint client visibility with heartbeat health and identified active OS users</p>
                     </div>
-                    <button id="refreshActiveClientsBtn" class="btn btn-outline btn-sm" onclick="fetchActiveClients()" title="Refresh active clients">↺ Refresh</button>
+                    <button id="refreshActiveClientsBtn" class="btn btn-outline btn-sm" onclick="fetchActiveClients(true)" title="Refresh active clients">↺ Refresh</button>
                 </div>
                 <div id="activeClientsCard" class="card card-glass dashboard-card" style="padding: 1.1rem;">
                     <div style="text-align:center; color:var(--muted-foreground); padding:1rem;">Loading active clients...</div>
@@ -2926,7 +2926,7 @@
                         <h2>🖥️ Security Task Monitor</h2>
                         <p>Compact real-time SOC task view inspired by Kali/Linux system monitors</p>
                     </div>
-                    <button id="refreshTaskMonitorBtn" class="btn btn-outline btn-sm" onclick="refreshSecurityTaskMonitor()" title="Refresh security task monitor">↺ Refresh</button>
+                    <button id="refreshTaskMonitorBtn" class="btn btn-outline btn-sm" onclick="refreshSecurityTaskMonitor(true)" title="Refresh security task monitor">↺ Refresh</button>
                 </div>
                 <div id="securityTaskMonitorCard" class="card card-glass dashboard-card" style="padding: 0.95rem;">
                     <div class="task-monitor-shell">
@@ -2994,7 +2994,7 @@
                     </div>
                     <div class="section-actions">
                         <button id="toggleLiveActivityBtn" class="btn btn-outline" title="Minimize/Maximize">− Minimize</button>
-                        <button id="refreshLiveActivityBtn" class="btn btn-outline btn-sm" onclick="refreshLiveActivity()" title="Refresh">↺ Refresh</button>
+                        <button id="refreshLiveActivityBtn" class="btn btn-outline btn-sm" onclick="refreshLiveActivity(true)" title="Refresh">↺ Refresh</button>
                     </div>
                 </div>
                 <div id="liveActivityCard" class="card card-glass dashboard-card" style="padding:0;">
@@ -3057,7 +3057,7 @@
                         <p>Startup threat assessment &amp; system vulnerability baseline</p>
                     </div>
                     <div class="section-actions">
-                        <button id="refreshSecurityPostureBtn" class="btn btn-outline btn-sm" onclick="fetchSecurityPosture()" title="Refresh security posture">↺ Refresh</button>
+                        <button id="refreshSecurityPostureBtn" class="btn btn-outline btn-sm" onclick="fetchSecurityPosture(true)" title="Refresh security posture">↺ Refresh</button>
                     </div>
                 </div>
                 <div id="securityPostureCard" class="card card-glass dashboard-card" style="padding: 1.1rem;">
@@ -3077,7 +3077,7 @@
                     <div class="section-actions">
                         <button id="toggleQuarantineBtn" class="btn btn-outline" title="Minimize/Maximize Quarantine Inventory">− Minimize</button>
                         <button id="viewAllQuarantineBtn" class="btn btn-outline" type="button" onclick="viewAllQuarantine()">View All →</button>
-                        <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory()" title="Refresh quarantine inventory">↺ Refresh</button>
+                        <button id="refreshQuarantineBtn" class="btn btn-outline btn-sm" onclick="fetchQuarantineInventory(true)" title="Refresh quarantine inventory">↺ Refresh</button>
                     </div>
                 </div>
                 <div class="card card-glass dashboard-card" id="quarantineCard">
@@ -3110,7 +3110,7 @@
                         <p>Why actions were blocked, held, ignored, or escalated</p>
                     </div>
                     <div class="section-actions">
-                        <button id="refreshAuditTrailBtn" class="btn btn-outline btn-sm" onclick="fetchAuditTelemetry()" title="Refresh audit trail">↺ Refresh</button>
+                        <button id="refreshAuditTrailBtn" class="btn btn-outline btn-sm" onclick="fetchAuditTelemetry(true)" title="Refresh audit trail">↺ Refresh</button>
                         <button id="toggleAuditTrailBtn" class="btn btn-outline btn-sm" onclick="toggleAuditTrailPanel()" title="Minimize/Maximize audit trail">− Minimize</button>
                     </div>
                 </div>
@@ -3381,7 +3381,7 @@
                             <p style="margin:0.25rem 0 0;">View all, blocked, ignored, and quarantined incidents with scroll support</p>
                         </div>
                         <div class="section-actions">
-                            <button class="btn btn-outline btn-sm" onclick="fetchIncidents(activeIncidentFilter || 'all')" title="Refresh threat-page incidents">↺ Refresh</button>
+                            <button class="btn btn-outline btn-sm" onclick="fetchIncidents(activeIncidentFilter || 'all', true)" title="Refresh threat-page incidents">↺ Refresh</button>
                         </div>
                     </div>
 
@@ -4388,6 +4388,30 @@
             delete button.dataset.originalLabel;
         }
 
+        function resolveButtonReference(buttonOrSelector) {
+            if (!buttonOrSelector) return null;
+            if (typeof buttonOrSelector === 'string') {
+                return document.getElementById(buttonOrSelector)
+                    || document.querySelector(buttonOrSelector);
+            }
+            return buttonOrSelector;
+        }
+
+        function createButtonLoadingGuard(buttonOrSelector, label) {
+            const button = resolveButtonReference(buttonOrSelector);
+            setButtonLoadingState(button, true, label);
+            return () => setButtonLoadingState(button, false);
+        }
+
+        async function runWithButtonLoading(buttonOrSelector, label, fn) {
+            const release = createButtonLoadingGuard(buttonOrSelector, label);
+            try {
+                return await fn();
+            } finally {
+                release();
+            }
+        }
+
         async function resolveDashboardRuntimeContext() {
             if (DASHBOARD_RUNTIME_CONTEXT && DASHBOARD_RUNTIME_CONTEXT.source !== 'hostname-fallback') {
                 return DASHBOARD_RUNTIME_CONTEXT;
@@ -4789,19 +4813,25 @@
             return `${m}m`;
         }
 
-        function refreshSecurityTaskMonitor() {
-            return Promise.allSettled([
-                fetchSystemHealth(),
-                fetchMonitoringStats(),
-                fetchActiveClients(),
-                fetchDashboardStats(),
-                fetchThreats(),
-                fetchLogs(),
-                fetchQuarantineInventory(),
-                refreshLiveActivity(),
-            ]).then(() => {
+        function refreshSecurityTaskMonitor(showIndicator = false) {
+            const runRefresh = async () => {
+                await Promise.allSettled([
+                    fetchSystemHealth(),
+                    fetchMonitoringStats(),
+                    fetchActiveClients(),
+                    fetchDashboardStats(),
+                    fetchThreats(),
+                    fetchLogs(),
+                    fetchQuarantineInventory(),
+                    refreshLiveActivity(),
+                ]);
                 renderSecurityTaskMonitor();
-            });
+            };
+
+            if (showIndicator) {
+                return runWithButtonLoading('refreshTaskMonitorBtn', 'Refreshing...', runRefresh);
+            }
+            return runRefresh();
         }
 
         function renderSecurityTaskMonitor() {
@@ -6170,8 +6200,11 @@
             if (subtitle) subtitle.textContent = '';
         }
 
-        async function fetchIncidents(filter = activeIncidentFilter || 'all') {
+        async function fetchIncidents(filter = activeIncidentFilter || 'all', showIndicator = false) {
             activeIncidentFilter = String(filter || 'all').toLowerCase();
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('[onclick="fetchIncidents(activeIncidentFilter || \'all\', true)"]', 'Refreshing...')
+                : () => {};
             const statsTargets = [
                 document.getElementById('incidentStats'),
                 document.getElementById('incidentStatsThreatsPage'),
@@ -6215,6 +6248,8 @@
                     });
                 }
                 updateIncidentStats();
+            } finally {
+                releaseButton();
             }
         }
 
@@ -6510,37 +6545,45 @@
             if (force) persistUIState();
             const config = getReportIntervalConfig(interval);
 
-            const statsPromise = apiRequest(`${API_ENDPOINTS.dashboardStats}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
-            const trendsPromise = apiRequest(`${API_ENDPOINTS.dashboardTrends}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
-            const reportsPromise = fetchAllReports();
+            const releaseButton = force
+                ? createButtonLoadingGuard('[onclick="refreshReportAnalytics(true)"]', 'Refreshing...')
+                : () => {};
 
-            const [statsResult, trendsResult, reportsResult] = await Promise.allSettled([statsPromise, trendsPromise, reportsPromise]);
+            try {
+                const statsPromise = apiRequest(`${API_ENDPOINTS.dashboardStats}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
+                const trendsPromise = apiRequest(`${API_ENDPOINTS.dashboardTrends}?time_range=${encodeURIComponent(interval)}`, { timeoutMs: 20000 });
+                const reportsPromise = fetchAllReports();
 
-            const stats = statsResult.status === 'fulfilled' ? asObject(statsResult.value) : null;
-            const trends = trendsResult.status === 'fulfilled'
-                ? asObject(trendsResult.value)
-                : null;
-            const reports = Array.isArray(reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
-                ? (reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
-                : [];
+                const [statsResult, trendsResult, reportsResult] = await Promise.allSettled([statsPromise, trendsPromise, reportsPromise]);
 
-            // Ignore stale async responses when a newer refresh was started.
-            if (latestReportAnalytics.requestId !== requestId) {
-                return;
+                const stats = statsResult.status === 'fulfilled' ? asObject(statsResult.value) : null;
+                const trends = trendsResult.status === 'fulfilled'
+                    ? asObject(trendsResult.value)
+                    : null;
+                const reports = Array.isArray(reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
+                    ? (reportsResult.status === 'fulfilled' ? reportsResult.value : allReports)
+                    : [];
+
+                // Ignore stale async responses when a newer refresh was started.
+                if (latestReportAnalytics.requestId !== requestId) {
+                    return;
+                }
+
+                latestReportAnalytics = {
+                    requestId,
+                    timeRange: interval,
+                    config,
+                    stats,
+                    trends: Array.isArray(trends?.series) ? trends.series : [],
+                    reports,
+                    fetchedAt: new Date().toISOString(),
+                };
+
+                renderReportAnalytics();
+                renderRecentReports();
+            } finally {
+                releaseButton();
             }
-
-            latestReportAnalytics = {
-                requestId,
-                timeRange: interval,
-                config,
-                stats,
-                trends: Array.isArray(trends?.series) ? trends.series : [],
-                reports,
-                fetchedAt: new Date().toISOString(),
-            };
-
-            renderReportAnalytics();
-            renderRecentReports();
         }
 
         function setScanType(type) {
@@ -6659,36 +6702,26 @@
                 return;
             }
 
-            const button = document.getElementById('uploadScanBtn');
-            const original = button ? button.innerHTML : '';
-            if (button) {
-                button.disabled = true;
-                button.innerHTML = '⏳ Scanning...';
-            }
-
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                const response = await fetch(`${API_BASE_URL}/api/v1/scan/file`, {
-                    method: 'POST',
-                    body: formData,
-                });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
+            await runWithButtonLoading('uploadScanBtn', 'Scanning...', async () => {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const response = await fetch(`${API_BASE_URL}/api/v1/scan/file`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    const result = await response.json();
+                    const isThreat = isThreatResult(result);
+                    showToast(`File scan complete: ${isThreat ? '⚠️ Threat detected' : '✅ Safe'}`, isThreat ? 'error' : 'success');
+                    setScanType(inferScanTypeFromFile(file));
+                    await Promise.allSettled([fetchScanHistory(), fetchDashboardStats(), fetchThreats(), fetchLogs()]);
+                } catch (error) {
+                    showToast(`File scan failed: ${error.message}`, 'error');
                 }
-                const result = await response.json();
-                const isThreat = isThreatResult(result);
-                showToast(`File scan complete: ${isThreat ? '⚠️ Threat detected' : '✅ Safe'}`, isThreat ? 'error' : 'success');
-                setScanType(inferScanTypeFromFile(file));
-                await Promise.allSettled([fetchScanHistory(), fetchDashboardStats(), fetchThreats(), fetchLogs()]);
-            } catch (error) {
-                showToast(`File scan failed: ${error.message}`, 'error');
-            } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.innerHTML = original || '📤 Scan';
-                }
-            }
+            });
         }
 
         async function scanSelectedFolder(fileList) {
@@ -6698,28 +6731,18 @@
                 return;
             }
 
-            const button = document.getElementById('folderScanBtn');
-            const original = button ? button.innerHTML : '';
-            if (button) {
-                button.disabled = true;
-                button.innerHTML = '⏳ Scanning folder...';
-            }
-
-            try {
-                const limit = Math.min(files.length, 20);
-                setScanType('file');
-                for (const file of files.slice(0, limit)) {
-                    await scanUploadedFile(file);
+            await runWithButtonLoading('folderScanBtn', 'Scanning folder...', async () => {
+                try {
+                    const limit = Math.min(files.length, 20);
+                    setScanType('file');
+                    for (const file of files.slice(0, limit)) {
+                        await scanUploadedFile(file);
+                    }
+                    showToast(`Folder scan finished (${limit}/${files.length} files processed)`, 'success');
+                } catch (error) {
+                    showToast(`Folder scan failed: ${error.message}`, 'error');
                 }
-                showToast(`Folder scan finished (${limit}/${files.length} files processed)`, 'success');
-            } catch (error) {
-                showToast(`Folder scan failed: ${error.message}`, 'error');
-            } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.innerHTML = original || '📂 Scan All';
-                }
-            }
+            });
         }
 
         async function refreshClientsPage() {
@@ -8031,21 +8054,14 @@
             const heartbeat = buildHeartbeatState();
             const mode = heartbeat.actionMode || heartbeat.level || 'normal';
             const actionBtn = document.getElementById('flowActionBtn');
-            const originalLabel = actionBtn ? actionBtn.textContent : '';
-            if (actionBtn) {
-                actionBtn.disabled = true;
-                actionBtn.textContent = 'Executing...';
-            }
+            const releaseButton = createButtonLoadingGuard(actionBtn, 'Executing...');
 
             if (mode === 'danger') {
                 switchPage('threats');
                 viewAllThreats();
                 Promise.allSettled([fetchThreats(), fetchLogs(), fetchSystemHealth(), fetchMonitoringStats()]).finally(() => {
                     showToast('Action mode: threat center opened', 'warning');
-                    if (actionBtn) {
-                        actionBtn.disabled = false;
-                        actionBtn.textContent = originalLabel || 'Open Threat Center';
-                    }
+                    releaseButton();
                     heartbeatActionRunning = false;
                 });
                 return;
@@ -8056,10 +8072,7 @@
                 toggleNotifications();
                 Promise.allSettled([fetchLogs(), fetchThreats(), fetchSystemHealth(), fetchMonitoringStats()]).finally(() => {
                     showToast('Action mode: review active alerts', 'info');
-                    if (actionBtn) {
-                        actionBtn.disabled = false;
-                        actionBtn.textContent = originalLabel || 'Review Alerts';
-                    }
+                    releaseButton();
                     heartbeatActionRunning = false;
                 });
                 return;
@@ -8079,10 +8092,7 @@
             ]).then(() => {
                 showToast('Operational refresh complete', 'success');
             }).finally(() => {
-                if (actionBtn) {
-                    actionBtn.disabled = false;
-                    actionBtn.textContent = originalLabel || 'Refresh Overview';
-                }
+                releaseButton();
                 heartbeatActionRunning = false;
             });
         }
@@ -9629,20 +9639,7 @@
         }
 
         async function runWithRefreshIndicator(buttonId, fn) {
-            const btn = document.getElementById(buttonId);
-            if (!btn) {
-                return fn();
-            }
-
-            const original = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Refreshing...';
-            try {
-                await fn();
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = original;
-            }
+            return runWithButtonLoading(buttonId, 'Refreshing...', fn);
         }
 
         function parseQuarantineTimestamp(item) {
@@ -9883,7 +9880,10 @@
             }
         }
 
-        async function fetchSystemHealth() {
+        async function fetchSystemHealth(showIndicator = false) {
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshSystemHealthBtn', 'Refreshing...')
+                : () => {};
             const contentEl = document.getElementById('systemHealthContent');
             if (contentEl) {
                 contentEl.innerHTML = '<div style="text-align:center;color:var(--muted-foreground);padding:1rem;">Refreshing system health...</div>';
@@ -9934,6 +9934,8 @@
                 setSyncStatus('warn', 'STATIC');
                 renderLiveSignalStrip();
                 updateSystemStatusPanel();
+            } finally {
+                releaseButton();
             }
         }
 
@@ -9949,27 +9951,30 @@
             }
         }
 
-        async function fetchActiveClients() {
+        async function fetchActiveClients(showIndicator = false) {
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshActiveClientsBtn', 'Refreshing...')
+                : () => {};
             await resolveDashboardRuntimeContext();
             const activeSection = document.getElementById('activeClientsSection');
             const activeCard = document.getElementById('activeClientsCard');
             const statusClientsValue = document.getElementById('statusClientsValue');
             const clientStatusItem = document.getElementById('clientStatusItem');
-            if (CLIENT_SAFE_DASHBOARD_MODE) {
-                if (activeSection) activeSection.style.display = 'none';
-                if (statusClientsValue) statusClientsValue.textContent = 'Hidden';
-                if (clientStatusItem) clientStatusItem.title = 'Client inventory hidden in client-safe mode';
-                updateSourceSignal('clients', { ok: true, dataTimestamp: Date.now() });
-                return;
-            }
-            if (activeSection) activeSection.style.display = 'block';
-            if (statusClientsValue) statusClientsValue.textContent = 'Loading...';
-            if (clientStatusItem) clientStatusItem.title = 'Click to view client inventory';
-            if (activeCard) {
-                activeCard.innerHTML = '<div style="text-align:center;color:var(--muted-foreground);padding:1rem;">Refreshing active clients...</div>';
-            }
-
             try {
+                if (CLIENT_SAFE_DASHBOARD_MODE) {
+                    if (activeSection) activeSection.style.display = 'none';
+                    if (statusClientsValue) statusClientsValue.textContent = 'Hidden';
+                    if (clientStatusItem) clientStatusItem.title = 'Client inventory hidden in client-safe mode';
+                    updateSourceSignal('clients', { ok: true, dataTimestamp: Date.now() });
+                    return;
+                }
+                if (activeSection) activeSection.style.display = 'block';
+                if (statusClientsValue) statusClientsValue.textContent = 'Loading...';
+                if (clientStatusItem) clientStatusItem.title = 'Click to view client inventory';
+                if (activeCard) {
+                    activeCard.innerHTML = '<div style="text-align:center;color:var(--muted-foreground);padding:1rem;">Refreshing active clients...</div>';
+                }
+
                 const clientsData = asObject(await apiRequest(API_ENDPOINTS.dashboardActiveClients)) || {};
                 latestActiveClients = clientsData;
                 const activeClients = asArray(clientsData.clients || []);
@@ -10047,10 +10052,15 @@
                     activeCard.innerHTML = '<div style="text-align:center;color:var(--warning);padding:1rem;">Unable to load active clients.</div>';
                 }
                 updateSourceSignal('clients', { ok: false, error: error?.message || 'active_clients_failed' });
+            } finally {
+                releaseButton();
             }
         }
 
-        async function fetchSecurityPosture() {
+        async function fetchSecurityPosture(showIndicator = false) {
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshSecurityPostureBtn', 'Refreshing...')
+                : () => {};
             const contentEl = document.getElementById('securityPostureContent');
             if (contentEl) {
                 contentEl.innerHTML = '<div style="text-align:center;color:var(--muted-foreground);padding:1rem;">Refreshing security posture...</div>';
@@ -10093,10 +10103,15 @@
                 }
                 updateSourceSignal('posture', { ok: false, error: error?.message || 'security_posture_failed' });
                 renderSecurityTaskMonitor();
+            } finally {
+                releaseButton();
             }
         }
 
-        async function fetchQuarantineInventory() {
+        async function fetchQuarantineInventory(showIndicator = false) {
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshQuarantineBtn', 'Refreshing...')
+                : () => {};
             const bodyEl = document.getElementById('quarantineTableBody');
             const statsEl = document.getElementById('quarantineStats');
             const shellEl = bodyEl?.closest('.table-shell');
@@ -10153,10 +10168,15 @@
                     statsEl.textContent = '';
                 }
                 updateSourceSignal('quarantine', { ok: false, error: error?.message || 'quarantine_failed' });
+            } finally {
+                releaseButton();
             }
         }
 
-        async function fetchAuditTelemetry() {
+        async function fetchAuditTelemetry(showIndicator = false) {
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshAuditTrailBtn', 'Refreshing...')
+                : () => {};
             const bodyEl = document.getElementById('auditTrailBody');
             if (bodyEl) {
                 bodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--muted-foreground);">Refreshing audit trail...</td></tr>';
@@ -10191,6 +10211,8 @@
                 if (bodyEl) {
                     bodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--warning);">Unable to load audit trail.</td></tr>';
                 }
+            } finally {
+                releaseButton();
             }
         }
 
@@ -10228,9 +10250,12 @@
             if (activityPanel) activityPanel.style.display = currentLiveTab === 'activity' ? 'block' : 'none';
         }
 
-        async function refreshLiveActivity() {
+        async function refreshLiveActivity(showIndicator = false) {
             if (liveActivityRefreshInFlight) return;
             liveActivityRefreshInFlight = true;
+            const releaseButton = showIndicator
+                ? createButtonLoadingGuard('refreshLiveActivityBtn', 'Refreshing...')
+                : () => {};
             const websitesBody = document.getElementById('liveWebsitesBody');
             const activityBody = document.getElementById('liveActivityBody');
             const activityCountEl = document.getElementById('liveActivityCount');
@@ -10300,15 +10325,12 @@
             } finally {
                 liveActivityRefreshInFlight = false;
                 lastLiveActivityRefreshAt = Date.now();
+                releaseButton();
             }
         }
 
         async function restoreSystemHealthStatic() {
-            const button = document.getElementById('staticRestoreHealthBtn');
-            if (button) {
-                button.disabled = true;
-                button.textContent = 'Restoring...';
-            }
+            const releaseButton = createButtonLoadingGuard('staticRestoreHealthBtn', 'Restoring...');
             try {
                 const resp = await apiRequest(API_ENDPOINTS.dashboardRestoreHealth, { method: 'POST' });
                 showToast(resp?.message || 'System health restored temporarily.', resp?.success ? 'success' : 'warning');
@@ -10316,10 +10338,7 @@
             } catch (error) {
                 showToast('Restore health failed: ' + (error?.message || 'Unknown error'), 'error');
             } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.textContent = '🩺 Restore System Health';
-                }
+                releaseButton();
             }
         }
 
@@ -10345,6 +10364,7 @@
         }
 
         async function fetchThreats() {
+            const releaseButton = createButtonLoadingGuard('[onclick="fetchThreats(); showToast(\'Threat feed refreshed\', \'info\');"]', 'Refreshing...');
             try {
                 const data = await apiRequest(API_ENDPOINTS.threats);
                 const incoming = Array.isArray(data)
@@ -10453,12 +10473,14 @@
             } catch (error) {
                 console.log('Using static threats data');
                 updateSourceSignal('threats', { ok: false, error: error?.message || 'threats_failed' });
+            } finally {
+                updateThreatFilterCounts();
+                renderThreats();
+                renderThreats('allThreatsPageTableBody');
+                renderThreats('allThreatsModalTableBody');
+                updateSystemStatusPanel();
+                releaseButton();
             }
-            updateThreatFilterCounts();
-            renderThreats();
-            renderThreats('allThreatsPageTableBody');
-            renderThreats('allThreatsModalTableBody');
-            updateSystemStatusPanel();
         }
 
         function renderLogs(logs) {
@@ -10610,6 +10632,8 @@
         }
 
         async function generateReportForInterval(interval) {
+            const releasePrimary = createButtonLoadingGuard('[onclick="generateReportForInterval(\'24h\')"]', 'Generating...');
+            const releaseSecondary = createButtonLoadingGuard('[onclick="generateReportForInterval(selectedReportInterval || \'24h\')"]', 'Generating...');
             const btnText = interval === '24h' ? 'Last 24 Hours' : interval === '7d' ? 'Last 7 Days' : 'Last 30 Days';
             const reportLabel = REPORT_TYPE_DETAILS[selectedReportType]?.label || 'Report';
             showToast(`${reportLabel} • ${btnText}`, 'info');
@@ -10675,13 +10699,14 @@
             } catch (error) {
                 console.error('Report generation error:', error);
                 showToast(`Failed to generate ${btnText} report: ` + error.message, 'error');
+            } finally {
+                releasePrimary();
+                releaseSecondary();
             }
         }
 
         async function generateReport() {
-            const btn = document.getElementById('generateReportBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> Generating...';
+            const releaseButton = createButtonLoadingGuard('generateReportBtn', 'Generating...');
 
             try {
                 const reportLabel = REPORT_TYPE_DETAILS[selectedReportType]?.label || 'Report';
@@ -10763,12 +10788,12 @@
                 console.error('Comprehensive report generation error:', error);
                 showToast(`Report failed: ${error.message}`, 'error');
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = `✨ GENERATE ${REPORT_TYPE_DETAILS[selectedReportType]?.label?.toUpperCase() || 'REPORT'} (ALL)`;
+                releaseButton();
             }
         }
 
         async function generateReportForScan(scanId) {
+            const releaseButton = createButtonLoadingGuard('[onclick^="generateReportForScan("]', 'Generating...');
             try {
                 const scanContext = latestScanHistory.find((entry) => String(entry?.scan_id || entry?.scanId || '') === String(scanId)) || {};
                 const payload = {
@@ -10859,6 +10884,8 @@
             } catch (error) {
                 console.error('Report generation error:', error);
                 showToast('Failed to generate report: ' + error.message, 'error');
+            } finally {
+                releaseButton();
             }
         }
 

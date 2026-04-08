@@ -6,7 +6,7 @@ Combines all 5 threat intelligence APIs with Gemini AI for predictive analysis
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +20,10 @@ from ....gemini_integration import get_gemini_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ThreatPredictionRequest(BaseModel):
@@ -181,7 +185,7 @@ class AIThreatEngine:
             context = {
                 "target": target_info,
                 "historical_threats": historical_data[-50:],  # Last 50 threats
-                "current_time": datetime.utcnow().isoformat()
+                "current_time": utcnow().isoformat()
             }
             
             prompt = f"""
@@ -362,7 +366,7 @@ async def predict_threat(request: ThreatPredictionRequest, db: AsyncSession = De
             "target": request.target,
             "prediction": prediction,
             "defense_strategy": strategy,
-            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "analysis_timestamp": utcnow().isoformat(),
             "historical_samples": len(historical_data)
         }
         
@@ -377,7 +381,7 @@ async def analyze_attack_patterns(request: AttackPatternAnalysisRequest, db: Asy
     Analyze attack patterns across the network using AI
     """
     try:
-        since_time = datetime.utcnow() - timedelta(hours=request.time_window)
+        since_time = utcnow() - timedelta(hours=request.time_window)
         
         # Get recent attacks
         query = select(AttackEvent).where(
@@ -441,7 +445,7 @@ Response in JSON format:
             "time_window_hours": request.time_window,
             "attacks_analyzed": len(attacks),
             "analysis": analysis,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         }
         
     except Exception as e:
@@ -479,7 +483,7 @@ Response in JSON format with actionable recommendations.
         return {
             "client_id": request.client_id,
             "recommendations": ai_response,
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": utcnow().isoformat()
         }
         
     except Exception as e:

@@ -4,15 +4,24 @@ import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-load_dotenv()
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+# Load environment variables from the authoritative project-root .env file.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ROOT_ENV_FILE = PROJECT_ROOT / ".env"
+if ROOT_ENV_FILE.exists():
+    load_dotenv(dotenv_path=str(ROOT_ENV_FILE), override=True)
+else:
+    logger.warning("Root .env not found at %s", ROOT_ENV_FILE)
 
 class GeminiConfig:
     """Manage Gemini API configuration with advanced features"""
@@ -96,7 +105,7 @@ class GeminiConfig:
         
         # Store in history
         self.config_history.append({
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'config': config.copy()
         })
         
@@ -249,7 +258,7 @@ class GeminiConfig:
             'errors': self.validation_errors.copy(),
             'warnings': [],
             'config_hash': self.get_config_hash(),
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': utcnow().isoformat()
         }
         
         if not validation_result['valid']:
@@ -305,7 +314,7 @@ class GeminiConfig:
             
             # Add to history
             self.config_history.append({
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': utcnow().isoformat(),
                 'config': self.config.copy(),
                 'updates': updates
             })
@@ -350,7 +359,7 @@ class GeminiConfig:
                 'config': self.config,
                 'metadata': {
                     'version': '1.0.0',
-                    'last_updated': datetime.utcnow().isoformat(),
+                    'last_updated': utcnow().isoformat(),
                     'config_hash': self.get_config_hash()
                 }
             }
@@ -441,7 +450,7 @@ class GeminiConfig:
             return None
         
         last_change = datetime.fromisoformat(self.config_history[-1]['timestamp'].replace('Z', '+00:00'))
-        return int((datetime.utcnow() - last_change).total_seconds())
+        return int((utcnow() - last_change).total_seconds())
     
     def print_config(self, show_sensitive: bool = False):
         """Print current configuration"""
@@ -912,7 +921,7 @@ def check_gemini_config_health() -> Dict[str, Any]:
     config = get_gemini_config()
     
     health_results = {
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': utcnow().isoformat(),
         'status': 'healthy',
         'checks': {},
         'issues': []

@@ -191,7 +191,7 @@ async def restore_system_health(db: AsyncSession = Depends(get_db)):
                         "forced_status": "healthy",
                         "forced_score": 95,
                         "reason": "restore_health",
-                        "created_at": datetime.utcnow().isoformat() + "Z",
+                        "created_at": utcnow().isoformat() + "Z",
                         "ttl_seconds": 1800,
                     },
                     indent=2,
@@ -229,7 +229,7 @@ async def fix_security_posture():
         # Add more hardening calls as needed (permissions, lockdown, etc.)
         # ...
         try:
-            activity_db.log_hardening_action({'timestamp': datetime.utcnow().isoformat(), 'actions': results})
+            activity_db.log_hardening_action({'timestamp': utcnow().isoformat(), 'actions': results})
         except Exception:
             pass
     except Exception as e:
@@ -274,7 +274,7 @@ async def harden_now():
         # ...
         # Optionally, log the hardening action
         try:
-            activity_db.log_hardening_action({'timestamp': datetime.utcnow().isoformat(), 'actions': results})
+            activity_db.log_hardening_action({'timestamp': utcnow().isoformat(), 'actions': results})
         except Exception:
             pass
     except Exception as e:
@@ -317,7 +317,12 @@ try:
 except Exception:  # pragma: no cover
     psutil = None
 
+from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 STARTUP_REPORT_PATH = Path.home() / ".sentinelai_startup_assessment.json"
 QUARANTINE_INDEX_PATH = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
@@ -333,7 +338,7 @@ def _hours_from_range(time_range: str) -> int:
 
 
 def _get_time_threshold(time_range: str) -> datetime:
-    return datetime.utcnow() - timedelta(hours=_hours_from_range(time_range))
+    return utcnow() - timedelta(hours=_hours_from_range(time_range))
 
 
 def _label(time_range: str) -> str:
@@ -552,7 +557,7 @@ async def get_dashboard_summary(
 
     return {
         "time_range": _label(time_range),
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
         "total_scans": all_manual,
         "threats_detected": threats_detected,
         "critical_threats": critical_threats,
@@ -836,7 +841,7 @@ async def get_monitoring_stats(
         return {
             "available": True,
             "time_range": _label(time_range),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "stats": bg,
             "threat_distribution": dist,
             "recent_activity": recent,
@@ -870,7 +875,7 @@ async def get_api_status(
         cached_payload
         and cached_range == normalized_range
         and isinstance(cached_at, datetime)
-        and (datetime.utcnow() - cached_at).total_seconds() < ttl_seconds
+        and (utcnow() - cached_at).total_seconds() < ttl_seconds
     ):
         return cached_payload
 
@@ -878,7 +883,7 @@ async def get_api_status(
         return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
     hours = _hours_from_range(normalized_range)
-    threshold = datetime.utcnow() - timedelta(hours=hours)
+    threshold = utcnow() - timedelta(hours=hours)
 
     # Query recent scans to get API usage. Keep this bounded so dashboard API calls stay responsive
     # even when scan history is very large.
@@ -995,7 +1000,7 @@ async def get_api_status(
             "capacity_source": capacity["capacity_source"],
             "supported_inputs": api_spec.get("supported_inputs", []),
             "error": meta.get("error"),
-            "last_checked": datetime.utcnow().isoformat() + "Z",
+            "last_checked": utcnow().isoformat() + "Z",
         }
         apis.append(api_dict)
 
@@ -1006,7 +1011,7 @@ async def get_api_status(
 
     payload = {
         "time_range": _label(normalized_range),
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
         "summary": {
             "total_apis": len(apis),
             "configured": total_configured,
@@ -1017,7 +1022,7 @@ async def get_api_status(
     }
 
     _API_STATUS_CACHE["time_range"] = normalized_range
-    _API_STATUS_CACHE["cached_at"] = datetime.utcnow()
+    _API_STATUS_CACHE["cached_at"] = utcnow()
     _API_STATUS_CACHE["payload"] = payload
     return payload
 
@@ -1095,7 +1100,7 @@ async def get_top_threats(
 @router.get("/system-health")
 async def get_system_health(db: AsyncSession = Depends(get_db)):
     """Comprehensive system health — APIs, databases, ML models, background monitor."""
-    now = datetime.utcnow()
+    now = utcnow()
 
     api_defs = [
         {"name": "VirusTotal",      "key": settings.VIRUSTOTAL_API_KEY,      "inputs": ["url","file_hash"]},
@@ -1215,7 +1220,7 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
             forced_score = int(override.get("forced_score", score) or score)
 
             created_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")) if created_at else None
-            now_ts = datetime.utcnow().timestamp()
+            now_ts = utcnow().timestamp()
             created_ts = created_dt.timestamp() if created_dt else None
             still_valid = bool(created_ts is not None and ttl_seconds > 0 and (now_ts - created_ts) <= ttl_seconds)
 
@@ -1245,7 +1250,7 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
                 "cpu_percent": float(psutil.cpu_percent(interval=None)),
                 "memory_percent": float(vm.percent),
                 "process_count": len(psutil.pids()),
-                "uptime_seconds": max(0.0, float(datetime.utcnow().timestamp() - psutil.boot_time())),
+                "uptime_seconds": max(0.0, float(utcnow().timestamp() - psutil.boot_time())),
             }
         except Exception as exc:
             logger.debug("runtime health metrics unavailable: %s", exc)
@@ -1363,7 +1368,7 @@ async def get_quarantine_inventory():
 
         return {
             "quarantine_id": item.get("quarantine_id") or item.get("attack_id") or item.get("timestamp"),
-            "timestamp": item.get("timestamp") or datetime.utcnow().isoformat(),
+            "timestamp": item.get("timestamp") or utcnow().isoformat(),
             "source": item.get("source") or source_hint,
             "type": action_type,
             "source_ip": source_ip,
@@ -1468,7 +1473,7 @@ async def get_api_quality_telemetry(window_hours: int = Query(24, ge=1, le=168))
             "window_hours": window_hours,
             "providers": snapshot,
             "provider_count": len(snapshot),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
         }
     except Exception as exc:
         logger.warning("API quality telemetry unavailable: %s", exc)
@@ -1476,7 +1481,7 @@ async def get_api_quality_telemetry(window_hours: int = Query(24, ge=1, le=168))
             "window_hours": window_hours,
             "providers": {},
             "provider_count": 0,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "warning": "telemetry unavailable",
         }
 
@@ -1488,7 +1493,7 @@ async def get_correlation_telemetry(window_minutes: int = Query(60, ge=5, le=144
         from ....core.security_telemetry import security_telemetry
 
         summary = security_telemetry.get_correlation_summary(minutes=window_minutes)
-        summary["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        summary["generated_at"] = utcnow().isoformat() + "Z"
         return summary
     except Exception as exc:
         logger.warning("Correlation telemetry unavailable: %s", exc)
@@ -1498,7 +1503,7 @@ async def get_correlation_telemetry(window_minutes: int = Query(60, ge=5, le=144
             "by_type": {},
             "by_verdict": {},
             "top_transitions": [],
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "warning": "telemetry unavailable",
         }
 
@@ -1515,7 +1520,7 @@ async def get_audit_telemetry(limit: int = Query(100, ge=1, le=500), event_type:
             "items": entries,
             "limit": limit,
             "event_type": event_type,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
         }
     except Exception as exc:
         logger.warning("Audit telemetry unavailable: %s", exc)
@@ -1524,7 +1529,7 @@ async def get_audit_telemetry(limit: int = Query(100, ge=1, le=500), event_type:
             "items": [],
             "limit": limit,
             "event_type": event_type,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "warning": "telemetry unavailable",
         }
 
@@ -1536,7 +1541,7 @@ async def get_accuracy_metrics(lookback_days: int = Query(30, ge=7, le=365)):
         from ....core.security_telemetry import security_telemetry
 
         metrics = security_telemetry.get_accuracy_metrics(lookback_days=lookback_days)
-        metrics["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        metrics["generated_at"] = utcnow().isoformat() + "Z"
         return metrics
     except Exception as exc:
         logger.warning("Accuracy metrics unavailable: %s", exc)
@@ -1546,7 +1551,7 @@ async def get_accuracy_metrics(lookback_days: int = Query(30, ge=7, le=365)):
             "samples": 0,
             "by_detector": {},
             "false_positive_trend": [],
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "warning": "accuracy metrics unavailable",
         }
 
@@ -1579,7 +1584,7 @@ async def run_weekly_threshold_tuning(
             "diagnostics": recommendation.get("diagnostics", {}),
             "metrics": recommendation.get("metrics", {}),
             "applied_profiles": applied.get("profiles", {}),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z"
         }
     except Exception as exc:
         logger.warning("Weekly threshold tuning failed: %s", exc)
@@ -1589,7 +1594,7 @@ async def run_weekly_threshold_tuning(
             "lookback_days": lookback_days,
             "min_samples": min_samples,
             "error": str(exc),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
         }
 
 
@@ -1632,7 +1637,7 @@ async def get_repeat_offenders(
         "time_range": _label(time_range),
         "total": len(offenders),
         "offenders": offenders,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
     }
 
 
@@ -1675,7 +1680,7 @@ async def get_attack_timeline(
     return {
         "time_range": _label(time_range),
         "points": series,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
     }
 
 
@@ -1688,7 +1693,7 @@ async def stream_logs(db: AsyncSession = Depends(get_db)):
     """Stream new system log entries via Server-Sent Events."""
 
     async def event_generator():
-        last_ts = datetime.utcnow() - timedelta(minutes=5)
+        last_ts = utcnow() - timedelta(minutes=5)
         while True:
             result = await db.execute(
                 select(SystemLog)

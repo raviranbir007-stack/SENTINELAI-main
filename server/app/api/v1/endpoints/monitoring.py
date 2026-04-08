@@ -10,7 +10,7 @@ with use_external_apis=False — zero external API quota is consumed.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends
@@ -22,6 +22,10 @@ from ....models import SystemLog
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ async def get_monitoring_stats(
         return {
             "available": True,
             "time_range": _label(time_range),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "note": "These scans run locally — no external API quota consumed.",
             **stats,
         }
@@ -137,7 +141,7 @@ async def get_recent_activity(
                     "confidence": 0.95 if severity == "critical" else 0.8 if severity == "high" else 0.6,
                     "indicator_count": 1,
                     "automated": True,
-                    "time": row.timestamp.isoformat() if row.timestamp else datetime.utcnow().isoformat(),
+                    "time": row.timestamp.isoformat() if row.timestamp else utcnow().isoformat(),
                     "source": row.component or "defense_event",
                     "description": row.message,
                     "details": details,
@@ -151,7 +155,7 @@ async def get_recent_activity(
         return {
             "available": True,
             "count": len(merged),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "items": merged,
         }
     except Exception as exc:
@@ -181,7 +185,7 @@ async def get_visited_websites(
         return {
             "available": True,
             "count": len(items),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "items": items,
         }
     except Exception as exc:
@@ -210,7 +214,7 @@ async def get_threat_feed(
         return {
             "available": True,
             "count": len(threats),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             "source": "background_auto_monitor",
             "threats": threats,
         }
@@ -269,7 +273,7 @@ async def get_threat_distribution(
         return {
             "available": True,
             "time_range": _label(time_range),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": utcnow().isoformat() + "Z",
             **dist,
         }
     except Exception as exc:

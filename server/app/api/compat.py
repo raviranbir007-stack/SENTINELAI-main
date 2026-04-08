@@ -8,7 +8,7 @@ import json
 import struct
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, List, Dict
@@ -27,6 +27,10 @@ from ..models import AttackEvent, ScanHistory, SystemLog
 
 # Initialize the router for all compatibility endpoints
 router = APIRouter()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Local file analysis helpers (no external API keys required)
@@ -725,7 +729,7 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
     import time
     logger = logging.getLogger(__name__)
     
-    scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
+    scan_id = f"GEN_{int(utcnow().timestamp())}_{random.randint(1000, 9999)}"
     logger.debug(f"SCAN {scan_id} started | type={req.type} | target={req.target}")
     
     # Track scan duration
@@ -760,7 +764,7 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             "verdict": verdict,
             "confidence": analysis_result.get("confidence", 0.0),
             "summary": analysis_result.get("summary", "Analysis complete"),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             # Include API results for detailed view
             "api_results": analysis_result.get("api_results", {}),
             "threat_indicators": analysis_result.get("threat_indicators", []),
@@ -792,7 +796,7 @@ async def generic_scan(req: GenericScanRequest, db: AsyncSession = Depends(get_d
             "verdict": "error",
             "confidence": 0.0,
             "summary": f"Analysis failed: {str(e)}",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             "error": str(e),
         }
 
@@ -879,7 +883,7 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
     Returns a combined verdict — malicious files are detected even without API keys.
     """
     import time
-    scan_id = f"GEN_{int(datetime.utcnow().timestamp())}_{random.randint(1000, 9999)}"
+    scan_id = f"GEN_{int(utcnow().timestamp())}_{random.randint(1000, 9999)}"
     filename = file.filename or "unknown"
     scan_start = time.time()
 
@@ -951,7 +955,7 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
             "verdict":         final_verdict,
             "confidence":      round(confidence, 4),
             "summary":         _build_file_summary(filename, local, final_verdict, all_indicators),
-            "timestamp":       datetime.utcnow().isoformat(),
+            "timestamp":       utcnow().isoformat(),
             "scan_duration_ms": scan_duration_ms,
             # Local analysis detail
             "local_analysis": {
@@ -1035,7 +1039,7 @@ async def scan_file(file: UploadFile = File(...), db: AsyncSession = Depends(get
             "verdict":    "error",
             "confidence": 0.0,
             "summary":    f"File analysis failed: {str(e)}",
-            "timestamp":  datetime.utcnow().isoformat(),
+            "timestamp":  utcnow().isoformat(),
             "error":      str(e),
         }
 
@@ -1462,7 +1466,7 @@ async def get_api_status(db: AsyncSession = Depends(get_db)):
         "hybrid analysis": "Hybrid Analysis",
     }
 
-    now = datetime.utcnow()
+    now = utcnow()
     # Ensure timezone-aware comparison
     since_24h = now - timedelta(days=1)
     since_1m = now - timedelta(minutes=1)
@@ -1625,7 +1629,7 @@ async def generate_report(req: ReportRequest):
         )
 
     # Generate unique report ID
-    now = datetime.utcnow()
+    now = utcnow()
     report_id = f"RPT_{int(now.timestamp())}_{random.randint(1000, 9999)}"
     
     target = req.target or "unknown"

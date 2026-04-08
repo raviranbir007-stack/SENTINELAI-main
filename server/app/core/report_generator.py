@@ -1472,9 +1472,45 @@ class ReportGenerator:
         # Remove repetitive footer echoes and duplicate headings often returned by model retries.
         cleaned = re.sub(r"(SENTINEL-AI \| Automated Threat Detection.*)$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
 
-        min_words = 140 if self._normalize_report_type(report_type) != "executive_summary" else 110
-        if len(cleaned.split()) < min_words:
+        # Guard against placeholder/no-content answers while allowing concise but complete summaries.
+        lowered = cleaned.lower()
+        bad_markers = (
+            "i cannot",
+            "i can't",
+            "unable to provide",
+            "not enough information",
+            "insufficient data",
+            "n/a",
+            "placeholder",
+            "lorem ipsum",
+        )
+        if any(marker in lowered for marker in bad_markers):
             return ""
+
+        words = cleaned.split()
+        word_count = len(words)
+        normalized_type = self._normalize_report_type(report_type)
+        hard_floor = 85 if normalized_type == "executive_summary" else 105
+
+        # Accept shorter outputs only if they contain structured analytical sections.
+        has_structured_sections = bool(
+            re.search(
+                r"\b(executive\s+summary|risk\s+assessment|analysis|findings|recommendations?|mitigation|confidence|verdict|timeline|forensic)\b",
+                lowered,
+            )
+        )
+        soft_floor = 65
+
+        if word_count < soft_floor:
+            return ""
+        if word_count < hard_floor and not has_structured_sections:
+            return ""
+
+        # Avoid single-line responses that pass word checks but are low readability.
+        paragraph_count = len([line for line in cleaned.split("\n") if line.strip()])
+        if paragraph_count < 2 and word_count < (hard_floor + 10):
+            return ""
+
         return cleaned
 
     def _make_analysis_cache_key(self, threat_data: Dict[str, Any]) -> str:
@@ -1997,7 +2033,11 @@ class ReportGenerator:
             if sanitized:
                 self._store_cached_analysis(cache_key, sanitized)
                 return sanitized
-            logger.warning("Gemini returned incomplete analysis; using deterministic fallback")
+            logger.warning(
+                "Gemini returned incomplete analysis (words=%d, report_type=%s); using deterministic fallback",
+                len(str(genai_result).split()),
+                self._normalize_report_type(threat_data.get("report_type", "executive_summary")),
+            )
 
         # Final fallback to deterministic local analysis
         logger.debug("Using local analysis (%s)", self._last_gemini_failure_reason or "Gemini unavailable")

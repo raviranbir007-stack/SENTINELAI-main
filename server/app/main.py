@@ -3,6 +3,7 @@ import logging
 import time
 import asyncio
 import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -25,10 +26,13 @@ if server_dir not in sys.path:
 from .middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from .health_checks import validate_startup, run_health_checks
 
-# Load environment variables from multiple sources
-load_dotenv()  # Load from .env in project root
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))  # Load server/.env
-load_dotenv(dotenv_path="../.env.example")  # Also load from .env.example
+# Load environment variables from the authoritative project-root .env only.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ROOT_ENV_FILE = PROJECT_ROOT / ".env"
+if ROOT_ENV_FILE.exists():
+    load_dotenv(dotenv_path=str(ROOT_ENV_FILE), override=True)
+else:
+    logging.getLogger(__name__).warning("Root .env not found at %s", ROOT_ENV_FILE)
 
 # Configure logging with colored output when available
 try:

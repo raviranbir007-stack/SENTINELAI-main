@@ -5,11 +5,15 @@ Addresses the 79.1% single-source detection gap
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class CorroborationLevel(str, Enum):
@@ -128,7 +132,7 @@ class CorroborationEngine:
                 'sources': corroboration_metrics['sources'],
                 'weighted_score': corroboration_metrics['weighted_score'],
                 'agreement_rate': corroboration_metrics['agreement_rate'],
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': utcnow().isoformat()
             },
             'verdict': {
                 'classification': verdict_data['classification'],
@@ -182,7 +186,7 @@ class CorroborationEngine:
                         'verdict': ThreatVerdict.CLEAN,
                         'confidence': 0.60,
                         'details': 'No threat indicators reported',
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'timestamp': utcnow().isoformat(),
                         'raw_data': result
                     }
                     sources.append(clean_source)
@@ -209,7 +213,7 @@ class CorroborationEngine:
                 'verdict': self._severity_to_verdict(indicator.get('severity', 'low')),
                 'confidence': indicator.get('confidence', 0.5),
                 'details': indicator.get('indicator', ''),
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': utcnow().isoformat(),
                 'raw_data': indicator
             }
             sources.append(source_data)
@@ -225,7 +229,7 @@ class CorroborationEngine:
             'verdict': ThreatVerdict.CLEAN,
             'confidence': 0.0,
             'details': '',
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': utcnow().isoformat(),
             'raw_data': result
         }
         

@@ -78,7 +78,7 @@ import os
 import re
 import struct
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -495,7 +495,7 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
 
 def _generate_scan_id(prefix: str) -> str:
     """Generate a collision-resistant scan ID suitable for DB unique constraints."""
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     return f"{prefix}_{ts}_{uuid4().hex[:8]}"
 
 
@@ -958,7 +958,7 @@ async def scan_file(
             "threats_detected": len(all_indicators),
             "verdict":          final_verdict,
             "analysis":         analysis_result,
-            "timestamp":        datetime.utcnow().isoformat(),
+            "timestamp":        datetime.now(timezone.utc).isoformat(),
             "report_url":       report_url,
             "target_type":      "file",
             "target":           file.filename,
@@ -1048,7 +1048,7 @@ async def scan_url(request: ThreatScanRequest, db: AsyncSession = Depends(get_db
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "report_url": report_url,
             "target_type": "url",
             "target_name": url,
@@ -1119,7 +1119,7 @@ async def scan_ip(request: ThreatScanRequest, db: AsyncSession = Depends(get_db)
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "report_url": report_url,
             "target_type": "ip",
             "target_name": ip,
@@ -1189,7 +1189,7 @@ async def scan_hash(request: ThreatScanRequest, db: AsyncSession = Depends(get_d
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "report_url": report_url,
             "target_type": "hash",
             "target_name": file_hash,
@@ -1270,7 +1270,7 @@ async def universal_scan(request: ThreatScanRequest, db: AsyncSession = Depends(
             "confidence": analysis_result.get("confidence", 0.0),
             "threats_detected": len(analysis_result.get("threat_indicators", [])),
             "analysis": analysis_result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "report_url": report_url,
             "target_type": input_type.value,
             "target_name": target,
@@ -1358,7 +1358,7 @@ async def get_scan_results(scan_id: str):
     return {
         "scan_id": scan_id,
         "status": "complete",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "message": "For real-time results, use the /scan endpoint directly",
         "note": "Database integration recommended for production use",
         "api_coverage": api_coverage_section,

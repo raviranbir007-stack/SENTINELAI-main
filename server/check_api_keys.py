@@ -6,8 +6,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file
-env_file = Path(__file__).parent / ".env"
+# Load authoritative project-root .env file
+env_file = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_file)
 
 print("="*80)
@@ -15,7 +15,7 @@ print("🔑 API KEY CONFIGURATION STATUS")
 print("="*80)
 
 # Check for .env file
-env_file = Path(__file__).parent / ".env"
+env_file = Path(__file__).resolve().parent.parent / ".env"
 if env_file.exists():
     print(f"✅ .env file found: {env_file}")
 else:

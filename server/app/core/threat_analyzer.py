@@ -11,7 +11,7 @@ import logging
 import os
 import socket
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List
@@ -44,6 +44,10 @@ except ImportError:
     logging.warning("AI analyzer not available")
 
 logger = logging.getLogger(__name__)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 ALL_EXTERNAL_APIS = [
@@ -622,7 +626,7 @@ class ThreatAnalyzer:
 
         return {
             "analysis_version": "3.0",
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "orchestration": {
                 "engine": "SENTINEL-AI Multi-Source Orchestrator",
                 "apis_expected": api_participation.get("total_expected", 0),
@@ -970,7 +974,7 @@ class ThreatAnalyzer:
                 "input": value,
                 "input_type": InputType.DOMAIN.value,
                 "metadata": {"local_target": True},
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "api_results": {},
                 "threat_indicators": [],
                 "verdict": ThreatLevel.CLEAN,
@@ -996,7 +1000,7 @@ class ThreatAnalyzer:
             "input": value,
             "input_type": input_type.value,
             "metadata": metadata,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "api_results": {},
             "threat_indicators": [],
             "verdict": ThreatLevel.CLEAN,
@@ -2509,7 +2513,7 @@ class ThreatAnalyzer:
         seen = set()
 
         def add_event(timestamp: str, stage: str, source: str, details: str, confidence: float = 0.0) -> None:
-            normalized_timestamp = str(timestamp or "").strip() or datetime.utcnow().isoformat()
+            normalized_timestamp = str(timestamp or "").strip() or utcnow().isoformat()
             key = (normalized_timestamp, stage, source, details)
             if key in seen:
                 return
@@ -2690,7 +2694,7 @@ class ThreatAnalyzer:
                     'original_verdict': original_verdict,
                     'adjusted_verdict': result['verdict'],
                     'reasons': escalation_reasons,
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': utcnow().isoformat()
                 }
                 
                 logger.debug(f"Verdict escalated from {original_verdict} to {result['verdict']} based on AI analysis")
@@ -2836,7 +2840,7 @@ class ThreatAnalyzer:
         if ts:
             try:
                 ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                age_hours = (datetime.utcnow() - ts_dt.replace(tzinfo=None)).total_seconds() / 3600.0
+                age_hours = (datetime.now(timezone.utc).replace(tzinfo=None) - ts_dt.replace(tzinfo=None)).total_seconds() / 3600.0
                 if age_hours > 24:
                     issues.append("stale_data")
                     warnings.append(f"Analysis data age is {age_hours:.1f}h; consider refreshing before reporting.")
@@ -2880,7 +2884,7 @@ class ThreatAnalyzer:
                     "source": api_name,
                     "severity": "info",
                     "indicator": "No threats detected",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "status": "checked",
                     "threats_found": 0
                 }
@@ -2967,7 +2971,7 @@ class ThreatAnalyzer:
                     "source": source,
                     "severity": threat.get("severity"),
                     "indicator": threat.get("indicator"),
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": utcnow().isoformat()
                 }
                 
                 # Add source-specific IDs/links for forensic traceability
@@ -3444,7 +3448,7 @@ class ThreatAnalyzer:
                     result.setdefault("forensic_metadata", {})["alert_suppression"] = {
                         "suppressed": True,
                         "reason": suppression_reason,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     }
                 else:
                     # Record the alert for future deduplication

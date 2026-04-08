@@ -2,7 +2,7 @@ from pathlib import Path
 import io
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -44,6 +44,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _safe_report_name(raw_name: str) -> str:
@@ -162,7 +166,7 @@ async def _generate_report_bytes_with_timeout(threat_analysis: dict, data: Repor
 @router.post("/generate")
 async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db)):
     try:
-        now = datetime.utcnow()
+        now = utcnow()
         report_id = _safe_report_name(data.scan_id or data.target or f"report_{int(now.timestamp())}")
         if data.scan_id:
             result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == data.scan_id))
@@ -195,7 +199,7 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
                     "status": "complete",
                     "report_type": data.report_type or "executive_summary",
                     "intervals": data.intervals or ["24h", "7d", "30d"],
-                    "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
+                    "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else utcnow().isoformat(),
                 }
 
                 report_bytes = await _generate_report_bytes_with_timeout(threat_analysis, data)
@@ -250,7 +254,7 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
             "status": "complete",
             "report_type": report_type,
             "intervals": data.intervals or ["24h", "7d", "30d"],
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
         }
         report_bytes = await _generate_report_bytes_with_timeout(threat_analysis, data)
         if not report_bytes:
@@ -315,7 +319,7 @@ async def list_reports():
                     {"reports": reports, "count": len(reports)},
                     headers={
                         "Cache-Control": "public, max-age=5",
-                        "ETag": f'"{len(reports)}-{datetime.utcnow().timestamp():.0f}"'
+                        "ETag": f'"{len(reports)}-{utcnow().timestamp():.0f}"'
                     }
                 )
                 return response
@@ -341,7 +345,7 @@ async def list_reports():
             {"reports": reports, "count": len(reports)},
             headers={
                 "Cache-Control": "public, max-age=5",
-                "ETag": f'"{len(reports)}-{datetime.utcnow().timestamp():.0f}"'
+                "ETag": f'"{len(reports)}-{utcnow().timestamp():.0f}"'
             }
         )
         return response
@@ -419,7 +423,7 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
                 "status": "complete",
                 "report_type": analysis_data.get("report_type", "executive_summary"),
                 "intervals": analysis_data.get("intervals", ["24h", "7d", "30d"]),
-                "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else datetime.utcnow().isoformat(),
+                "timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else utcnow().isoformat(),
             }
             pdf_bytes = await report_generator.generate_analysis_report(threat_analysis)
             if not pdf_bytes:

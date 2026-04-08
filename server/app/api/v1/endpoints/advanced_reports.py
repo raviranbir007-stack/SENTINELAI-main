@@ -5,7 +5,7 @@ import io
 import logging
 import time
 import ipaddress
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +16,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _infer_indicator_type(value: str) -> str:
@@ -422,7 +426,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                         "threats_detected": len(interval_indicators),
                         "verdict": interval_verdict,
                         "confidence": interval_confidence,
-                        "created": datetime.utcnow().isoformat(),
+                        "created": utcnow().isoformat(),
                         "download_url": f"/api/v1/reports/download/{suite_id}",
                     }
                     _store_generated_report(suite_meta, suite_bytes)
@@ -465,7 +469,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
             "verdict": computed_verdict,
             "confidence": computed_confidence,
             "report_timezone": req.report_timezone,
-            "created": datetime.utcnow().isoformat(),
+            "created": utcnow().isoformat(),
             "download_url": f"/api/v1/reports/download/{report_id}",
         }
         _store_generated_report(report_meta, report_bytes)
@@ -635,7 +639,7 @@ async def generate_interval_analysis_report(req: AdvancedReportRequest):
             "verdict": computed_verdict,
             "confidence": computed_confidence,
             "report_timezone": req.report_timezone,
-            "created": datetime.utcnow().isoformat(),
+            "created": utcnow().isoformat(),
             "download_url": f"/api/v1/reports/download/{report_id}",
         }
         _store_generated_report(report_meta, report_bytes)

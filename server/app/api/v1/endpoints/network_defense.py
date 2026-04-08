@@ -12,7 +12,7 @@ import os
 import re
 import socket
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -40,6 +40,11 @@ from ....models import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Dependency to enforce only approved clients can access features
 async def approved_client_required(request: Request, db: AsyncSession = Depends(get_db)):
@@ -161,7 +166,7 @@ def _registration_alert_recipients() -> list[str]:
 
 
 def _registration_alert_context(*, client_id: str, request, status: str, changed_fields: Optional[list[str]] = None) -> tuple[str, str]:
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    now = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     title = "New Client Verification Required" if status == "pending_verification" else "Client Registration Updated"
     headline = "New Client Registered" if status == "pending_verification" else "Client Identity Updated"
     changes_html = ""
@@ -369,7 +374,7 @@ def _extract_runtime_identity(status_payload: Optional[dict]) -> dict:
     data = {
         "current_os_user": os_user or None,
         "current_os_uid": uid_value,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": utcnow().isoformat(),
     }
     if not data["current_os_user"] and data["current_os_uid"] is None:
         return {}
@@ -383,7 +388,7 @@ def _get_fresh_runtime_identity(client_id: str) -> dict:
 
     try:
         updated_at = datetime.fromisoformat(str(runtime.get("updated_at")))
-        if (datetime.utcnow() - updated_at).total_seconds() > _RUNTIME_STATE_TTL_SECONDS:
+        if (utcnow() - updated_at).total_seconds() > _RUNTIME_STATE_TTL_SECONDS:
             return {}
     except Exception:
         return {}
@@ -946,7 +951,7 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                     changed_fields.append(field_name)
 
             # Update existing client (do NOT reset protection_enabled)
-            existing_client.last_seen = datetime.utcnow()
+            existing_client.last_seen = utcnow()
             existing_client.is_active = existing_client.is_active if existing_client.is_active is not None else False
             existing_client.version = request.version
             existing_client.hostname = request.hostname
@@ -1097,7 +1102,7 @@ async def client_heartbeat(
                 raise HTTPException(status_code=404, detail="Client not found")
 
             was_active = bool(client.is_active)
-            client.last_seen = datetime.utcnow()
+            client.last_seen = utcnow()
             client.is_active = True
 
             heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
@@ -1123,7 +1128,7 @@ async def client_heartbeat(
                     recent_logs = recent_result.scalars().all()
 
                     should_log = True
-                    cutoff = datetime.utcnow() - timedelta(minutes=2)
+                    cutoff = utcnow() - timedelta(minutes=2)
                     for row in recent_logs:
                         details = row.details or {}
                         if details.get("state_signature") == signature and (row.timestamp or cutoff) >= cutoff:
@@ -1202,7 +1207,7 @@ async def client_heartbeat(
                     f"<p><strong>Client ID:</strong> {first_seen_alert.get('client_id')}</p>"
                     f"<p><strong>Hostname:</strong> {first_seen_alert.get('hostname')}</p>"
                     f"<p><strong>IP:</strong> {first_seen_alert.get('ip_address')}</p>"
-                    f"<p><strong>Timestamp:</strong> {datetime.utcnow().isoformat()}</p>"
+                    f"<p><strong>Timestamp:</strong> {utcnow().isoformat()}</p>"
                 )
                 await NotificationEngine.send_email(recipients, subject, body)
 
@@ -1214,7 +1219,7 @@ async def client_heartbeat(
                 f"<p><strong>Hostname:</strong> {notify_quarantine.get('hostname')}</p>"
                 f"<p><strong>IP:</strong> {notify_quarantine.get('ip_address')}</p>"
                 f"<p><strong>Active attacks:</strong> {notify_quarantine.get('active_attacks')}</p>"
-                f"<p><strong>Timestamp:</strong> {notify_quarantine.get('timestamp') or datetime.utcnow().isoformat()}</p>"
+                f"<p><strong>Timestamp:</strong> {notify_quarantine.get('timestamp') or utcnow().isoformat()}</p>"
             )
             sent = await NotificationEngine.send_email(settings.ALERT_EMAIL, subject, body)
             if not sent:
@@ -1270,7 +1275,7 @@ async def list_clients(
     try:
         if active_only:
             # Only show clients seen in last 10 minutes and marked active
-            cutoff_time = datetime.utcnow() - timedelta(minutes=10)
+            cutoff_time = utcnow() - timedelta(minutes=10)
             query = select(ClientInstallation).where(
                 and_(ClientInstallation.is_active == True, ClientInstallation.last_seen >= cutoff_time)
             )
@@ -1331,7 +1336,7 @@ async def list_clients(
                 "ips": admin_ips,
                 "primary_ip": next((ip for ip in admin_ips if ip not in {"127.0.0.1", "::1"}), admin_ips[0] if admin_ips else None),
             },
-            "server_time": datetime.utcnow().isoformat() + "Z",
+            "server_time": utcnow().isoformat() + "Z",
         }
 
     except Exception as e:
@@ -1380,7 +1385,7 @@ async def report_attack(
             }.get(request.severity.lower(), 0.62)
         )
 
-        recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+        recent_cutoff = utcnow() - timedelta(minutes=10)
         recent_query = (
             select(func.count(AttackEvent.id))
             .where(AttackEvent.target_client_id == client.id)
@@ -1497,7 +1502,7 @@ async def execute_defense_action(
 
         action.status = "executed" if success else "failed"
         action.successful = success
-        action.executed_at = datetime.utcnow()
+        action.executed_at = utcnow()
 
         if success and request.action_type in {"block_ip", "block_domain"}:
             req_details = request.details if isinstance(request.details, dict) else {}
@@ -1574,7 +1579,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
 
         recent_baseline_count = 1
         if client_fk:
-            recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+            recent_cutoff = utcnow() - timedelta(minutes=10)
             recent_q = (
                 select(func.count(AttackEvent.id))
                 .where(AttackEvent.target_client_id == client_fk)
@@ -1709,7 +1714,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                             "user_initiated": bool(request.user_initiated),
                         },
                         status="executed",
-                        executed_at=datetime.utcnow(),
+                        executed_at=utcnow(),
                         attack_event_id=attack.id,
                         client_id=client_fk,
                         successful=True,
@@ -1717,7 +1722,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                 )
 
         # Correlate burst activity for the same source/client in the last 10 minutes
-        since_time = datetime.utcnow() - timedelta(minutes=10)
+        since_time = utcnow() - timedelta(minutes=10)
         base_query = select(func.count(AttackEvent.id)).where(AttackEvent.detected_at >= since_time)
         if source_ip:
             base_query = base_query.where(AttackEvent.source_ip == source_ip)
@@ -1859,7 +1864,7 @@ async def respond_to_defense_event(
         affected_clients = []
 
         if is_global_quarantine:
-            now = datetime.utcnow()
+            now = utcnow()
 
             active_attacks_res = await db.execute(select(AttackEvent))
             for attack_event in active_attacks_res.scalars().all():
@@ -1900,7 +1905,7 @@ async def respond_to_defense_event(
 
         response_action.status = "executed" if successful else "failed"
         response_action.successful = successful
-        response_action.executed_at = datetime.utcnow()
+        response_action.executed_at = utcnow()
         if successful and action == "BLOCK" and action_type in {"block_ip", "block_domain"}:
             rollback_seconds = int(
                 metadata.get("temporary_seconds")
@@ -1929,7 +1934,7 @@ async def respond_to_defense_event(
             }[action]
             if action == "BLOCK":
                 attack.blocked = successful
-                attack.blocked_at = datetime.utcnow() if successful else attack.blocked_at
+                attack.blocked_at = utcnow() if successful else attack.blocked_at
 
         db.add(
             SystemLog(
@@ -2094,7 +2099,7 @@ async def simulate_threat_replay(request: ReplayBatchRequest, db: AsyncSession =
             client = c_res.scalar_one_or_none()
             if client:
                 client_fk = client.id
-                recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
+                recent_cutoff = utcnow() - timedelta(minutes=10)
                 recent_q = (
                     select(func.count(AttackEvent.id))
                     .where(AttackEvent.target_client_id == client_fk)
@@ -2149,7 +2154,7 @@ async def simulate_threat_replay(request: ReplayBatchRequest, db: AsyncSession =
     return {
         "total": len(results),
         "results": results,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
     }
 
 
@@ -2162,7 +2167,7 @@ async def list_defense_events(
 ):
     """Return recent defense event timeline for analyst investigation."""
     try:
-        since_time = datetime.utcnow() - timedelta(hours=hours)
+        since_time = utcnow() - timedelta(hours=hours)
         query = (
             select(SystemLog)
             .where(SystemLog.component == "defense_event")
@@ -2210,7 +2215,7 @@ async def list_attacks(
     List detected attacks
     """
     try:
-        since_time = datetime.utcnow() - timedelta(hours=hours)
+        since_time = utcnow() - timedelta(hours=hours)
 
         query = select(AttackEvent).where(AttackEvent.detected_at >= since_time)
 
@@ -2296,7 +2301,7 @@ async def list_incidents(
                     return normalized
             return None
 
-        since_time = datetime.utcnow() - timedelta(hours=hours)
+        since_time = utcnow() - timedelta(hours=hours)
         max_items = max(1, min(int(limit or 500), 1000))
 
         attack_query = select(AttackEvent).where(AttackEvent.detected_at >= since_time)
@@ -2692,11 +2697,11 @@ async def _execute_defense_response(
 
                 action.status = "executed" if success else "failed"
                 action.successful = success
-                action.executed_at = datetime.utcnow()
+                action.executed_at = utcnow()
 
                 if success:
                     attack.blocked = True
-                    attack.blocked_at = datetime.utcnow()
+                    attack.blocked_at = utcnow()
                     attack.status = "blocked"
 
                     rollback_seconds = int(getattr(settings, "SENTINEL_TEMP_BLOCK_ROLLBACK_SECONDS", 900) or 900)
@@ -2724,7 +2729,7 @@ async def _check_network_attack_patterns(attack_type: str, source_ip: Optional[s
         async with db.begin():
             # Check for multiple attacks from same source
             if source_ip:
-                since_time = datetime.utcnow() - timedelta(hours=1)
+                since_time = utcnow() - timedelta(hours=1)
 
                 query = (
                     select(AttackEvent)
@@ -2889,11 +2894,11 @@ async def revert_defense_action(
         success = await _apply_defense_action(rollback_action, db)
         rollback_action.status = "executed" if success else "failed"
         rollback_action.successful = success
-        rollback_action.executed_at = datetime.utcnow()
+        rollback_action.executed_at = utcnow()
 
         if success:
             action.status = "reverted"
-            action.reverted_at = datetime.utcnow()
+            action.reverted_at = utcnow()
 
         db.add(
             SystemLog(
@@ -2932,7 +2937,7 @@ async def sweep_expired_rollbacks(
 ):
     """Revert temporary blocks whose rollback windows have expired."""
     try:
-        now = datetime.utcnow()
+        now = utcnow()
         res = await db.execute(
             select(DefenseAction).where(
                 DefenseAction.status == "executed",
@@ -2978,11 +2983,11 @@ async def sweep_expired_rollbacks(
             ok = await _apply_defense_action(rollback_action, db)
             rollback_action.status = "executed" if ok else "failed"
             rollback_action.successful = bool(ok)
-            rollback_action.executed_at = datetime.utcnow()
+            rollback_action.executed_at = utcnow()
 
             if ok:
                 action.status = "reverted"
-                action.reverted_at = datetime.utcnow()
+                action.reverted_at = utcnow()
                 reverted += 1
 
         await db.commit()

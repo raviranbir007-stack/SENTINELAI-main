@@ -19,7 +19,7 @@ import textwrap
 import time
 import urllib.request
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Set
 from urllib.parse import quote, urlparse
@@ -37,6 +37,10 @@ except ImportError:
     psutil = None
 
 logger = logging.getLogger("AutoMonitor")
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class AutomaticActivityMonitor:
@@ -1648,7 +1652,7 @@ class AutomaticActivityMonitor:
             return
         
         self.running = True
-        self.stats['start_time'] = datetime.utcnow()
+        self.stats['start_time'] = utcnow()
         self._seed_download_baseline()
         
         mode = "active+passive" if self.enable_network_monitoring else "passive"
@@ -1678,7 +1682,7 @@ class AutomaticActivityMonitor:
         
         # Print summary
         if self.stats['start_time']:
-            duration = datetime.utcnow() - self.stats['start_time']
+            duration = utcnow() - self.stats['start_time']
             
             duration_str = str(duration).split('.')[0]
             self._render_prompt_table(
