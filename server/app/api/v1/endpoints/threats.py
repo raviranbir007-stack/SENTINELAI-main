@@ -1,10 +1,23 @@
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 router = APIRouter()
+
+
+def _parse_timestamp_utc(value: str) -> Optional[datetime]:
+    """Parse ISO timestamp and return a timezone-aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # Endpoint to mark all threats as read (acknowledged)
 @router.post("/mark-all-read")
@@ -71,7 +84,7 @@ async def get_threats(
     from .scan import _scan_history
     
     # Calculate date range
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     if time_range == "24h":
         start = now - timedelta(hours=24)
@@ -81,9 +94,10 @@ async def get_threats(
         start = now - timedelta(days=30)
     elif time_range == "custom" and start_date and end_date:
         try:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            end = datetime.strptime(end_date, "%Y-%m-%d")
-            end = end.replace(hour=23, minute=59, second=59)
+            start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
         except ValueError:
             return {"error": "Invalid date format. Use YYYY-MM-DD"}
     else:
@@ -94,7 +108,9 @@ async def get_threats(
     seen_ids = set()
     seen_fingerprints = set()
     for scan in _scan_history:
-        scan_time = datetime.fromisoformat(scan["timestamp"])
+        scan_time = _parse_timestamp_utc(scan.get("timestamp", ""))
+        if scan_time is None:
+            continue
         if scan_time >= start:
             threat_level = scan.get("threat_level", "unknown")
             threats_count = scan.get("threats_detected", 0)
@@ -159,7 +175,11 @@ async def get_threats(
         "time_range": time_range,
         "start_date": start.isoformat(),
         "end_date": (
-            (datetime.strptime(end_date, "%Y-%m-%d") if end_date else now).isoformat()
+            (
+                datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                if end_date
+                else now
+            ).isoformat()
             if time_range == "custom"
             else now.isoformat()
         ),

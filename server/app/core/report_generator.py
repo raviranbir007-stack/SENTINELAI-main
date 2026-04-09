@@ -1490,7 +1490,7 @@ class ReportGenerator:
         words = cleaned.split()
         word_count = len(words)
         normalized_type = self._normalize_report_type(report_type)
-        hard_floor = 85 if normalized_type == "executive_summary" else 105
+        hard_floor = 70 if normalized_type == "executive_summary" else 90
 
         # Accept shorter outputs only if they contain structured analytical sections.
         has_structured_sections = bool(
@@ -1499,16 +1499,20 @@ class ReportGenerator:
                 lowered,
             )
         )
-        soft_floor = 65
+        has_explicit_markdown_structure = bool(
+            re.search(r"(?m)^(?:#{1,3}\s+|[-*]\s+|\d+\.\s+)", cleaned)
+        )
+        structured_signal_count = len(re.findall(r"(?m)^(?:#{1,3}\s+|[-*]\s+|\d+\.\s+)", cleaned))
+        soft_floor = 45
 
         if word_count < soft_floor:
             return ""
-        if word_count < hard_floor and not has_structured_sections:
+        if word_count < hard_floor and not (has_structured_sections or has_explicit_markdown_structure or structured_signal_count >= 2):
             return ""
 
         # Avoid single-line responses that pass word checks but are low readability.
         paragraph_count = len([line for line in cleaned.split("\n") if line.strip()])
-        if paragraph_count < 2 and word_count < (hard_floor + 10):
+        if paragraph_count < 2 and word_count < (hard_floor + 10) and not (has_structured_sections or has_explicit_markdown_structure):
             return ""
 
         return cleaned
@@ -1913,9 +1917,10 @@ class ReportGenerator:
                                             model=model_name,
                                             contents=p,
                                             config=GenerateContentConfig(
-                                                temperature=0.7,
+                                                temperature=0.4,
                                                 top_p=0.9,
-                                                max_output_tokens=1400
+                                                max_output_tokens=2200,
+                                                response_mime_type="text/plain",
                                             )
                                         )),
                                         timeout=self.gemini_request_timeout_seconds
@@ -2306,6 +2311,9 @@ Global constraints:
 - Keep section headers explicit and match requested schema.
 - Distinguish observations from interpretation where relevant.
 - Keep professional, factual wording. Target 650-1100 words for technical/forensic, 450-800 for executive.
+- Do not answer with a single short paragraph; expand each required section with at least 2 complete sentences.
+- For technical and forensic reports, include the requested headings in order and provide enough detail to exceed 300 words when data is available.
+- If a section has limited source data, explain the limitation rather than compressing the whole report into a brief summary.
 """
 
         return prompt
