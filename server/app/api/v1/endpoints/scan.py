@@ -72,11 +72,13 @@ def _get_system_health_status(db):
 import hashlib
 import asyncio
 import importlib.util
+import io
 import logging
 import math
 import os
 import re
 import struct
+import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -152,8 +154,30 @@ _DANGEROUS_EXTS_V1 = {
     ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js",
     ".jse", ".wsf", ".wsh", ".msi", ".scr", ".pif", ".com", ".hta",
     ".cpl", ".reg", ".lnk", ".inf", ".jar", ".docm", ".xlsm",
-    ".pptm", ".dotm", ".xltm", ".xlam",
+    ".pptm", ".dotm", ".xltm", ".xlam", ".xlsb", ".pptx", ".xlsx",
 }
+_OFFICE_CONTAINER_EXTS_V1 = {
+    ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm",
+    ".xls", ".xlsx", ".xlsm", ".xlsb", ".xltx", ".xltm", ".xlam",
+    ".ppt", ".pptx", ".pptm", ".potx", ".potm", ".ppam", ".ppsx", ".ppsm",
+    ".odt", ".ods", ".odp",
+}
+_OFFICE_MACRO_MARKERS_V1 = [
+    b"vbaProject.bin",
+    b"_VBA_PROJECT",
+    b"Auto_Open",
+    b"Workbook_Open",
+    b"Document_Open",
+    b"Presentation_Open",
+    b"Shell(",
+    b"CreateObject(\"WScript.Shell\")",
+    b"CreateObject('WScript.Shell')",
+    b"cmd.exe",
+    b"powershell",
+    b"http://",
+    b"https://",
+    b"DDE",
+]
 _HIGH_ENT = 7.2
 _MED_ENT  = 6.5
 _MAX_FILE_UPLOAD = 100 * 1024 * 1024  # 100 MB
@@ -297,6 +321,141 @@ def _disassembly_info_v1(sample: bytes, pe_info: Optional[Dict]) -> Optional[Dic
         return None
 
 
+def _office_document_analysis_v1(content: bytes, filename: str) -> Optional[Dict]:
+    """Inspect Office and document containers for macro and e-discovery risk signals."""
+    from pathlib import Path as _P
+
+    ext = _P(filename).suffix.lower() if filename else ""
+    if ext not in _OFFICE_CONTAINER_EXTS_V1 and b"PK\x03\x04" not in content[:4] and b"\xd0\xcf\x11\xe0" not in content[:4]:
+        return None
+
+    sample = content[: 2 * 1024 * 1024]
+    text = sample.decode("latin-1", errors="replace")
+    signals: List[Dict[str, str]] = []
+    macro_capable = ext in {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".xlsb", ".ppam"}
+    archive_layout = None
+
+    macro_hits = 0
+    external_link_hits = 0
+    embedded_object_hits = 0
+    formula_hits = 0
+    keyword_hits = 0
+
+    def _add_signal(name: str, desc: str, severity: str) -> None:
+        signals.append({"name": name, "desc": desc, "severity": severity})
+
+    if content[:4] == b"PK\x03\x04":
+        archive_layout = "ooxml_zip"
+        try:
+            with zipfile.ZipFile(io.BytesIO(sample)) as zf:
+                names = zf.namelist()[:200]
+                lower_names = [name.lower() for name in names]
+                if any("vbaproject.bin" in name for name in lower_names):
+                    macro_capable = True
+                    macro_hits += 1
+                    _add_signal("OFFICE_VBA_PROJECT", "Embedded VBA project detected", "critical")
+                if any(name.endswith(".rels") for name in lower_names):
+                    rel_text = ""
+                    for rel_name in [name for name in names if name.lower().endswith(".rels")][:20]:
+                        try:
+                            rel_text += zf.read(rel_name).decode("utf-8", errors="ignore") + "\n"
+                        except Exception:
+                            continue
+                    if any(token in rel_text.lower() for token in ["external", "hyperlink", "targetmode=\"external\"", "targetmode='external'"]):
+                        external_link_hits += 1
+                        _add_signal("OFFICE_EXTERNAL_RELATIONSHIP", "External relationship target detected", "high")
+                xml_text = ""
+                for name in names:
+                    lowered = name.lower()
+                    if lowered.endswith(('.xml', '.vba', '.bin', '.rels')):
+                        try:
+                            xml_text += zf.read(name).decode("utf-8", errors="ignore") + "\n"
+                        except Exception:
+                            continue
+                lower_xml = xml_text.lower()
+                for keyword, sev in [
+                    ("auto_open", "critical"),
+                    ("workbook_open", "critical"),
+                    ("document_open", "high"),
+                    ("presentation_open", "high"),
+                    ("shell(", "critical"),
+                    ("createobject(\"wscript.shell\")", "critical"),
+                    ("createobject('wscript.shell')", "critical"),
+                    ("powershell", "high"),
+                    ("cmd.exe", "high"),
+                    ("dde", "high"),
+                    ("javascript:", "medium"),
+                ]:
+                    if keyword in lower_xml:
+                        keyword_hits += 1
+                        _add_signal("OFFICE_MACRO_BEHAVIOR", f"Suspicious office macro marker: {keyword}", sev)
+                for keyword in ["formula", "hyprlink", "weblink", "external link", "r1c1", "indirect(", "get.workbook("]:
+                    if keyword in lower_xml:
+                        formula_hits += 1
+                if formula_hits:
+                    _add_signal("OFFICE_FORMULA_RISK", "Spreadsheet formulas or link-driven behaviors detected", "medium")
+                if any(name.lower().startswith(("xl/embeddings/", "word/embeddings/", "ppt/embeddings/")) for name in lower_names):
+                    embedded_object_hits += 1
+                    _add_signal("OFFICE_EMBEDDED_OBJECT", "Embedded object/container detected", "medium")
+        except Exception:
+            pass
+    else:
+        lower_text = text.lower()
+        if content[:4] == b"\xd0\xcf\x11\xe0":
+            archive_layout = "ole2"
+            if b"vba" in sample.lower() or b"macro" in sample.lower():
+                macro_capable = True
+                macro_hits += 1
+                _add_signal("OLE_MACRO_MARKER", "OLE macro-capable container marker detected", "high")
+            if any(marker.lower() in sample.lower() for marker in [b"auto_open", b"workbook_open", b"document_open", b"cmd.exe", b"powershell"]):
+                keyword_hits += 1
+                _add_signal("OLE_SUSPICIOUS_MARKER", "Suspicious Office/OLE automation marker detected", "high")
+            if b"http://" in sample.lower() or b"https://" in sample.lower():
+                external_link_hits += 1
+                _add_signal("OLE_EXTERNAL_LINK", "External URL found inside legacy Office container", "medium")
+        else:
+            if any(token in lower_text for token in ["auto_open", "workbook_open", "document_open", "shell(", "powershell", "cmd.exe"]):
+                keyword_hits += 1
+                _add_signal("DOCUMENT_SCRIPTING_MARKER", "Document contains scripting or command execution marker", "high")
+
+    if not signals and not macro_capable and not (external_link_hits or embedded_object_hits or keyword_hits):
+        return None
+
+    e_discovery = {
+        "preserve_original": True,
+        "create_legal_hold": macro_capable or keyword_hits > 0 or external_link_hits > 0,
+        "isolate_in_sandbox": macro_capable or keyword_hits > 0,
+        "collect_hashes": True,
+        "review_embedded_objects": bool(embedded_object_hits),
+        "review_external_links": bool(external_link_hits),
+        "export_chain_of_custody": True,
+        "notes": [
+            "Preserve the original document and its metadata before remediation.",
+            "Review in an isolated environment if the file is macro-capable or contains external links.",
+            "Capture hashes and source location for chain-of-custody and e-discovery workflows.",
+        ],
+        "cost_considerations": [
+            "Triage first to reduce full review volume and downstream legal-review cost.",
+            "Macro-enabled and link-heavy documents typically require sandbox detonation, which increases review time.",
+            "Use deduplication and metadata-first review to minimize analyst hours on repetitive documents.",
+        ],
+    }
+
+    return {
+        "kind": "office_document",
+        "extension": ext,
+        "archive_layout": archive_layout,
+        "macro_capable": macro_capable,
+        "macro_hits": macro_hits,
+        "external_link_hits": external_link_hits,
+        "embedded_object_hits": embedded_object_hits,
+        "formula_hits": formula_hits,
+        "keyword_hits": keyword_hits,
+        "signals": signals,
+        "e_discovery": e_discovery,
+    }
+
+
 def _ml_classification_v1(entropy: float, signatures: List[Dict], ext: str, pe_info: Optional[Dict]) -> Optional[Dict]:
     """Lightweight ML classification metadata when sklearn is available."""
     if importlib.util.find_spec("sklearn") is None:
@@ -304,8 +463,13 @@ def _ml_classification_v1(entropy: float, signatures: List[Dict], ext: str, pe_i
 
     try:
         import numpy as np  # type: ignore
+        from sklearn.cluster import KMeans  # type: ignore
+        from sklearn.ensemble import IsolationForest  # type: ignore
         from sklearn.linear_model import LogisticRegression  # type: ignore
+        from sklearn.svm import OneClassSVM  # type: ignore
 
+        is_office_doc = ext in _OFFICE_CONTAINER_EXTS_V1
+        macro_signal = 1.0 if ext in {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".xlsb", ".ppam"} else 0.0
         feature_vector = np.array(
             [[
                 float(entropy),
@@ -313,47 +477,90 @@ def _ml_classification_v1(entropy: float, signatures: List[Dict], ext: str, pe_i
                 float(1 if ext in _DANGEROUS_EXTS_V1 else 0),
                 float(1 if pe_info else 0),
                 float(1 if pe_info and pe_info.get("suspicious") else 0),
+                float(macro_signal),
+                float(1 if is_office_doc else 0),
             ]]
         )
 
-        # Synthetic baseline dataset for quick local risk calibration.
-        train_x = np.array(
+        # Synthetic baseline profiles. The model is trained locally on heuristics, so it stays self-contained.
+        normal_profiles = np.array(
             [
-                [1.2, 0, 0, 0, 0],
-                [2.8, 0, 0, 0, 0],
-                [4.2, 1, 0, 0, 0],
-                [5.6, 1, 1, 0, 0],
-                [6.4, 2, 1, 1, 0],
-                [7.1, 3, 1, 1, 1],
-                [7.8, 4, 1, 1, 1],
-                [8.4, 5, 1, 1, 1],
+                [2.1, 0, 0, 0, 0, 0, 0],
+                [2.7, 0, 0, 0, 0, 0, 0],
+                [3.2, 0, 0, 0, 0, 0, 1],
+                [4.0, 1, 0, 0, 0, 0, 1],
+                [4.4, 1, 0, 0, 0, 0, 1],
+                [5.1, 1, 0, 0, 0, 0, 0],
+                [5.9, 1, 1, 0, 0, 0, 0],
+                [6.4, 2, 1, 1, 0, 1, 1],
             ],
             dtype=float,
         )
-        train_y = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=int)
+        suspicious_profiles = np.array(
+            [
+                [6.8, 2, 1, 1, 0, 1, 1],
+                [7.2, 3, 1, 1, 1, 1, 1],
+                [7.9, 4, 1, 1, 1, 1, 1],
+                [8.3, 5, 1, 1, 1, 1, 1],
+            ],
+            dtype=float,
+        )
+        train_x = np.vstack([normal_profiles, suspicious_profiles])
+        train_y = np.array([0] * len(normal_profiles) + [1] * len(suspicious_profiles), dtype=int)
 
-        model = LogisticRegression(max_iter=200, random_state=42)
-        model.fit(train_x, train_y)
-        malicious_prob = float(model.predict_proba(feature_vector)[0][1])
+        isolation_model = IsolationForest(n_estimators=100, contamination=0.25, random_state=42)
+        isolation_model.fit(train_x)
+        isolation_score = float(-isolation_model.score_samples(feature_vector)[0])
 
-        if malicious_prob >= 0.65:
+        svm_model = OneClassSVM(kernel="rbf", gamma="scale", nu=0.18)
+        svm_model.fit(normal_profiles)
+        svm_prediction = int(svm_model.predict(feature_vector)[0] == -1)
+
+        cluster_model = KMeans(n_clusters=2, random_state=42, n_init=10)
+        cluster_model.fit(train_x)
+        cluster_center_distances = cluster_model.transform(feature_vector)[0]
+        cluster_score = float(min(cluster_center_distances) / max(cluster_center_distances.max(), 1.0))
+
+        logistic_model = LogisticRegression(max_iter=250, random_state=42)
+        logistic_model.fit(train_x, train_y)
+        logistic_prob = float(logistic_model.predict_proba(feature_vector)[0][1])
+
+        combined_score = (
+            (isolation_score * 0.40)
+            + (logistic_prob * 0.35)
+            + (cluster_score * 0.15)
+            + (0.10 if svm_prediction else 0.0)
+        )
+        combined_score = max(0.0, min(1.0, combined_score))
+
+        if combined_score >= 0.72:
             prediction = "MALICIOUS"
-        elif malicious_prob >= 0.45:
+        elif combined_score >= 0.48:
             prediction = "SUSPICIOUS"
         else:
             prediction = "CLEAN"
 
         return {
-            "model": "logistic_regression_synthetic_baseline",
+            "model": "isolation_forest_svm_kmeans_ensemble",
             "prediction": prediction,
-            "confidence": round(malicious_prob, 3),
+            "confidence": round(combined_score, 3),
+            "ensemble": {
+                "isolation_forest_score": round(isolation_score, 3),
+                "one_class_svm_flagged": bool(svm_prediction),
+                "kmeans_cluster_distance_score": round(cluster_score, 3),
+                "logistic_probability": round(logistic_prob, 3),
+            },
             "features": {
                 "entropy": round(float(entropy), 3),
                 "signature_count": int(len(signatures)),
                 "dangerous_extension": bool(ext in _DANGEROUS_EXTS_V1),
+                "office_container": bool(is_office_doc),
+                "macro_capable_extension": bool(macro_signal),
                 "has_pe": bool(pe_info),
                 "pe_suspicious": bool(pe_info and pe_info.get("suspicious")),
             },
+            "recommended_algorithm": "IsolationForest",
+            "algorithm_rationale": "IsolationForest is the best fit for this project because macro-enabled Office files and mixed document artifacts are usually unlabeled, sparse, and benefit from anomaly detection rather than only supervised classification.",
         }
     except Exception:
         return None
@@ -464,6 +671,55 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
                            "indicator": "PE header anomaly - no relocation, not a DLL",
                            "type": "PE_ANOMALY", "confidence": 0.80})
 
+    document_info = _office_document_analysis_v1(content, filename)
+    if document_info:
+        macro_count = int(document_info.get("macro_hits", 0) or 0)
+        link_count = int(document_info.get("external_link_hits", 0) or 0)
+        embedded_count = int(document_info.get("embedded_object_hits", 0) or 0)
+        keyword_count = int(document_info.get("keyword_hits", 0) or 0)
+
+        if macro_count:
+            indicators.append({
+                "source": "Local Analysis",
+                "severity": "critical" if macro_count >= 2 else "high",
+                "indicator": "Macro-capable Office document with VBA markers detected",
+                "type": "OFFICE_MACRO_CONTAINER",
+                "confidence": 0.95,
+            })
+        if link_count:
+            indicators.append({
+                "source": "Local Analysis",
+                "severity": "medium",
+                "indicator": "External link or remote content target detected in document",
+                "type": "OFFICE_EXTERNAL_LINK",
+                "confidence": 0.74,
+            })
+        if embedded_count:
+            indicators.append({
+                "source": "Local Analysis",
+                "severity": "medium",
+                "indicator": "Embedded object detected inside document container",
+                "type": "OFFICE_EMBEDDED_OBJECT",
+                "confidence": 0.68,
+            })
+        if keyword_count:
+            indicators.append({
+                "source": "Local Analysis",
+                "severity": "high",
+                "indicator": "Suspicious Office scripting or automation keywords detected",
+                "type": "OFFICE_SCRIPTING_MARKER",
+                "confidence": 0.82,
+            })
+
+        if document_info.get("e_discovery"):
+            indicators.append({
+                "source": "Local Analysis",
+                "severity": "low",
+                "indicator": "E-discovery handling guidance generated for document evidence preservation",
+                "type": "EDISCOVERY_GUIDANCE",
+                "confidence": 0.5,
+            })
+
     _SEV_SCORE = {"critical": 5, "high": 3, "medium": 2, "low": 1}
     score = sum(_SEV_SCORE.get(ind.get("severity", "low"), 1) for ind in indicators)
 
@@ -486,6 +742,7 @@ def _local_scan_v1(content: bytes, filename: str) -> Dict:
         "pe_info": pe_info,
         "disassembly_info": disassembly_info,
         "ml_classification": ml_classification,
+        "document_analysis": document_info,
         "threat_indicators": indicators,
         "local_verdict": _VERDICT.get(risk, "clean"),
     }
@@ -894,6 +1151,10 @@ async def scan_file(
             analysis_result = {"verdict": "clean", "confidence": 0.0,
                                "threat_indicators": [], "api_results": {},
                                "forensic_metadata": {}}
+            analysis_result["api_coverage_explanation"] = (
+                f"External file-hash analysis was unavailable ({api_err}); local heuristics, behavioral analysis, "
+                "and ML anomaly detection were used to complete the scan."
+            )
 
         # ── Merge and determine final verdict ────────────────────────────
         _PRIO = {"malicious": 3, "suspicious": 2, "clean": 1, "safe": 1, "unknown": 0}
@@ -930,6 +1191,7 @@ async def scan_file(
             "pe_info": local["pe_info"],
             "disassembly_info": local.get("disassembly_info"),
             "ml_classification": local.get("ml_classification"),
+            "document_analysis": local.get("document_analysis"),
         }
 
         scan_id = _generate_scan_id("FILE")
@@ -977,7 +1239,10 @@ async def scan_file(
                 "pe_info":        local["pe_info"],
                 "disassembly_info": local.get("disassembly_info"),
                 "ml_classification": local.get("ml_classification"),
+                "document_analysis": local.get("document_analysis"),
             },
+            "document_analysis": local.get("document_analysis"),
+            "ediscovery_considerations": (local.get("document_analysis") or {}).get("e_discovery") if isinstance(local.get("document_analysis"), dict) else None,
             "threat_indicators":  all_indicators,
             "forensic_metadata":  analysis_result.get("forensic_metadata", {}),
         }

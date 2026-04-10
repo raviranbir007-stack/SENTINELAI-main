@@ -557,10 +557,18 @@
                         <div class="icon">🔐</div>
                         <div class="label">File Hash</div>
                     </div>
+                    <div class="scan-type-btn" data-type="file">
+                        <div class="icon">📁</div>
+                        <div class="label">File / Doc</div>
+                    </div>
                 </div>
                 <div class="scan-input-group">
                     <input type="text" class="scan-input" id="scanInput" placeholder="Enter IP address, domain, URL, or file hash...">
+                    <input type="file" id="fileInput" accept=".doc,.docx,.docm,.dot,.dotx,.dotm,.xls,.xlsx,.xlsm,.xlsb,.xltx,.xltm,.xlam,.ppt,.pptx,.pptm,.potx,.potm,.ppam,.pdf,.rtf,.odt,.txt,.csv,.zip" style="display:none;">
                     <button class="scan-btn" id="scanBtn">🔍 Analyze</button>
+                </div>
+                <div id="fileSelectionHint" style="margin-top:0.75rem;color:var(--muted);font-size:0.85rem;display:none;">
+                    Supported documents include macro-capable Office files such as .xlsm, .docm, .pptm, .xltm, .xlam, .dotm, .xlsb, plus standard docs, PDFs, text, and archives.
                 </div>
             </div>
 
@@ -635,9 +643,12 @@
         let scanResults = [];
         let runtimeContext = null;
         let reportFeed = [];
+        let selectedFile = null;
 
         // DOM Elements
         const scanInput = document.getElementById('scanInput');
+        const fileInput = document.getElementById('fileInput');
+        const fileSelectionHint = document.getElementById('fileSelectionHint');
         const scanBtn = document.getElementById('scanBtn');
         const recentResults = document.getElementById('recentResults');
         const toastContainer = document.getElementById('toastContainer');
@@ -669,6 +680,17 @@
             });
         });
 
+        if (fileInput) {
+            fileInput.addEventListener('change', () => {
+                selectedFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+                if (selectedFile && fileSelectionHint) {
+                    fileSelectionHint.textContent = `Selected: ${selectedFile.name} (${Math.round(selectedFile.size / 1024)} KB)`;
+                } else if (fileSelectionHint) {
+                    fileSelectionHint.textContent = 'Supported documents include macro-capable Office files such as .xlsm, .docm, .pptm, .xltm, .xlam, .dotm, .xlsb, plus standard docs, PDFs, text, and archives.';
+                }
+            });
+        }
+
         function updatePlaceholder() {
             const placeholders = {
                 ip: 'Enter IP address (e.g., 8.8.8.8)',
@@ -676,7 +698,14 @@
                 url: 'Enter URL (e.g., https://example.com/page)',
                 hash: 'Enter file hash (MD5, SHA1, or SHA256)'
             };
-            scanInput.placeholder = placeholders[currentScanType];
+            const fileMode = currentScanType === 'file';
+            scanInput.style.display = fileMode ? 'none' : 'block';
+            if (fileInput) fileInput.style.display = fileMode ? 'block' : 'none';
+            if (fileSelectionHint) fileSelectionHint.style.display = fileMode ? 'block' : 'none';
+            if (scanBtn) scanBtn.textContent = fileMode ? '📎 Upload & Analyze' : '🔍 Analyze';
+            if (!fileMode) {
+                scanInput.placeholder = placeholders[currentScanType];
+            }
         }
 
         // Toast Notifications
@@ -902,7 +931,14 @@
         // Perform Scan
         async function performScan() {
             const target = scanInput.value.trim();
+            const fileMode = currentScanType === 'file';
             if (!target) {
+                if (fileMode && !selectedFile) {
+                    showToast('Please choose a file or document to upload', 'error');
+                    return;
+                }
+            }
+            if (!target && !fileMode) {
                 showToast('Please enter a target to scan', 'error');
                 return;
             }
@@ -917,6 +953,26 @@
                     result = await apiRequest('/threats/scan-ip', {
                         method: 'POST',
                         body: JSON.stringify({ ip_address: target })
+                    });
+                } else if (currentScanType === 'file') {
+                    if (!selectedFile) {
+                        showToast('Please choose a file or document to upload', 'error');
+                        return;
+                    }
+                    const formData = new FormData();
+                    formData.append('file', selectedFile);
+                    const params = new URLSearchParams();
+                    params.set('include_report', 'false');
+                    params.set('scan_source', 'manual');
+                    result = await fetch(`${API_BASE_URL}/scan/file?${params.toString()}`, {
+                        method: 'POST',
+                        body: formData,
+                    }).then(async (response) => {
+                        if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({}));
+                            throw new Error(errorData.detail || `Server returned ${response.status}`);
+                        }
+                        return response.json();
                     });
                 } else if (currentScanType === 'url') {
                     result = await apiRequest('/scan/url', {
@@ -934,9 +990,9 @@
 
                 const scanResult = {
                     scan_id: result.scan_id,
-                    target: target,
+                    target: fileMode ? (selectedFile ? selectedFile.name : 'Uploaded file') : target,
                     type: currentScanType,
-                    is_threat: result.threat_level === 'threat' || result.reputation_score < 50,
+                    is_threat: String(result.threat_level || result.verdict || '').toLowerCase() === 'malicious' || String(result.threat_level || result.verdict || '').toLowerCase() === 'threat' || Number(result.reputation_score || 100) < 50,
                     timestamp: new Date().toISOString()
                 };
 
@@ -944,6 +1000,11 @@
                 renderResults();
                 showToast('Scan completed successfully', 'success');
                 scanInput.value = '';
+                if (fileInput) fileInput.value = '';
+                selectedFile = null;
+                if (fileSelectionHint) {
+                    fileSelectionHint.textContent = 'Supported documents include macro-capable Office files such as .xlsm, .docm, .pptm, .xltm, .xlam, .dotm, .xlsb, plus standard docs, PDFs, text, and archives.';
+                }
             } catch (error) {
                 showToast('Scan failed: ' + error.message, 'error');
             } finally {

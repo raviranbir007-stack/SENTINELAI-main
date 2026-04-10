@@ -2356,6 +2356,74 @@ class ThreatAnalyzer:
 
         return result
 
+    def _build_ml_feature_profile(self, result: Dict) -> Dict[str, Any]:
+        """Build a richer feature profile for local anomaly and threat prediction models."""
+        threat_indicators = result.get("threat_indicators", []) if isinstance(result.get("threat_indicators", []), list) else []
+        api_results = result.get("api_results", {}) if isinstance(result.get("api_results", {}), dict) else {}
+        forensic = result.get("forensic_metadata", {}) if isinstance(result.get("forensic_metadata", {}), dict) else {}
+        flags = result.get("flags", {}) if isinstance(result.get("flags", {}), dict) else {}
+        behavioral_sequence = result.get("behavioral_sequence", []) if isinstance(result.get("behavioral_sequence", []), list) else []
+
+        critical_count = sum(1 for item in threat_indicators if isinstance(item, dict) and str(item.get("severity", "")).lower() == "critical")
+        high_count = sum(1 for item in threat_indicators if isinstance(item, dict) and str(item.get("severity", "")).lower() == "high")
+        medium_count = sum(1 for item in threat_indicators if isinstance(item, dict) and str(item.get("severity", "")).lower() == "medium")
+
+        api_consensus = 0
+        api_total = 0
+        for key, value in api_results.items():
+            if key in {"apis_called", "apis_attempted", "apis_expected", "api_status"}:
+                continue
+            if not isinstance(value, dict):
+                continue
+            api_total += 1
+            try:
+                api_confidence = float(value.get("confidence", 0.0) or 0.0)
+            except Exception:
+                api_confidence = 0.0
+            if value.get("malicious") is True or api_confidence >= 0.85:
+                api_consensus += 1
+
+        baseline_adjustment = forensic.get("baseline_adjustment", {}) if isinstance(forensic.get("baseline_adjustment", {}), dict) else {}
+        corroboration_count = int(forensic.get("corroboration_count", len(forensic.get("evidence_sources", []) or [])) or 0)
+        corroboration_threshold_met = bool(forensic.get("corroboration_threshold_met", corroboration_count >= 2))
+
+        detection_ratio = result.get("detection_ratio") or forensic.get("detection_ratio")
+        if not detection_ratio:
+            detection_ratio = f"{api_consensus}/{max(api_total, 1)}"
+
+        verdict = result.get("verdict")
+        verdict_value = getattr(verdict, "value", verdict)
+        verdict_text = str(verdict_value or "").strip().lower()
+
+        profile = {
+            "threat_indicators": threat_indicators,
+            "threat_indicator_count": len(threat_indicators),
+            "critical_indicator_count": critical_count,
+            "high_indicator_count": high_count,
+            "medium_indicator_count": medium_count,
+            "verdict": verdict_value,
+            "confidence": float(result.get("confidence", 0.0) or 0.0),
+            "scan_type": result.get("input_type", "unknown"),
+            "api_results": api_results,
+            "malicious_score": float(result.get("confidence", 0.0) or 0.0) if verdict_text == ThreatLevel.MALICIOUS.value else 0.0,
+            "corroboration_count": corroboration_count,
+            "corroboration_threshold_met": corroboration_threshold_met,
+            "detection_ratio": detection_ratio,
+            "behavioral_sequence_length": len(behavioral_sequence),
+            "attack_chain_detected": bool(flags.get("attack_chain_detected")),
+            "recent_related_events_10m": int(result.get("recent_related_events_10m", 0) or 0),
+            "baseline_adjustment": baseline_adjustment,
+            "evidence_sources_count": len(forensic.get("evidence_sources", []) or []),
+            "api_consensus_count": api_consensus,
+            "api_total_count": api_total,
+            "input": result.get("input"),
+            "input_type": result.get("input_type", "unknown"),
+            "source_ip": result.get("source_ip"),
+            "source_domain": result.get("source_domain"),
+        }
+
+        return profile
+
     async def _apply_ai_analysis(self, result: Dict) -> Dict:
         """
         Apply AI and ML models to enhance threat analysis with predictions
@@ -2366,16 +2434,9 @@ class ThreatAnalyzer:
                 raise RuntimeError("ML/AI models are required for all scans.")
 
             # Prepare features for ML models
-            features = {
-                'threat_indicators': result.get('threat_indicators', []),
-                'verdict': result.get('verdict'),
-                'confidence': result.get('confidence', 0),
-                'scan_type': result.get('input_type', 'unknown'),
-                'api_results': result.get('api_results', {}),
-                'malicious_score': result.get('confidence', 0) if result.get('verdict') == ThreatLevel.MALICIOUS else 0
-            }
+            features = self._build_ml_feature_profile(result)
 
-            ai_analysis = {}
+            ai_analysis = {"feature_profile": features}
 
             # Anomaly Detection
             try:
@@ -2418,7 +2479,9 @@ class ThreatAnalyzer:
                         'indicators': result.get('threat_indicators', []),
                         'api_results': result.get('api_results', {}),
                         'verdict': result.get('verdict'),
-                        'confidence': result.get('confidence', 0)
+                        'confidence': result.get('confidence', 0),
+                        'forensic_metadata': result.get('forensic_metadata', {}),
+                        'feature_profile': features,
                     }
                     ai_result = await self.ai_analyzer.analyze_threat(threat_data)
                     ai_analysis['advanced_ai'] = {
@@ -2441,6 +2504,7 @@ class ThreatAnalyzer:
 
             # Store AI analysis results
             result['ai_analysis'] = ai_analysis
+            result.setdefault('forensic_metadata', {})['ml_feature_profile'] = features
 
             # Refine verdict based on AI insights
             result = self._refine_verdict_with_ai(result, ai_analysis)

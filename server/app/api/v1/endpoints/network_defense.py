@@ -406,6 +406,110 @@ def _should_auto_block(severity: ThreatSeverity, confidence: float) -> bool:
     return float(confidence or 0.0) >= min_conf
 
 
+def _build_event_anomaly_context(
+    *,
+    event_name: str,
+    severity,
+    recent_count: int,
+    corroboration_count: int = 0,
+    baseline_meta: Optional[dict] = None,
+    source_ip: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    destination_port: Optional[int] = None,
+    description: Optional[str] = None,
+    payload: Optional[dict] = None,
+) -> dict:
+    """Build a compact anomaly context for burst, baseline, and web-attack signals."""
+    severity_label = str(getattr(severity, "value", severity) or "").strip().lower()
+    score = 0.14
+    signals: list[str] = []
+
+    if severity_label in {"high", "critical"}:
+        score += 0.08
+        signals.append(f"severity:{severity_label}")
+    elif severity_label == "medium":
+        score += 0.04
+        signals.append("severity:medium")
+
+    if corroboration_count >= 4:
+        score += 0.18
+        signals.append(f"corroboration:{corroboration_count}")
+    elif corroboration_count >= 2:
+        score += 0.10
+        signals.append(f"corroboration:{corroboration_count}")
+
+    if recent_count >= 8:
+        score += 0.18
+        signals.append(f"burst:{recent_count} in 10m")
+    elif recent_count >= 4:
+        score += 0.10
+        signals.append(f"burst:{recent_count} in 10m")
+
+    if isinstance(baseline_meta, dict):
+        z_score = float(baseline_meta.get("z_score", 0.0) or 0.0)
+        if z_score >= 3.0:
+            score += 0.14
+            signals.append(f"baseline:z={z_score:.2f}")
+        elif z_score >= 1.8:
+            score += 0.08
+            signals.append(f"baseline:z={z_score:.2f}")
+
+    text_blob = " ".join(
+        str(item or "")
+        for item in [event_name, source_ip, source_domain, description, json.dumps(payload or {}, default=str)]
+    ).lower()
+    marker_groups = [
+        ["sql injection", "sqli", "union select", "drop table"],
+        ["xss", "<script", "javascript:"],
+        ["csrf", "cross-site request forgery"],
+        ["rce", "remote code execution", "command injection", "powershell", "cmd.exe"],
+        ["lfi", "rfi", "path traversal", "../", "..\\"],
+        ["ssti", "template injection"],
+        ["credential stuffing", "brute force", "password spray"],
+        ["phishing", "malware", "exfiltration", "c2", "botnet"],
+    ]
+    marker_hits = 0
+    for group in marker_groups:
+        if any(marker in text_blob for marker in group):
+            marker_hits += 1
+    if marker_hits:
+        marker_score = min(0.20, 0.04 + marker_hits * 0.03)
+        score += marker_score
+        signals.append(f"markers:{marker_hits}")
+
+    if destination_port in {22, 23, 25, 53, 80, 135, 139, 445, 1433, 1521, 3306, 3389, 5432, 5900, 6379, 8080, 8443}:
+        score += 0.04
+        signals.append(f"port:{destination_port}")
+
+    score = max(0.0, min(1.0, score))
+    if score >= 0.82:
+        risk_level = "critical"
+    elif score >= 0.68:
+        risk_level = "high"
+    elif score >= 0.5:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    confidence_boost = 0.0
+    if score >= 0.82:
+        confidence_boost = 0.12
+    elif score >= 0.68:
+        confidence_boost = 0.08
+    elif score >= 0.5:
+        confidence_boost = 0.04
+
+    return {
+        "anomaly_score": round(score, 3),
+        "risk_level": risk_level,
+        "confidence_boost": round(confidence_boost, 3),
+        "signals": signals,
+        "recent_event_count_10m": recent_count,
+        "corroboration_count": corroboration_count,
+        "baseline": baseline_meta or {},
+    }
+
+
 class ClientRegistrationRequest(BaseModel):
     """Request model for client registration"""
 
@@ -1401,6 +1505,21 @@ async def report_attack(
             base_confidence=base_confidence,
         )
 
+        indicator_payload = request.indicators if isinstance(request.indicators, dict) else {}
+        anomaly_context = _build_event_anomaly_context(
+            event_name=request.attack_type,
+            severity=severity_map.get(request.severity.lower(), ThreatSeverity.MEDIUM),
+            recent_count=recent_count,
+            corroboration_count=int(indicator_payload.get("corroboration_count", 0) or len(indicator_payload.get("corroboration_sources", []) or [])),
+            baseline_meta=baseline_meta,
+            source_ip=request.source_ip,
+            source_domain=request.source_domain,
+            destination_port=request.destination_port,
+            description=request.description,
+            payload=indicator_payload,
+        )
+        adjusted_confidence = min(0.99, max(adjusted_confidence, adjusted_confidence + anomaly_context["confidence_boost"]))
+
         attack = AttackEvent(
             event_id=event_id,
             attack_type=request.attack_type,
@@ -1414,6 +1533,7 @@ async def report_attack(
             indicators={
                 **(request.indicators or {}),
                 "baseline_adjustment": baseline_meta,
+                "anomaly_context": anomaly_context,
                 "baseline_recent_event_count_10m": recent_count,
                 "base_confidence": round(base_confidence, 3),
                 "adjusted_confidence": round(adjusted_confidence, 3),
@@ -1593,6 +1713,19 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             count_in_window=recent_baseline_count,
             base_confidence=computed_confidence,
         )
+        anomaly_context = _build_event_anomaly_context(
+            event_name=event_name,
+            severity=severity,
+            recent_count=recent_baseline_count,
+            corroboration_count=corroboration_count,
+            baseline_meta=baseline_meta,
+            source_ip=source_ip,
+            source_domain=source_domain,
+            destination_port=destination_port,
+            description=description,
+            payload=payload,
+        )
+        adjusted_confidence = min(0.99, max(adjusted_confidence, adjusted_confidence + anomaly_context["confidence_boost"]))
         computed_confidence = adjusted_confidence
 
         # Always persist raw event in structured system log
@@ -1618,6 +1751,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                     "description": description,
                     "payload": payload,
                     "baseline_adjustment": baseline_meta,
+                    "anomaly_context": anomaly_context,
                     "baseline_recent_event_count_10m": recent_baseline_count,
                 },
             )
@@ -1637,6 +1771,11 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
 
         if baseline_meta.get("available") and not baseline_meta.get("anomalous") and computed_confidence < 0.74:
             promote_event = False
+
+        if anomaly_context["anomaly_score"] >= 0.82 and is_security_signal:
+            promote_event = True
+        elif anomaly_context["anomaly_score"] >= 0.68 and severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL}:
+            promote_event = True
 
         if promote_event:
             attack = None
@@ -1666,6 +1805,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                         "corroboration_sources": sorted(corroboration_sources),
                         "corroboration_count": corroboration_count,
                         "baseline_adjustment": baseline_meta,
+                        "anomaly_context": anomaly_context,
                         "baseline_recent_event_count_10m": recent_baseline_count,
                     },
                     status=_status_from_event(event_kind),
@@ -1693,6 +1833,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
                     "corroboration_sources": sorted(corroboration_sources),
                     "corroboration_count": corroboration_count,
                     "baseline_adjustment": baseline_meta,
+                    "anomaly_context": anomaly_context,
                     "baseline_recent_event_count_10m": recent_baseline_count,
                 }
                 attack.status = _status_from_event(event_kind, attack.status or "detected")

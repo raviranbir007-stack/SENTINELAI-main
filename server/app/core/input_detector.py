@@ -26,6 +26,7 @@ class InputDetector:
     FILE_EXTENSIONS = {
         '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf', '.odt', '.md', '.csv', '.zip',
         '.exe', '.dll', '.bat', '.cmd', '.com', '.js', '.vbs', '.ps1', '.scr', '.jar', '.msi', '.docm', '.xlsm', '.pptm',
+        '.dotm', '.xltm', '.xlam', '.xlsb', '.potm', '.ppam',
         '.html', '.htm', '.xml', '.json', '.yaml', '.yml', '.tar', '.gz', '.7z', '.rar'
     }
 

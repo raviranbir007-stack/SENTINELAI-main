@@ -271,8 +271,16 @@ class ReportGenerator:
         api_status = api_results.get("api_status", {})
         apis_called = api_results.get("apis_called", [])
         apis_expected = api_results.get("apis_expected", [api["name"] for api in ALL_EXTERNAL_APIS])
+        coverage = self._build_detection_coverage_overview(threat_analysis)
         lines = [f"APIs Expected: {', '.join(apis_expected)}"]
         lines.append(f"APIs Called: {', '.join(apis_called)}")
+        lines.append(f"Detection Mode: {coverage.get('mode', 'unknown').replace('_', ' ').title()}")
+        if coverage.get("method_names"):
+            lines.append(f"Local Methods: {', '.join(coverage.get('method_names', [])[:12])}")
+        if coverage.get("api_summary"):
+            lines.append(f"Coverage Summary: {coverage.get('api_summary')}")
+        if coverage.get("fallback_reason"):
+            lines.append(f"Fallback Reason: {coverage.get('fallback_reason')}")
         lines.append("")
         # Add explicit API coverage explanation if present (for test/demo domains)
         explanation = threat_analysis.get("api_coverage_explanation")
@@ -323,11 +331,17 @@ class ReportGenerator:
     def _format_forensic_summary(self, threat_analysis: Dict[str, Any]) -> str:
         """Format a forensic reliability and evidence summary for the report."""
         forensic = threat_analysis.get("forensic_metadata", {})
+        coverage = self._build_detection_coverage_overview(threat_analysis)
         lines = []
         lines.append(f"Corroboration Count: {forensic.get('corroboration_count', 0)}")
         lines.append(f"Corroboration Threshold Met: {forensic.get('corroboration_threshold_met', False)}")
         lines.append(f"APIs Checked: {forensic.get('apis_checked', 0)} / {forensic.get('total_apis_available', 0)}")
         lines.append(f"Scan Coverage: {forensic.get('scan_coverage', '')}")
+        lines.append(f"Detection Mode: {coverage.get('mode', 'unknown').replace('_', ' ').title()}")
+        if coverage.get("method_names"):
+            lines.append(f"Local Methods: {', '.join(coverage.get('method_names', [])[:12])}")
+        if coverage.get("fallback_reason"):
+            lines.append(f"Fallback Reason: {coverage.get('fallback_reason')}")
         quality = threat_analysis.get("report_quality_checks") or forensic.get("report_quality_checks") or {}
         if quality:
             lines.append(f"Report QA Passed: {bool(quality.get('ok', False))}")
@@ -2336,6 +2350,7 @@ Global constraints:
         input_val = threat_data.get("input", "Unknown")
         input_type = threat_data.get("input_type", "Unknown")
         forensic_metadata = threat_data.get("forensic_metadata", {})
+        detection_coverage = self._build_detection_coverage_overview(threat_data)
         apis_called = api_results.get("apis_called", [])
         report_timezone = self._resolve_timezone_name(threat_data)
         generated_at = self._format_timestamp_for_report(threat_data.get("timestamp"), report_timezone)
@@ -2354,6 +2369,11 @@ Global constraints:
                 "available local and heuristic analysis (external API corroboration unavailable)."
             )
 
+        coverage_methods = detection_coverage.get("method_names", []) if isinstance(detection_coverage, dict) else []
+        coverage_methods_text = ", ".join(coverage_methods[:12]) if coverage_methods else "No structured local analysis methods were available in the report payload."
+        fallback_reason = detection_coverage.get("fallback_reason") if isinstance(detection_coverage, dict) else ""
+        api_summary = detection_coverage.get("api_summary") if isinstance(detection_coverage, dict) else ""
+
         if report_type == "technical_analysis":
             analysis = f"""## TECHNICAL VERDICT SUMMARY
 
@@ -2365,6 +2385,13 @@ Report Timezone: {report_timezone}
 Time Range Covered: {time_range_label}
 
 {coverage_line}
+
+## DETECTION COVERAGE AND FALLBACK MODE
+
+- Analysis mode: {str(detection_coverage.get('mode', 'unknown')).replace('_', ' ').title()}
+- Local methods: {coverage_methods_text}
+- External API coverage: {api_summary or 'Unavailable'}
+{'- Fallback reason: ' + str(fallback_reason) if fallback_reason else ''}
 
 ## DETECTION PIPELINE BREAKDOWN
 
@@ -2413,6 +2440,13 @@ Time Range Covered: {time_range_label}
 ## SCOPE AND EVIDENCE CONTEXT
 
 {coverage_line}
+
+## DETECTION COVERAGE AND FALLBACK MODE
+
+- Analysis mode: {str(detection_coverage.get('mode', 'unknown')).replace('_', ' ').title()}
+- Local methods: {coverage_methods_text}
+- External API coverage: {api_summary or 'Unavailable'}
+{'- Fallback reason: ' + str(fallback_reason) if fallback_reason else ''}
 
 ## TIMELINE WINDOW SUMMARY
 
@@ -2465,6 +2499,13 @@ Report Timezone: {report_timezone}
 Time Range Covered: {time_range_label}
 
 {coverage_line}
+
+## DETECTION COVERAGE AND FALLBACK MODE
+
+- Analysis mode: {str(detection_coverage.get('mode', 'unknown')).replace('_', ' ').title()}
+- Local methods: {coverage_methods_text}
+- External API coverage: {api_summary or 'Unavailable'}
+{'- Fallback reason: ' + str(fallback_reason) if fallback_reason else ''}
 
 ## ASSESSMENT SCOPE AND TIME CONTEXT
 
@@ -4332,6 +4373,176 @@ Time Range Covered: {time_range_label}
 
         return normalized
 
+    def _build_detection_coverage_overview(self, threat_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Summarize the detection stack so fallback reports stay explicit about coverage."""
+        file_analysis = self._normalize_file_analysis(threat_analysis)
+        forensic = threat_analysis.get("forensic_metadata", {}) if isinstance(threat_analysis.get("forensic_metadata"), dict) else {}
+        api_results = threat_analysis.get("api_results", {}) if isinstance(threat_analysis.get("api_results"), dict) else {}
+        api_status = api_results.get("api_status", {}) if isinstance(api_results.get("api_status"), dict) else {}
+        ai_analysis = threat_analysis.get("ai_analysis", {}) if isinstance(threat_analysis.get("ai_analysis"), dict) else {}
+        behavioral_sequence = threat_analysis.get("behavioral_sequence") or forensic.get("behavioral_sequence") or []
+
+        methods: list[Dict[str, Any]] = []
+
+        def add_method(name: str, status: str, details: str) -> None:
+            methods.append({"name": name, "status": status, "details": details})
+
+        signatures = file_analysis.get("signatures", []) if isinstance(file_analysis.get("signatures"), list) else []
+        if file_analysis:
+            add_method(
+                "Signature Matching",
+                "COMPLETED",
+                f"Signature, byte-pattern, and heuristic matching contributed {len(signatures)} hit(s).",
+            )
+
+        entropy_value = file_analysis.get("entropy") if isinstance(file_analysis, dict) else None
+        if entropy_value is not None:
+            try:
+                entropy = float(entropy_value)
+            except (TypeError, ValueError):
+                entropy = 0.0
+            add_method(
+                "Shannon Entropy Analysis",
+                "COMPLETED",
+                f"Calculated file entropy at {entropy:.3f} for packing and obfuscation assessment.",
+            )
+
+        ioc_total = sum(len(v) for v in (file_analysis.get("iocs", {}) or {}).values())
+        suspicious_strings = len(file_analysis.get("suspicious_strings", []) or [])
+        if file_analysis:
+            add_method(
+                "IOC & Context Heuristics",
+                "COMPLETED" if (ioc_total or suspicious_strings) else "LIMITED",
+                f"Extracted {ioc_total} IOC value(s) and {suspicious_strings} suspicious context string(s).",
+            )
+
+        document_analysis = file_analysis.get("document_analysis") if isinstance(file_analysis.get("document_analysis"), dict) else {}
+        ole_info = file_analysis.get("ole_info") if isinstance(file_analysis.get("ole_info"), dict) else {}
+        if document_analysis or ole_info:
+            document_kind = str((document_analysis or {}).get("kind") or (ole_info or {}).get("kind") or "office_document")
+            add_method(
+                "OLE / Office Heuristic Analysis",
+                "COMPLETED",
+                f"Document/container heuristics evaluated {document_kind} artifacts for macro, link, and embedded-object signals.",
+            )
+
+        pe_info = file_analysis.get("pe_info") or file_analysis.get("coff_info")
+        if pe_info:
+            add_method(
+                "PE/COFF Binary Analysis",
+                "COMPLETED",
+                f"PE/COFF metadata captured {len((pe_info or {}).get('sections', []))} section(s) and {len((pe_info or {}).get('imports', []))} import set(s).",
+            )
+
+        disassembly_info = file_analysis.get("disassembly_info") if isinstance(file_analysis.get("disassembly_info"), dict) else {}
+        if disassembly_info:
+            add_method(
+                "Code Disassembly",
+                "COMPLETED",
+                f"Capstone/lief-style disassembly produced {len(disassembly_info.get('suspicious_patterns', []))} suspicious pattern(s).",
+            )
+
+        ml_result = file_analysis.get("ml_classification") if isinstance(file_analysis.get("ml_classification"), dict) else {}
+        if ml_result:
+            add_method(
+                "Machine Learning Classification",
+                "COMPLETED",
+                f"Local ML classification predicted {ml_result.get('prediction', 'UNKNOWN')} with confidence {float(ml_result.get('confidence', 0.0) or 0.0):.2f}.",
+            )
+
+        if ai_analysis:
+            anomaly_detection = ai_analysis.get("anomaly_detection", {}) if isinstance(ai_analysis.get("anomaly_detection"), dict) else {}
+            threat_prediction = ai_analysis.get("threat_prediction", {}) if isinstance(ai_analysis.get("threat_prediction"), dict) else {}
+            behavioral_analysis = ai_analysis.get("behavioral_analysis", {}) if isinstance(ai_analysis.get("behavioral_analysis"), dict) else {}
+            reputation_score = ai_analysis.get("reputation_score", {}) if isinstance(ai_analysis.get("reputation_score"), dict) else {}
+
+            if anomaly_detection:
+                add_method(
+                    "AI / ML Anomaly Detection",
+                    "COMPLETED",
+                    f"Anomaly score {float(anomaly_detection.get('score', 0.0) or 0.0):.3f} with factors: {', '.join(anomaly_detection.get('factors', [])[:4]) or 'none reported'}.",
+                )
+            if threat_prediction:
+                add_method(
+                    "AI / ML Threat Prediction",
+                    "COMPLETED",
+                    f"Threat probability {float(threat_prediction.get('probability', 0.0) or 0.0):.3f} and level {threat_prediction.get('threat_level', 'unknown')}.",
+                )
+            if behavioral_analysis:
+                add_method(
+                    "Behavioral Analysis",
+                    "COMPLETED",
+                    f"Detected {len(behavioral_analysis.get('behaviors_detected', []) or [])} behavioral signal(s) with risk {behavioral_analysis.get('risk_level', 'unknown')}.",
+                )
+            if reputation_score:
+                add_method(
+                    "Reputation Scoring",
+                    "COMPLETED",
+                    f"Reputation score settled at {reputation_score.get('score', 'n/a')} ({reputation_score.get('rating', 'unknown')}).",
+                )
+
+        if behavioral_sequence:
+            add_method(
+                "Behavioral Sequence & Orchestration",
+                "COMPLETED",
+                f"Ordered {len(behavioral_sequence)} behavioral event(s) into a timeline for orchestration-aware analysis.",
+            )
+
+        corroboration = threat_analysis.get("corroboration_analysis")
+        if corroboration or forensic.get("corroboration_count") is not None:
+            add_method(
+                "Corroboration Engine",
+                "COMPLETED" if corroboration else "LIMITED",
+                f"Cross-source corroboration evaluated {int(forensic.get('corroboration_count', 0) or 0)} source(s).",
+            )
+
+        api_status_values = [str((meta or {}).get("status", "unknown") or "unknown").lower() for meta in api_status.values() if isinstance(meta, dict)]
+        checked_count = sum(1 for status in api_status_values if status in {"checked", "clean", "no_threat", "available", "online"})
+        applicable_expected = int(forensic.get("total_apis_available", 0) or 0)
+        if api_results or api_status:
+            if checked_count > 0:
+                api_status_label = "COMPLETED"
+                api_status_details = f"{checked_count}/{applicable_expected or checked_count} applicable external source(s) completed."
+            elif any(status in {"rate_limited", "quota_exceeded", "not_configured", "not_authorized", "error", "skipped_local_mode"} for status in api_status_values):
+                api_status_label = "LIMITED"
+                api_status_details = "External API coverage was constrained, so local heuristics and ML fallback carried the verdict."
+            else:
+                api_status_label = "LIMITED"
+                api_status_details = "External API payload was present but no provider completed in this scan window."
+            add_method("Threat Intelligence APIs", api_status_label, api_status_details)
+
+        unavailable_reasons = forensic.get("external_corroboration_unavailable_reasons", []) if isinstance(forensic.get("external_corroboration_unavailable_reasons"), list) else []
+        fallback_reason = threat_analysis.get("api_coverage_explanation") or (", ".join(str(item) for item in unavailable_reasons) if unavailable_reasons else "")
+
+        if checked_count > 0 and methods:
+            analysis_mode = "hybrid"
+        elif methods:
+            analysis_mode = "local_fallback"
+        elif api_results:
+            analysis_mode = "api_assisted"
+        else:
+            analysis_mode = "insufficient_data"
+
+        local_method_names = []
+        for method in methods:
+            name = str(method.get("name", "")).strip()
+            if name and name not in local_method_names:
+                local_method_names.append(name)
+
+        if not fallback_reason:
+            if analysis_mode == "local_fallback":
+                fallback_reason = "External API coverage was unavailable or incomplete, so local analysis methods were used to drive the conclusion."
+            elif analysis_mode == "insufficient_data":
+                fallback_reason = "No external API payload or local evidence bundle was present in the report input."
+
+        return {
+            "mode": analysis_mode,
+            "methods": methods,
+            "method_names": local_method_names,
+            "fallback_reason": fallback_reason,
+            "api_summary": f"{checked_count}/{applicable_expected or checked_count or 0} applicable API source(s) completed",
+        }
+
     def _summarize_static_pe_analysis(self, threat_analysis: Dict[str, Any], file_analysis: Dict[str, Any], is_advanced_report: bool) -> tuple[str, str]:
         """Return a readable static/PE summary for report tables."""
         if is_advanced_report:
@@ -4386,6 +4597,9 @@ Time Range Covered: {time_range_label}
     def _get_analysis_methods_used(self, threat_analysis: Dict[str, Any]) -> list:
         """Get list of analysis methods used in the scan"""
         methods = []
+        coverage = self._build_detection_coverage_overview(threat_analysis)
+        if coverage.get("methods"):
+            methods.extend(coverage.get("methods", []))
         input_type = str(threat_analysis.get("input_type") or "").strip().lower()
         if input_type == "advanced_report":
             interval_summaries = threat_analysis.get("interval_summaries") or []
@@ -4698,11 +4912,36 @@ Time Range Covered: {time_range_label}
         
         # 7. Behavioral Analysis (if available)
         behavioral = threat_analysis.get("behavioral_analysis", {})
-        if behavioral:
+        ai_behavioral = threat_analysis.get("ai_analysis", {}).get("behavioral_analysis", {}) if isinstance(threat_analysis.get("ai_analysis"), dict) else {}
+        if behavioral or ai_behavioral:
+            behavioral_payload = behavioral if behavioral else ai_behavioral
             methods.append({
                 "name": "Behavioral Analysis",
                 "status": "COMPLETED",
-                "details": f"Analyzed {len(behavioral.get('indicators', []))} behavioral indicators and {len(behavioral.get('anomalies', []))} anomalies."
+                "details": f"Analyzed {len(behavioral_payload.get('indicators', []))} behavioral indicators and {len(behavioral_payload.get('anomalies', []))} anomalies."
+            })
+
+        ai_analysis = threat_analysis.get("ai_analysis", {}) if isinstance(threat_analysis.get("ai_analysis"), dict) else {}
+        anomaly_detection = ai_analysis.get("anomaly_detection", {}) if isinstance(ai_analysis.get("anomaly_detection"), dict) else {}
+        threat_prediction = ai_analysis.get("threat_prediction", {}) if isinstance(ai_analysis.get("threat_prediction"), dict) else {}
+        if anomaly_detection:
+            methods.append({
+                "name": "AI / ML Anomaly Detection",
+                "status": "COMPLETED",
+                "details": f"Anomaly score {float(anomaly_detection.get('score', 0.0) or 0.0):.3f} with factors: {', '.join(anomaly_detection.get('factors', [])[:4]) or 'none reported'}."
+            })
+        if threat_prediction:
+            methods.append({
+                "name": "AI / ML Threat Prediction",
+                "status": "COMPLETED",
+                "details": f"Threat probability {float(threat_prediction.get('probability', 0.0) or 0.0):.3f} and level {threat_prediction.get('threat_level', 'unknown')}."
+            })
+
+        if ai_analysis.get("behavioral_analysis") or ai_analysis.get("reputation_score"):
+            methods.append({
+                "name": "Detection Orchestration",
+                "status": "COMPLETED",
+                "details": "Local heuristics, behavioral signals, AI/ML scoring, and corroboration logic were fused into the final verdict."
             })
 
         # 7b. Corroboration and sequence analysis
