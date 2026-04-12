@@ -6,6 +6,7 @@ Combines all 5 threat intelligence APIs with Gemini AI for predictive analysis
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import aiohttp
@@ -58,6 +59,73 @@ class AIThreatEngine:
         }
         # Simplified api_weights for compatibility
         self.api_weights = {k: v["weight"] for k, v in self.api_configs.items()}
+
+    @staticmethod
+    def _deterministic_prediction(target_info: Dict, historical_data: List[Dict], note: Optional[str] = None) -> Dict:
+        """Build a stable fallback prediction when AI output is unavailable or malformed."""
+        history = list(historical_data or [])
+        recent = history[-20:]
+        if recent:
+            confidences = [float(item.get("confidence") or 0.0) for item in recent]
+            avg_conf = sum(confidences) / max(1, len(confidences))
+            suspicious_events = sum(
+                1
+                for item in recent
+                if str(item.get("threat_level") or "").strip().lower() in {"suspicious", "malicious", "high", "critical"}
+            )
+            attack_likelihood = int(min(95, max(5, round((avg_conf * 55) + (suspicious_events * 6)))))
+        else:
+            attack_likelihood = 35
+
+        if attack_likelihood >= 75:
+            timeline = "immediate"
+        elif attack_likelihood >= 45:
+            timeline = "short-term"
+        else:
+            timeline = "long-term"
+
+        target_type = str(target_info.get("target_type") or "").lower()
+        predicted_types = {
+            "ip": ["DDoS", "Reconnaissance"],
+            "domain": ["Phishing", "DNS Abuse"],
+            "url": ["Phishing", "Malware Delivery"],
+            "file": ["Malware", "Ransomware"],
+            "hash": ["Malware"],
+        }.get(target_type, ["Unknown"])
+
+        reasoning = "Deterministic fallback based on recent local threat history"
+        if note:
+            reasoning = f"{reasoning}. AI unavailable: {note}"
+
+        return {
+            "attack_likelihood": attack_likelihood,
+            "predicted_attack_types": predicted_types,
+            "recommended_actions": [
+                "Maintain enhanced monitoring for this target",
+                "Correlate with IDS/HIDS alerts for the next 24 hours",
+                "Escalate to manual review if confidence or severity increases",
+            ],
+            "risk_timeline": timeline,
+            "confidence": 0.55,
+            "reasoning": reasoning,
+            "fallback": True,
+        }
+
+    @staticmethod
+    def _parse_ai_json_response(ai_response) -> Dict:
+        """Parse Gemini response that may be dict, JSON string, or markdown-wrapped JSON."""
+        if isinstance(ai_response, dict):
+            return ai_response
+
+        if not isinstance(ai_response, str):
+            raise ValueError("Unsupported AI response type")
+
+        text = ai_response.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text).strip()
+
+        return json.loads(text)
     
     async def multi_api_threat_analysis(self, scan_results: Dict) -> Dict:
         """Analyze threat using weighted multi-API approach"""
@@ -223,7 +291,7 @@ Provide analysis in JSON format with these exact keys:
             
             # Parse AI response
             try:
-                prediction = json.loads(ai_response)
+                prediction = self._parse_ai_json_response(ai_response)
             except:
                 # Fallback parsing
                 prediction = {
@@ -232,21 +300,29 @@ Provide analysis in JSON format with these exact keys:
                     "recommended_actions": ["Monitor closely"],
                     "risk_timeline": "short-term",
                     "confidence": 0.5,
-                    "reasoning": ai_response[:500]
+                    "reasoning": str(ai_response)[:500]
                 }
+
+            if not isinstance(prediction, dict):
+                return self._deterministic_prediction(target_info, historical_data, note="non-dict AI response")
+
+            required_keys = {
+                "attack_likelihood",
+                "predicted_attack_types",
+                "recommended_actions",
+                "risk_timeline",
+                "confidence",
+                "reasoning",
+            }
+            if not required_keys.issubset(set(prediction.keys())):
+                note = prediction.get("error") if isinstance(prediction, dict) else "missing required keys"
+                return self._deterministic_prediction(target_info, historical_data, note=str(note or "missing required keys"))
             
             return prediction
             
         except Exception as e:
             logger.error(f"Attack prediction error: {e}")
-            return {
-                "attack_likelihood": 0,
-                "predicted_attack_types": [],
-                "recommended_actions": ["Unable to predict - manual review required"],
-                "risk_timeline": "unknown",
-                "confidence": 0,
-                "reasoning": f"Error: {str(e)}"
-            }
+            return self._deterministic_prediction(target_info, historical_data, note=str(e))
     
     async def generate_defense_strategy(self, threat_analysis: Dict, client_context: Dict) -> Dict:
         """Generate intelligent defense strategy using AI"""
@@ -283,7 +359,7 @@ Response in JSON format:
             ai_response = await gemini.analyze_with_gemini(prompt, threat_analysis)
             
             try:
-                strategy = json.loads(ai_response)
+                strategy = self._parse_ai_json_response(ai_response)
             except:
                 # Fallback strategy
                 strategy = {
@@ -298,7 +374,7 @@ Response in JSON format:
                     "preventive_measures": ["Enable firewall", "Update security rules"],
                     "monitoring_recommendations": ["Monitor for 24 hours"],
                     "estimated_risk_reduction": 60,
-                    "implementation_notes": ai_response[:500]
+                    "implementation_notes": str(ai_response)[:500]
                 }
             
             return strategy

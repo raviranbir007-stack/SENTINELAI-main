@@ -2055,10 +2055,29 @@ class ReportGenerator:
             if sanitized:
                 self._store_cached_analysis(cache_key, sanitized)
                 return sanitized
+            normalized_report_type = self._normalize_report_type(threat_data.get("report_type", "executive_summary"))
+            raw_word_count = len(str(genai_result).split())
+
+            # Keep partial-but-meaningful executive output by blending with deterministic analysis.
+            # This reduces hard fallbacks during quota pressure while preserving reliability.
+            blended = self._blend_short_ai_with_fallback(
+                ai_text=str(genai_result),
+                threat_data=threat_data,
+                report_type=normalized_report_type,
+            )
+            if blended:
+                logger.info(
+                    "Gemini returned short analysis (words=%d, report_type=%s); blended with deterministic sections",
+                    raw_word_count,
+                    normalized_report_type,
+                )
+                self._store_cached_analysis(cache_key, blended)
+                return blended
+
             logger.warning(
                 "Gemini returned incomplete analysis (words=%d, report_type=%s); using deterministic fallback",
-                len(str(genai_result).split()),
-                self._normalize_report_type(threat_data.get("report_type", "executive_summary")),
+                raw_word_count,
+                normalized_report_type,
             )
 
         # Final fallback to deterministic local analysis
@@ -2150,6 +2169,35 @@ class ReportGenerator:
         # Fallback: stringify response
         try:
             return str(response)
+        except Exception:
+            return ""
+
+    def _blend_short_ai_with_fallback(self, ai_text: str, threat_data: Dict[str, Any], report_type: str) -> str:
+        """Blend short executive AI output with deterministic analysis to avoid hard drops.
+
+        Only applies to executive summaries when AI content is short but non-trivial.
+        """
+        try:
+            normalized_type = self._normalize_report_type(report_type)
+            if normalized_type != "executive_summary":
+                return ""
+
+            cleaned_ai = str(ai_text or "").strip()
+            words = cleaned_ai.split()
+            if len(words) < 35:
+                return ""
+
+            # Avoid blending obvious refusal/placeholder fragments.
+            low = cleaned_ai.lower()
+            if re.search(r"\b(i\s+cannot|i\s+can't|unable\s+to\s+provide|insufficient\s+data|placeholder|lorem\s+ipsum)\b", low):
+                return ""
+
+            fallback = self._get_fallback_analysis(threat_data)
+            if not fallback:
+                return ""
+
+            ai_section = "## AI EXECUTIVE NARRATIVE (PARTIAL)\n\n" + cleaned_ai
+            return f"{ai_section}\n\n## DETERMINISTIC COMPLETION\n\n{fallback}".strip()
         except Exception:
             return ""
 
