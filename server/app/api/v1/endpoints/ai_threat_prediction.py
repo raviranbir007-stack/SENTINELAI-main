@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -29,9 +29,66 @@ def utcnow() -> datetime:
 
 class ThreatPredictionRequest(BaseModel):
     """Request for AI threat prediction"""
-    target: str
-    target_type: str  # ip, url, domain, file, hash
+    target: Optional[str] = None
+    target_type: Optional[str] = None  # ip, url, domain, file, hash
     context: Optional[Dict] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        context = normalized.get("context") if isinstance(normalized.get("context"), dict) else {}
+
+        # Accept common aliases used by older clients.
+        if "target" not in normalized:
+            normalized["target"] = (
+                normalized.get("source_ip")
+                or normalized.get("source_domain")
+                or normalized.get("domain")
+                or normalized.get("ip")
+                or normalized.get("url")
+                or normalized.get("file_hash")
+                or normalized.get("hash")
+                or context.get("target")
+                or context.get("source_ip")
+                or context.get("source_domain")
+                or context.get("domain")
+                or context.get("ip")
+                or context.get("url")
+                or context.get("file_hash")
+                or context.get("hash")
+            )
+
+        if "target_type" not in normalized:
+            candidate_type = (
+                normalized.get("targetType")
+                or normalized.get("type")
+                or context.get("target_type")
+                or context.get("targetType")
+                or context.get("type")
+            )
+            target = str(normalized.get("target") or "").strip()
+            if not candidate_type:
+                if target and all(part.isdigit() for part in target.replace(":", ".").split(".") if part):
+                    candidate_type = "ip"
+                elif target.startswith(("http://", "https://")):
+                    candidate_type = "url"
+                elif target and "." in target:
+                    candidate_type = "domain"
+                else:
+                    candidate_type = "indicator"
+            normalized["target_type"] = candidate_type
+
+        if normalized.get("target") is None:
+            normalized["target"] = "unknown_target"
+
+        if normalized.get("target_type") is None:
+            normalized["target_type"] = "indicator"
+
+        return normalized
 
 
 class AttackPatternAnalysisRequest(BaseModel):
