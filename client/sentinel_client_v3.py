@@ -506,6 +506,41 @@ class SentinelClientV3:
     def _handle_activity_alert(self, activity: Dict):
         """Handle activity alerts from ActivityLogger"""
         activity_type = activity.get('type')
+
+        if activity_type in {'WEB_ATTACK_PATTERN', 'WEB_SQLI_ATTEMPT', 'WEB_XSS_ATTEMPT'}:
+            severity = str(activity.get('severity') or activity.get('risk') or 'HIGH').upper()
+            logger.critical(
+                "🚨 Web payload attack pattern detected: %s (%s)",
+                activity_type,
+                severity,
+            )
+
+            attack_payload = {
+                'type': activity_type,
+                'severity': severity,
+                'description': activity.get('description') or activity.get('short_description') or 'Suspicious web payload detected',
+                'short_description': activity.get('short_description') or 'Suspicious web payload detected',
+                'source_ip': activity.get('source_ip') or 'UNKNOWN',
+                'source_domain': activity.get('source_domain') or activity.get('domain'),
+                'url': activity.get('url'),
+                'attack_family': 'WEB_APP_PAYLOAD',
+                'tool_signature': 'DVWA_PAYLOAD_PATTERN',
+                'mitigation_commands': [
+                    'Enable WAF SQLi/XSS rules and strict input sanitization on the target app.',
+                    'Review application logs and block/limit repeated payload source traffic.',
+                ],
+                'recommended_action': 'Contain source, validate web application inputs, and review WAF/IDS telemetry.',
+                'timestamp': datetime.now(),
+                'indicators': activity.get('indicator_matches') or {},
+            }
+
+            self.defense_coordinator.handle_attack(attack_payload)
+            self._report_intrusion_attack(attack_payload)
+            self._send_defense_event_to_server({
+                'event': 'WEB_PAYLOAD_ALERT',
+                'monitor_event': activity,
+            })
+            return
         
         if activity_type == 'RISKY_WEBSITE':
             logger.warning(f"🚨 THREAT: Risky website")

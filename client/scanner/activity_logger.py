@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .minimal_cli import MinimalCLI
 from .file_scanner import FileScanner
@@ -86,6 +86,29 @@ class ActivityLogger:
             'api.ipify.org',
             'ifconfig.me',
         }
+        self.SQLI_PATTERNS = [
+            re.compile(pat, re.IGNORECASE)
+            for pat in [
+                r"\bunion\b\s+\b(all\s+)?select\b",
+                r"\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?",
+                r"\binformation_schema\b",
+                r"\b(?:sleep|benchmark)\s*\(",
+                r"\bdrop\b\s+\btable\b",
+                r"\bselect\b.+\bfrom\b",
+            ]
+        ]
+        self.XSS_PATTERNS = [
+            re.compile(pat, re.IGNORECASE)
+            for pat in [
+                r"<\s*script\b",
+                r"javascript:\s*",
+                r"\bon(?:error|load|mouseover|focus)\s*=",
+                r"\balert\s*\(",
+                r"\bdocument\.cookie\b",
+                r"<\s*img\b[^>]*\bonerror\s*=",
+                r"<\s*svg\b[^>]*\bonload\s*=",
+            ]
+        ]
         self._reverse_dns_cache = {}
 
         # Chrome/Chromium timestamp origin: microseconds since 1601-01-01
@@ -802,6 +825,7 @@ class ActivityLogger:
                 return
             parsed = urlparse(url)
             domain = parsed.netloc or parsed.path.split('/')[0]
+            risk_level = self._analyze_website_risk(url, domain)
             
             # Skip empty domains
             if not domain:
@@ -813,9 +837,9 @@ class ActivityLogger:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    INSERT INTO websites (url, domain, title, browser)
-                    VALUES (?, ?, ?, ?)
-                ''', (url[:2048], domain[:255], title[:255] if title else None, browser))
+                    INSERT INTO websites (url, domain, title, browser, risk_level)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (url[:2048], domain[:255], title[:255] if title else None, browser, risk_level))
                 
                 conn.commit()
                 conn.close()
@@ -830,6 +854,24 @@ class ActivityLogger:
                     artifact_value=url,
                     metadata={'domain': domain, 'browser': browser}
                 )
+
+            web_attack = self._detect_web_attack_payload(url, title)
+            if web_attack and self.callback:
+                alert_key = f"{web_attack['type']}:{domain}"
+                if self._should_trigger_scan(alert_key):
+                    self.callback({
+                        'type': web_attack['type'],
+                        'severity': web_attack['severity'],
+                        'risk': web_attack['severity'],
+                        'description': web_attack['description'],
+                        'short_description': web_attack['short_description'],
+                        'source_ip': web_attack['source_ip'],
+                        'source_domain': domain,
+                        'url': url,
+                        'browser': browser,
+                        'indicator_matches': web_attack['indicator_matches'],
+                        'timestamp': datetime.now().isoformat(),
+                    })
             
             # Log to console (one-line format)
             cli.prompt_website(domain)
@@ -976,6 +1018,10 @@ class ActivityLogger:
         """Analyze website risk level"""
         url_lower = url.lower()
         domain_lower = domain.lower()
+
+        web_attack = self._detect_web_attack_payload(url, None)
+        if web_attack:
+            return web_attack.get('severity', 'HIGH')
         
         # Check for suspicious keywords
         for keyword in self.SUSPICIOUS_KEYWORDS:
@@ -992,6 +1038,73 @@ class ActivityLogger:
             return 'LOW'
         
         return 'SAFE'
+
+    def _detect_web_attack_payload(self, url: str, title: Optional[str]) -> Optional[Dict]:
+        """Detect SQLi/XSS-style payload markers in visited URL/query/title."""
+        try:
+            parsed = urlparse(str(url or ''))
+            raw_parts = [
+                str(url or ''),
+                str(parsed.path or ''),
+                str(parsed.query or ''),
+                str(parsed.fragment or ''),
+                str(title or ''),
+            ]
+
+            query_values: List[str] = []
+            try:
+                parsed_qs = parse_qs(parsed.query, keep_blank_values=True)
+                for values in parsed_qs.values():
+                    query_values.extend(str(v) for v in values)
+            except Exception:
+                pass
+
+            raw_parts.extend(query_values)
+            decoded = "\n".join(unquote(part) for part in raw_parts if part)
+
+            sqli_hits = [pat.pattern for pat in self.SQLI_PATTERNS if pat.search(decoded)]
+            xss_hits = [pat.pattern for pat in self.XSS_PATTERNS if pat.search(decoded)]
+
+            if not sqli_hits and not xss_hits:
+                return None
+
+            source_ip = 'UNKNOWN'
+            host = str(parsed.hostname or '').strip()
+            if host:
+                try:
+                    source_ip = socket.gethostbyname(host)
+                except Exception:
+                    source_ip = host
+
+            if sqli_hits and xss_hits:
+                attack_type = 'WEB_ATTACK_PATTERN'
+                short_description = 'URL contains SQLi and XSS payload markers'
+                description = 'Detected URL payload patterns consistent with SQL injection and cross-site scripting probes.'
+                severity = 'CRITICAL'
+            elif sqli_hits:
+                attack_type = 'WEB_SQLI_ATTEMPT'
+                short_description = 'URL contains SQL injection markers'
+                description = 'Detected SQL injection payload markers in URL/query parameters.'
+                severity = 'HIGH'
+            else:
+                attack_type = 'WEB_XSS_ATTEMPT'
+                short_description = 'URL contains XSS/script injection markers'
+                description = 'Detected cross-site scripting payload markers in URL/query/title content.'
+                severity = 'HIGH'
+
+            return {
+                'type': attack_type,
+                'severity': severity,
+                'short_description': short_description,
+                'description': description,
+                'source_ip': source_ip,
+                'indicator_matches': {
+                    'sqli_markers': sqli_hits[:8],
+                    'xss_markers': xss_hits[:8],
+                },
+            }
+        except Exception:
+            return None
 
     def _analyze_app_risk(self, app_name: str, app_path: str) -> str:
         """Analyze application risk level"""

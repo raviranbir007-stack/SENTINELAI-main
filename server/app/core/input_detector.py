@@ -30,6 +30,13 @@ class InputDetector:
         '.html', '.htm', '.xml', '.json', '.yaml', '.yml', '.tar', '.gz', '.7z', '.rar'
     }
 
+    # Common internet TLDs that should remain domain candidates even if they overlap
+    # with file-like extensions (e.g., .com).
+    COMMON_DOMAIN_TLDS = {
+        '.com', '.net', '.org', '.io', '.co', '.ai', '.dev', '.app', '.edu', '.gov',
+        '.in', '.uk', '.us', '.ca', '.de', '.fr', '.jp', '.au', '.cn', '.info', '.biz',
+    }
+
     # Regex patterns
     IPV4_PATTERN = re.compile(
         r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
@@ -142,7 +149,7 @@ class InputDetector:
         # Avoid confusing file names with domains (e.g., report.docx)
         if "." in value:
             ext = "." + value.split('.')[-1]
-            if ext in InputDetector.FILE_EXTENSIONS:
+            if ext in InputDetector.FILE_EXTENSIONS and ext not in InputDetector.COMMON_DOMAIN_TLDS:
                 return False
 
         return bool(InputDetector.DOMAIN_PATTERN.match(value))

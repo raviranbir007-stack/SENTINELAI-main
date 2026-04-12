@@ -144,7 +144,8 @@ def create_pdf(text: str, data: ReportRequest) -> io.BytesIO:
 async def _generate_report_bytes_with_timeout(threat_analysis: dict, data: ReportRequest) -> bytes:
     """Generate report bytes with a bounded AI timeout and deterministic PDF fallback."""
     timeout_seconds = float(getattr(report_generator, "gemini_request_timeout_seconds", 20.0))
-    timeout_seconds = max(5.0, min(timeout_seconds, 20.0))
+    # Keep endpoint timeout aligned with report generator limits.
+    timeout_seconds = max(10.0, min(timeout_seconds, 120.0))
     try:
         return await asyncio.wait_for(
             report_generator.generate_analysis_report(threat_analysis),

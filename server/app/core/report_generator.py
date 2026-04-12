@@ -1486,25 +1486,28 @@ class ReportGenerator:
         # Remove repetitive footer echoes and duplicate headings often returned by model retries.
         cleaned = re.sub(r"(SENTINEL-AI \| Automated Threat Detection.*)$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
 
-        # Guard against placeholder/no-content answers while allowing concise but complete summaries.
+        # Guard against refusal/placeholder outputs while allowing analytical uncertainty language in real reports.
         lowered = cleaned.lower()
-        bad_markers = (
-            "i cannot",
-            "i can't",
-            "unable to provide",
-            "not enough information",
-            "insufficient data",
-            "n/a",
-            "placeholder",
-            "lorem ipsum",
+        lead_window = lowered[:320]
+        refusal_patterns = (
+            r"\bi\s+cannot\b",
+            r"\bi\s+can't\b",
+            r"\bunable\s+to\s+provide\b",
+            r"\bnot\s+enough\s+information\b",
+            r"\binsufficient\s+data\b",
         )
-        if any(marker in lowered for marker in bad_markers):
-            return ""
+        has_placeholder_only = bool(re.search(r"\b(?:n/?a|placeholder|lorem ipsum)\b", lowered))
+        has_refusal_lead = any(re.search(pattern, lead_window) for pattern in refusal_patterns)
 
         words = cleaned.split()
         word_count = len(words)
         normalized_type = self._normalize_report_type(report_type)
         hard_floor = 70 if normalized_type == "executive_summary" else 90
+
+        if has_placeholder_only and word_count < 140:
+            return ""
+        if has_refusal_lead and word_count < 220:
+            return ""
 
         # Accept shorter outputs only if they contain structured analytical sections.
         has_structured_sections = bool(

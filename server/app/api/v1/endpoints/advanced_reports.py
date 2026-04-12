@@ -5,12 +5,18 @@ import io
 import logging
 import time
 import ipaddress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from ....database import get_db
+from ....models import AttackEvent, ScanHistory
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -140,6 +146,77 @@ def _normalize_intervals(intervals: list[str] | None) -> list[str]:
     return normalized or ["24h"]
 
 
+def _to_float_01(value: object) -> float:
+    try:
+        raw = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if raw > 1.0:
+        raw = raw / 100.0
+    return max(0.0, min(raw, 1.0))
+
+
+async def _collect_interval_security_metrics(db: AsyncSession, hours: int, scan_limit: int = 120, attack_limit: int = 120) -> dict:
+    threshold = utcnow() - timedelta(hours=hours)
+
+    attack_rows = (
+        await db.execute(
+            select(AttackEvent)
+            .where(AttackEvent.detected_at >= threshold)
+            .order_by(AttackEvent.detected_at.desc())
+            .limit(attack_limit)
+        )
+    ).scalars().all()
+
+    scan_rows = (
+        await db.execute(
+            select(ScanHistory)
+            .where(ScanHistory.scan_timestamp >= threshold)
+            .order_by(ScanHistory.scan_timestamp.desc())
+            .limit(scan_limit)
+        )
+    ).scalars().all()
+
+    attack_count = int((await db.execute(select(func.count(AttackEvent.id)).where(AttackEvent.detected_at >= threshold))).scalar() or 0)
+    scan_count = int((await db.execute(select(func.count(ScanHistory.id)).where(ScanHistory.scan_timestamp >= threshold))).scalar() or 0)
+
+    attacks = [
+        {
+            "event_id": attack.event_id,
+            "type": attack.attack_type,
+            "severity": str(getattr(attack.severity, "value", attack.severity) or "medium").lower(),
+            "confidence": _to_float_01(attack.confidence),
+            "source_ip": attack.source_ip,
+            "source_domain": attack.source_domain,
+            "description": attack.description,
+            "status": attack.status,
+            "detected_at": attack.detected_at.isoformat() if attack.detected_at else None,
+        }
+        for attack in attack_rows
+    ]
+
+    scans = [
+        {
+            "scan_id": scan.scan_id,
+            "target": scan.target,
+            "target_type": scan.target_type,
+            "threat_level": str(scan.threat_level or "unknown").lower(),
+            "confidence": _to_float_01(scan.confidence),
+            "threats_detected": int(scan.threats_detected or 0),
+            "scan_source": scan.scan_source or "manual",
+            "scan_timestamp": scan.scan_timestamp.isoformat() if scan.scan_timestamp else None,
+        }
+        for scan in scan_rows
+    ]
+
+    return {
+        "attack_count": attack_count,
+        "scan_count": scan_count,
+        "attacks": attacks,
+        "scans": scans,
+    }
+
+
 @router.get("/interval/{interval}")
 async def generate_interval_report(
     interval: str,
@@ -169,7 +246,7 @@ async def generate_interval_report(
 
 
 @router.post("/generate-comprehensive")
-async def generate_comprehensive_report(req: AdvancedReportRequest):
+async def generate_comprehensive_report(req: AdvancedReportRequest, db: AsyncSession = Depends(get_db)):
     """Generate comprehensive threat analysis report with AI + local fallback."""
     try:
         # Import here to avoid heavy module initialization at startup.
@@ -186,12 +263,21 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
             hours = interval_hours_map.get(interval, 24)
             summary = activity_db.get_activity_summary(hours=hours)
             vuln_summary = report_generator._get_endpoint_vuln_summary(hours=hours)
+            server_metrics = await _collect_interval_security_metrics(db, hours)
             interval_summaries.append({
                 "interval": interval,
                 "hours": hours,
                 "activity": summary,
                 "vulns": vuln_summary,
+                "server_metrics": {
+                    "attack_count": server_metrics["attack_count"],
+                    "scan_count": server_metrics["scan_count"],
+                    "recent_attacks": server_metrics["attacks"][:25],
+                    "recent_scans": server_metrics["scans"][:25],
+                },
             })
+
+        primary_server_metrics = await _collect_interval_security_metrics(db, primary_hours)
 
         # Keep threat rows aligned to the selected time window so 24h/7d/30d reports
         # reflect only the clicked interval.
@@ -217,6 +303,26 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
             }
             for item in recent_threats
         ]
+        threat_indicators.extend(
+            {
+                "indicator": str(item.get("source_ip") or item.get("source_domain") or item.get("type") or "attack_event"),
+                "severity": str(item.get("severity") or "high").lower(),
+                "source": "attack_event",
+                "confidence": _to_float_01(item.get("confidence")),
+                "timestamp": item.get("detected_at"),
+            }
+            for item in primary_server_metrics.get("attacks", [])
+        )
+        threat_indicators.extend(
+            {
+                "indicator": str(item.get("target") or item.get("scan_id") or "scan_event"),
+                "severity": str(item.get("threat_level") or "suspicious").lower(),
+                "source": "scan_history",
+                "confidence": _to_float_01(item.get("confidence")),
+                "timestamp": item.get("scan_timestamp"),
+            }
+            for item in primary_server_metrics.get("scans", [])
+        )
         if req.threats:
             threat_indicators.extend(
                 {
@@ -267,6 +373,10 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                 }
                 for item in recent_threats[:12]
             ],
+            "attack_events_covered": int(primary_server_metrics.get("attack_count", 0) or 0),
+            "scan_history_covered": int(primary_server_metrics.get("scan_count", 0) or 0),
+            "recent_attack_events": primary_server_metrics.get("attacks", [])[:20],
+            "recent_scan_history": primary_server_metrics.get("scans", [])[:20],
         }
 
         raw_requested_type = str(req.report_type or "executive_summary").strip().lower()
@@ -321,6 +431,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                 interval_vulns = report_generator._get_endpoint_vuln_summary(hours=hours)
                 interval_recent_threats = activity_db.get_recent_threats(limit=200, hours=hours)
                 interval_distribution = activity_db.get_threat_distribution(hours=hours)
+                interval_server_metrics = await _collect_interval_security_metrics(db, hours)
 
                 interval_indicators = [
                     {
@@ -332,6 +443,26 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                     }
                     for item in interval_recent_threats
                 ]
+                interval_indicators.extend(
+                    {
+                        "indicator": str(item.get("source_ip") or item.get("source_domain") or item.get("type") or "attack_event"),
+                        "severity": str(item.get("severity") or "high").lower(),
+                        "source": "attack_event",
+                        "confidence": _to_float_01(item.get("confidence")),
+                        "timestamp": item.get("detected_at"),
+                    }
+                    for item in interval_server_metrics.get("attacks", [])
+                )
+                interval_indicators.extend(
+                    {
+                        "indicator": str(item.get("target") or item.get("scan_id") or "scan_event"),
+                        "severity": str(item.get("threat_level") or "suspicious").lower(),
+                        "source": "scan_history",
+                        "confidence": _to_float_01(item.get("confidence")),
+                        "timestamp": item.get("scan_timestamp"),
+                    }
+                    for item in interval_server_metrics.get("scans", [])
+                )
 
                 interval_verdict_counts = interval_distribution.get("by_verdict", {}) if isinstance(interval_distribution, dict) else {}
                 interval_malicious_count = int(interval_verdict_counts.get("malicious", 0) or 0) + int(interval_verdict_counts.get("critical", 0) or 0)
@@ -369,6 +500,10 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                         }
                         for item in interval_recent_threats[:50]
                     ],
+                    "attack_events_covered": int(interval_server_metrics.get("attack_count", 0) or 0),
+                    "scan_history_covered": int(interval_server_metrics.get("scan_count", 0) or 0),
+                    "recent_attack_events": interval_server_metrics.get("attacks", [])[:20],
+                    "recent_scan_history": interval_server_metrics.get("scans", [])[:20],
                 }
 
                 interval_summaries_payload = [{
@@ -376,6 +511,12 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
                     "hours": hours,
                     "activity": interval_activity,
                     "vulns": interval_vulns,
+                    "server_metrics": {
+                        "attack_count": interval_server_metrics["attack_count"],
+                        "scan_count": interval_server_metrics["scan_count"],
+                        "recent_attacks": interval_server_metrics["attacks"][:25],
+                        "recent_scans": interval_server_metrics["scans"][:25],
+                    },
                 }]
 
                 for report_type in suite_types:
@@ -487,7 +628,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest):
 
 
 @router.post("/generate-interval-analysis")
-async def generate_interval_analysis_report(req: AdvancedReportRequest):
+async def generate_interval_analysis_report(req: AdvancedReportRequest, db: AsyncSession = Depends(get_db)):
     """Generate comprehensive multi-interval report (24h | 7d | 30d) with distinct per-interval analysis sections."""
     try:
         from ....core.report_generator import report_generator
