@@ -4043,6 +4043,7 @@
             dashboardQuarantineInventory: '/api/v1/dashboard/quarantine-inventory',
             dashboardDefenseResponse: '/api/v1/network/event/respond',
             incidents: '/api/v1/network/incidents',
+            networkAlerts: '/api/v1/network/alerts?active_only=false',
             dashboardActiveClients: '/api/v1/network/clients?active_only=false',
             dashboardAccuracyMetrics: '/api/v1/dashboard/telemetry/accuracy-metrics',
             dashboardWeeklyThresholdTuning: '/api/v1/dashboard/telemetry/threshold-tuning/run-weekly',
@@ -9078,11 +9079,16 @@
             const source = String(threat.source || '').toLowerCase();
             const type = String(threat.type || threat.attack_type || '').toLowerCase();
             const eventKind = String(threat.event_kind || '').toLowerCase();
-            const isIncidentLike = /attack|intrusion|ddos|brute|hydra|nmap|metasploit|exploit|quarantine|alert/.test(`${type} ${eventKind} ${source}`);
+            const descriptionBlob = `${threat.description || ''} ${threat.short_description || ''} ${threat.details || ''}`.toLowerCase();
+            const threatBlob = `${type} ${eventKind} ${source} ${descriptionBlob}`;
+            const isXssVariant = /\b(xss|cross-site scripting|stored xss|reflected xss|dom xss|persistent xss|non-persistent xss)\b/.test(threatBlob)
+                || (threatBlob.includes('xss') && /stored|reflected|dom|persistent|non-persistent/.test(threatBlob));
+            const isSqlVariant = /\b(sql injection|sqli|union select|or\s+1=1|information_schema|drop table)\b/.test(threatBlob);
+            const isIncidentLike = /attack|intrusion|ddos|brute|hydra|nmap|metasploit|exploit|quarantine|alert|xss|cross-site scripting|stored xss|reflected xss|dom xss|sql injection|sqli|sqli|union select|drop table/.test(threatBlob);
             if (!isIncidentLike) return null;
 
             const severity = String(threat.severity || '').toLowerCase();
-            if (!['critical', 'high'].includes(severity)) return null;
+            if (!['critical', 'high'].includes(severity) && !((isXssVariant || isSqlVariant) && severity === 'medium')) return null;
 
             const promptId = String(threat.id || threat.event_id || threat.scan_id || threat.threat_id || '');
             if (!promptId) return null;
@@ -9102,6 +9108,7 @@
                 targetDisplay: threat.target_display || target,
                 metadata: {
                     type: threat.type || threat.attack_type || 'security incident',
+                    threat_variant: isXssVariant ? 'xss' : (isSqlVariant ? 'sqli' : 'general'),
                     source: threat.source || 'live_feed',
                     rawThreat: threat,
                 },
@@ -9115,10 +9122,18 @@
             const component = String(log.component || '').toLowerCase();
             const message = String(log.message || '');
             const details = typeof log.details === 'object' && log.details ? log.details : {};
+            const scannerThreatLevel = String(details.threat_level || details.verdict || log.threat_level || '').toLowerCase();
+            const scannerAlertSignal = /sql injection|sqli|xss|cross-site scripting|cross-site request forgery|csrf|<script|javascript:|union select|drop table|command injection|remote code execution|rce|path traversal|lfi|rfi|malicious|critical|high|suspicious|medium/i;
+            const scannerMessage = `${message} ${details.description || ''} ${details.short_description || ''} ${JSON.stringify(details)}`;
+            const isActionableScannerEvent = component === 'scanner'
+                && scannerThreatLevel
+                && !['clean', 'safe', 'unknown', 'info'].includes(scannerThreatLevel)
+                && (scannerAlertSignal.test(scannerMessage) || ['critical', 'high', 'medium', 'suspicious', 'malicious'].includes(scannerThreatLevel));
 
             const isSecurityLog = ['warning', 'error', 'critical'].includes(level)
                 || /defense|intrusion|attack|quarantine|threat/.test(component)
-                || /intrusion|attack|malicious|quarantine|blocked/.test(message.toLowerCase());
+                || /intrusion|attack|malicious|quarantine|blocked/.test(message.toLowerCase())
+                || isActionableScannerEvent;
 
             if (!isSecurityLog) return null;
 
@@ -9444,9 +9459,60 @@
             if (!log || typeof log !== 'object') return;
             const level = String(log.level || '').toLowerCase();
             const component = String(log.component || '').toLowerCase();
+            const message = String(log.message || '').toLowerCase();
             const prompt = buildSecurityPromptPayloadFromLog(log);
 
-            if (['warning', 'error', 'critical'].includes(level) || component === 'defense_event' || component === 'defense_response') {
+            // Fast-path for immediate web attack alerts (network_defense component with xss/sql indicators)
+            const isWebAttackAlert = component === 'network_defense' 
+                && (level === 'critical' || (level === 'warning' && /immediate alert|web attack|xss|sql injection|sqli/i.test(message)));
+            
+            if (isWebAttackAlert) {
+                const popupType = level === 'critical' ? 'error' : 'warning';
+                showToast(`🚨 SECURITY ALERT: ${log.message}`, popupType);
+                addNotification(
+                    `IMMEDIATE: ${formatThreatTypeLabel(component)}`,
+                    log.message,
+                    popupType === 'error' ? 'error' : 'warning',
+                    `urgent_web_attack:${log.id || log.timestamp || Date.now()}`,
+                    30000
+                );
+                // Force open security prompt immediately if web attack detected
+                if (!prompt) {
+                    const details = typeof log.details === 'object' ? log.details : {};
+                    const webAttackPrompt = {
+                        promptKey: `urgent:${log.id || Date.now()}`,
+                        attackId: details.alert_id || details.attack_type || null,
+                        eventId: log.id || null,
+                        clientId: details.client_id || null,
+                        threatId: `web_attack_${log.id || Date.now()}`,
+                        title: 'Web Attack Detected',
+                        severity: 'critical',
+                        source: 'network_defense',
+                        target: details.source_ip || details.source_domain || 'unknown source',
+                        targetType: 'ip',
+                        targetDisplay: details.source_ip || details.source_domain || 'unknown source',
+                        metadata: { level, message: log.message, details }
+                    };
+                    if (prompt) {
+                        queueSecurityPrompt(prompt);
+                    } else {
+                        queueSecurityPrompt(webAttackPrompt);
+                    }
+                }
+                scheduleIncidentRefresh(150);
+                return;
+            }
+
+            if (prompt || ['warning', 'error', 'critical'].includes(level) || component === 'scanner') {
+                const popupType = level === 'critical' || level === 'error' ? 'error' : 'warning';
+                const popupTitle = prompt?.title || formatThreatTypeLabel(component || 'security event');
+                const popupBody = prompt?.targetDisplay
+                    ? `${log.message || 'Security activity detected'} · ${prompt.targetDisplay}`
+                    : (log.message || 'Security activity detected');
+                showToast(`${popupTitle}: ${popupBody}`, popupType);
+            }
+
+            if (['warning', 'error', 'critical'].includes(level) || component === 'defense_event' || component === 'defense_response' || component === 'network_defense') {
                 addNotification(
                     `Live ${formatThreatTypeLabel(component || 'security event')}`,
                     `${log.message || 'Security activity detected'}${prompt?.targetDisplay ? ` · ${prompt.targetDisplay}` : ''}`,
@@ -10366,10 +10432,38 @@
         async function fetchThreats() {
             const releaseButton = createButtonLoadingGuard('[onclick="fetchThreats(); showToast(\'Threat feed refreshed\', \'info\');"]', 'Refreshing...');
             try {
-                const data = await apiRequest(API_ENDPOINTS.threats);
-                const incoming = Array.isArray(data)
+                const [threatsResult, alertsResult] = await Promise.allSettled([
+                    apiRequest(API_ENDPOINTS.threats),
+                    apiRequest(API_ENDPOINTS.networkAlerts),
+                ]);
+
+                const data = threatsResult.status === 'fulfilled' ? threatsResult.value : null;
+                const alertData = alertsResult.status === 'fulfilled' ? alertsResult.value : null;
+
+                const incomingThreats = Array.isArray(data)
                     ? data
                     : (Array.isArray(data?.threats) ? data.threats : []);
+                const incomingAlerts = Array.isArray(alertData)
+                    ? alertData
+                    : (Array.isArray(alertData?.alerts) ? alertData.alerts : []);
+
+                const alertThreats = incomingAlerts.map((item, idx) => ({
+                    ...item,
+                    id: item.alert_id || item.id || `ALERT_AUTO_${idx}`,
+                    threat_id: item.alert_id || item.id || `ALERT_AUTO_${idx}`,
+                    event_kind: 'network_alert',
+                    type: item.alert_type || item.type || 'network alert',
+                    name: item.title || item.alert_type || 'network alert',
+                    details: item.description || item.title || 'Network alert detected',
+                    short_description: item.description || item.title || 'Network alert detected',
+                    timestamp: item.created_at || item.timestamp || new Date().toISOString(),
+                    source: item.source || 'Network Defense Alert',
+                    location: item.location || 'Network Defense',
+                    severity: item.severity || 'medium',
+                    prompt_actionable: ['critical', 'high'].includes(String(item.severity || '').toLowerCase()),
+                }));
+
+                const incoming = [...incomingThreats, ...alertThreats];
 
                 const isLowSignalThreatItem = (item) => {
                     const type = String(item?.type || '').toLowerCase();
@@ -10460,6 +10554,12 @@
                                     `live_attack_${t.id}`,
                                     45000
                                 );
+                                if (['critical', 'high'].includes(sev)) {
+                                    showToast(
+                                        `Security Event: ${formatThreatTypeLabel(t.type)} - ${t.target_display || t.target}`,
+                                        sev === 'critical' ? 'error' : 'warning'
+                                    );
+                                }
                                 handleRealtimeSecurityPromptFromThreat(t);
                             });
                     }

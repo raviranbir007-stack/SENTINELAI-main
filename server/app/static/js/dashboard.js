@@ -58,6 +58,7 @@ class Dashboard {
     this.api = api;
     this.currentSection = 'dashboard';
     this.selectedFile = null;
+    this.latestThreats = [];
     this.autoRefreshInterval = null;
     this.init();
   }
@@ -502,7 +503,8 @@ class Dashboard {
 
       this.updateDashboardStats(stats);
       this.updateThreatsDisplay(threats);
-      this.updateNotificationBadge();
+      this.latestThreats = Array.isArray(threats) ? threats : [];
+      this.updateNotificationBadge(this.latestThreats);
 
       // Update health panel actions
       const systemState = health?.state || 'healthy';
@@ -1007,8 +1009,9 @@ class Dashboard {
    * Show notifications panel
    */
   showNotifications() {
+    const apiThreats = Array.isArray(this.latestThreats) ? this.latestThreats.slice(0, 10) : [];
     const scans = JSON.parse(localStorage.getItem('recentScans') || '[]');
-    const recentScans = scans.slice(0, 10);
+    const recentScans = apiThreats.length > 0 ? apiThreats : scans.slice(0, 10);
     
     let notificationsHTML = `
       <div style="position: fixed; top: 70px; right: 20px; width: 400px; max-height: 500px; 
@@ -1029,8 +1032,11 @@ class Dashboard {
       `;
     } else {
       recentScans.forEach(scan => {
-        const time = new Date(scan.timestamp).toLocaleString();
-        const icon = scan.threat_level === 'malicious' ? '🔴' : scan.threat_level === 'suspicious' ? '🟡' : '🟢';
+        const time = new Date(scan.timestamp || Date.now()).toLocaleString();
+        const sev = String(scan.severity || scan.threat_level || 'low').toLowerCase();
+        const icon = sev === 'critical' || sev === 'malicious' ? '🔴' : (sev === 'high' || sev === 'suspicious' ? '🟡' : '🟢');
+        const typeLabel = String(scan.type || scan.threat_type || scan.scan_source || 'event').toUpperCase();
+        const targetLabel = scan.target || scan.name || scan.file_path || scan.description || 'N/A';
         
         notificationsHTML += `
           <div style="padding: 0.75rem; border-bottom: 1px solid var(--border); cursor: pointer;"
@@ -1040,7 +1046,7 @@ class Dashboard {
             <div style="display: flex; align-items: center; gap: 0.5rem;">
               <span style="font-size: 1.2rem;">${icon}</span>
               <div style="flex: 1;">
-                <div style="font-weight: 500; font-size: 0.9rem;">${scan.type.toUpperCase()}: ${scan.target}</div>
+                <div style="font-weight: 500; font-size: 0.9rem;">${typeLabel}: ${targetLabel}</div>
                 <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.25rem;">${time}</div>
               </div>
               ${scan.report_url ? '<span style="color: var(--primary);">📄</span>' : ''}
@@ -1053,7 +1059,7 @@ class Dashboard {
     notificationsHTML += `
         </div>
         <div style="padding: 0.75rem; border-top: 1px solid var(--border); text-align: center;">
-          <button onclick="localStorage.removeItem('recentScans'); this.parentElement.parentElement.remove(); window.dashboard.loadDashboardData();" 
+          <button onclick="localStorage.removeItem('recentScans'); window.dashboard.latestThreats = []; this.parentElement.parentElement.remove(); window.dashboard.loadDashboardData();" 
                   style="background: none; border: 1px solid var(--border); color: var(--foreground); 
                          padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem;">
             Clear All
@@ -1073,17 +1079,23 @@ class Dashboard {
     document.body.appendChild(panel);
     
     // Update badge
-    this.updateNotificationBadge();
+    this.updateNotificationBadge(this.latestThreats);
   }
 
   /**
    * Update notification badge count
    */
-  updateNotificationBadge() {
-    const scans = JSON.parse(localStorage.getItem('recentScans') || '[]');
+  updateNotificationBadge(threats = null) {
+    const scanFallback = JSON.parse(localStorage.getItem('recentScans') || '[]');
+    const threatList = Array.isArray(threats) ? threats : (Array.isArray(this.latestThreats) ? this.latestThreats : []);
+    const unreadCount = threatList.length > 0
+      ? threatList.filter(item => {
+          const sev = String(item.severity || item.threat_level || '').toLowerCase();
+          return ['critical', 'high', 'malicious', 'suspicious'].includes(sev);
+        }).length
+      : scanFallback.length;
     const badge = document.querySelector('.notification-badge');
     if (badge) {
-      const unreadCount = scans.length;
       badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
       badge.style.display = unreadCount > 0 ? 'flex' : 'none';
     }

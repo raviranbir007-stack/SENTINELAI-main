@@ -310,7 +310,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
 from ....config import settings
-from ....models import AttackEvent, ScanHistory, SystemLog
+from ....models import AttackEvent, NetworkAlert, ScanHistory, SystemLog
 
 try:
     import psutil  # type: ignore
@@ -738,6 +738,69 @@ async def get_dashboard_threats(
                     })
             except Exception as exc:
                 logger.debug("bg threat fetch error: %s", exc)
+
+    # Include network-defense attack events so XSS/SQL detections appear in dashboard views.
+    if not source or source == "all":
+        attack_result = await db.execute(
+            select(AttackEvent)
+            .where(AttackEvent.detected_at >= threshold)
+            .order_by(desc(AttackEvent.detected_at))
+            .limit(limit)
+        )
+        for attack in attack_result.scalars().all():
+            attack_sev = (attack.severity.value if attack.severity else "medium").lower()
+            mapped_sev = _map_severity(attack_sev)
+            if severity and mapped_sev != severity:
+                continue
+            threats.append(
+                {
+                    "threat_id": attack.event_id,
+                    "name": f"{(attack.attack_type or 'network').upper()} Attack",
+                    "type": attack.attack_type or "network_attack",
+                    "target": attack.source_ip or attack.source_domain or attack.destination_ip or "N/A",
+                    "details": attack.description or f"Network attack detected: {attack.attack_type}",
+                    "severity": mapped_sev,
+                    "confidence": round(float((attack.confidence or 0.0) * 100), 1),
+                    "indicator_count": len(attack.indicators) if isinstance(attack.indicators, dict) else 0,
+                    "timestamp": attack.detected_at.isoformat() if attack.detected_at else utcnow().isoformat(),
+                    "source": "network-defense",
+                    "location": attack.destination_ip or "Network",
+                    "status": attack.status,
+                    "blocked": bool(attack.blocked),
+                    "analyst_verified": bool(attack.analyst_verified),
+                    "corroboration_count": int(attack.corroboration_count or 0),
+                }
+            )
+
+        alert_result = await db.execute(
+            select(NetworkAlert)
+            .where(NetworkAlert.created_at >= threshold)
+            .order_by(desc(NetworkAlert.created_at))
+            .limit(limit)
+        )
+        for alert in alert_result.scalars().all():
+            alert_sev = (alert.severity.value if alert.severity else "medium").lower()
+            mapped_sev = _map_severity(alert_sev)
+            if severity and mapped_sev != severity:
+                continue
+            threats.append(
+                {
+                    "threat_id": alert.alert_id,
+                    "name": alert.title or "Network Alert",
+                    "type": alert.alert_type or "network_alert",
+                    "target": (alert.affected_clients[0] if isinstance(alert.affected_clients, list) and alert.affected_clients else "network"),
+                    "details": alert.description or "Network-wide alert",
+                    "severity": mapped_sev,
+                    "confidence": 100.0 if mapped_sev == "critical" else 85.0,
+                    "indicator_count": int(alert.affected_count or 0),
+                    "timestamp": alert.created_at.isoformat() if alert.created_at else utcnow().isoformat(),
+                    "source": "network-alert",
+                    "location": "Network",
+                    "status": alert.status,
+                    "analyst_verified": False,
+                    "corroboration_count": int(alert.affected_count or 0),
+                }
+            )
 
     threats.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return threats[:limit]

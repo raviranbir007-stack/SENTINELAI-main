@@ -3,6 +3,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
+from sqlalchemy import desc, select
+
+from ....database import AsyncSessionLocal
+from ....models import AttackEvent, NetworkAlert, ScanHistory
 
 router = APIRouter()
 
@@ -18,6 +22,98 @@ def _parse_timestamp_utc(value: str) -> Optional[datetime]:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _severity_label(value: object) -> str:
+    raw = str(getattr(value, "value", value) or "").strip().lower()
+    if raw in {"critical", "high", "medium", "low"}:
+        return raw
+    if raw in {"malicious", "sev1", "p1"}:
+        return "critical"
+    if raw in {"suspicious", "sev2"}:
+        return "high"
+    if raw in {"clean", "safe"}:
+        return "low"
+    return "medium"
+
+
+async def _load_network_defense_threats(start: datetime, end: Optional[datetime] = None) -> list[dict]:
+    """Load attack events and active alerts so the dashboard threat feed reflects live defense activity."""
+    threats: list[dict] = []
+    query_start = start.replace(tzinfo=None) if start.tzinfo else start
+    query_end = end.replace(tzinfo=None) if end and end.tzinfo else end
+
+    async with AsyncSessionLocal() as db:
+        attack_query = select(AttackEvent).where(AttackEvent.detected_at >= query_start)
+        alert_query = select(NetworkAlert).where(NetworkAlert.created_at >= query_start)
+
+        if query_end is not None:
+            attack_query = attack_query.where(AttackEvent.detected_at <= query_end)
+            alert_query = alert_query.where(NetworkAlert.created_at <= query_end)
+
+        attack_query = attack_query.order_by(desc(AttackEvent.detected_at))
+        alert_query = alert_query.order_by(desc(NetworkAlert.created_at))
+
+        attack_result = await db.execute(attack_query)
+        attacks = attack_result.scalars().all()
+
+        alert_result = await db.execute(alert_query)
+        alerts = alert_result.scalars().all()
+
+    for attack in attacks:
+        indicators = attack.indicators if isinstance(attack.indicators, dict) else {}
+        severity = _severity_label(attack.severity)
+        threats.append({
+            "id": attack.event_id,
+            "threat_id": attack.event_id,
+            "event_id": attack.event_id,
+            "name": f"{attack.attack_type} Attack",
+            "type": attack.attack_type or "network attack",
+            "event_kind": "attack_event",
+            "details": attack.description or "Network defense attack detected",
+            "short_description": indicators.get("short_description") or attack.description or "Network defense attack detected",
+            "description": attack.description or "Network defense attack detected",
+            "severity": severity,
+            "timestamp": attack.detected_at.isoformat() if attack.detected_at else None,
+            "status": attack.status or "detected",
+            "source": attack.source_ip or attack.source_domain or "Network Defense",
+            "location": "Network Defense",
+            "source_country": indicators.get("source_country") or indicators.get("country") or "N/A",
+            "detected_by": "Network Defense Engine",
+            "attack_type": attack.attack_type,
+            "source_ip": attack.source_ip,
+            "source_domain": attack.source_domain,
+            "destination_ip": attack.destination_ip,
+            "confidence": attack.confidence,
+            "corroboration_count": int(attack.corroboration_count or 0),
+            "evidence_sources": attack.evidence_sources or [],
+        })
+
+    for alert in alerts:
+        severity = _severity_label(alert.severity)
+        threats.append({
+            "id": alert.alert_id,
+            "threat_id": alert.alert_id,
+            "alert_id": alert.alert_id,
+            "name": alert.title,
+            "type": alert.alert_type or "network alert",
+            "event_kind": "network_alert",
+            "details": alert.description or alert.title,
+            "short_description": alert.description or alert.title,
+            "description": alert.description or alert.title,
+            "severity": severity,
+            "timestamp": alert.created_at.isoformat() if alert.created_at else None,
+            "status": alert.status or "active",
+            "source": "Network Defense Alert",
+            "location": "Network Defense",
+            "detected_by": "Network Defense Engine",
+            "alert_type": alert.alert_type,
+            "affected_count": int(alert.affected_count or 0),
+            "affected_clients": alert.affected_clients or [],
+            "prompt_actionable": severity in {"critical", "high"},
+        })
+
+    return threats
 
 # Endpoint to mark all threats as read (acknowledged)
 @router.post("/mark-all-read")
@@ -164,6 +260,27 @@ async def get_threats(
                 "target_type": scan.get("target_type", "unknown"),
             }
             threats_from_scans.append(threat_item)
+
+    network_defense_threats = await _load_network_defense_threats(start, end if time_range == "custom" else None)
+    for threat in network_defense_threats:
+        threat_id = threat.get("id") or threat.get("threat_id")
+        if threat_id:
+            if threat_id in seen_ids:
+                continue
+            seen_ids.add(threat_id)
+
+        timestamp = _parse_timestamp_utc(str(threat.get("timestamp") or ""))
+        fingerprint = (
+            str(threat.get("type", "unknown")).lower(),
+            str(threat.get("name", "unknown")).lower(),
+            str(threat.get("severity", "medium")).lower(),
+            timestamp.replace(minute=0, second=0, microsecond=0).isoformat() if timestamp else str(threat.get("timestamp") or ""),
+        )
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+
+        threats_from_scans.append(threat)
     # Sort newest first for stable dashboard order
     all_threats = sorted(
         threats_from_scans,

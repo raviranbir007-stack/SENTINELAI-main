@@ -743,6 +743,8 @@ def _is_security_event(event_name: str) -> bool:
             "brute",
             "sql",
             "sqli",
+            "xss",
+            "csrf",
             "nmap",
             "metasploit",
             "scan",
@@ -753,6 +755,36 @@ def _is_security_event(event_name: str) -> bool:
             "process",
         ]
     )
+
+
+def _is_web_attack_or_injection(
+    event_name: Optional[str],
+    event_kind: Optional[str],
+    description: Optional[str],
+    payload: Optional[dict],
+) -> bool:
+    """Detect XSS/SQL-style web attack indicators for immediate alerting."""
+    blob = " ".join(
+        [
+            str(event_name or ""),
+            str(event_kind or ""),
+            str(description or ""),
+            json.dumps(payload or {}, default=str),
+        ]
+    ).lower()
+    markers = [
+        "xss",
+        "cross site scripting",
+        "<script",
+        "javascript:",
+        "sql injection",
+        "sqli",
+        "union select",
+        "drop table",
+        "or 1=1",
+        "information_schema",
+    ]
+    return any(marker in blob for marker in markers)
 
 
 def _merge_event_payload(request: DefenseEventRequest) -> dict:
@@ -1758,6 +1790,8 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
         )
 
         created_attack_id = None
+        immediate_alert_id = None
+        web_attack_signal = _is_web_attack_or_injection(event_name, event_kind, description, payload)
 
         # Promote to attack event only with sufficient confidence/corroboration to reduce false positives.
         is_security_signal = _is_security_event(event_name) or _is_security_event(event_kind)
@@ -1893,6 +1927,44 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             await db.flush()
             alert_created = alert.alert_id
 
+        # Immediate analyst-facing alert for XSS/SQL-like attacks so dashboard notifications
+        # appear without waiting for correlation thresholds.
+        if web_attack_signal and severity in {ThreatSeverity.MEDIUM, ThreatSeverity.HIGH, ThreatSeverity.CRITICAL}:
+            immediate_alert = NetworkAlert(
+                alert_id=f"ALERT_{uuid.uuid4().hex[:12].upper()}",
+                alert_type="web_attack_detected",
+                severity=severity if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} else ThreatSeverity.HIGH,
+                title=f"Immediate web attack alert: {event_name}",
+                description=(
+                    f"Potential XSS/SQL attack detected from {source_ip or source_domain or 'unknown source'}"
+                    f" targeting {destination_ip or request.client_id or 'local endpoint'}."
+                ),
+                affected_clients=[request.client_id] if request.client_id else [],
+                affected_count=1 if request.client_id else 0,
+                status="active",
+            )
+            db.add(immediate_alert)
+            await db.flush()
+            immediate_alert_id = immediate_alert.alert_id
+
+            db.add(
+                SystemLog(
+                    log_level="CRITICAL" if severity in {ThreatSeverity.HIGH, ThreatSeverity.CRITICAL} else "WARNING",
+                    component="network_defense",
+                    message=f"Immediate alert raised for potential web attack: {event_name}",
+                    details={
+                        "alert_id": immediate_alert_id,
+                        "event": event_kind,
+                        "attack_type": event_name,
+                        "severity": severity.value,
+                        "client_id": request.client_id,
+                        "source_ip": source_ip,
+                        "source_domain": source_domain,
+                        "description": description,
+                    },
+                )
+            )
+
         await db.commit()
 
         if created_attack_id or _is_security_event(event_name) or _is_security_event(event_kind):
@@ -1912,6 +1984,7 @@ async def ingest_defense_event(request: DefenseEventRequest, db: AsyncSession = 
             "corroboration_count": corroboration_count,
             "created_attack_event": created_attack_id,
             "correlated_alert": alert_created,
+            "immediate_alert": immediate_alert_id,
             "recent_related_events_10m": recent_count,
         }
 

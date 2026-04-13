@@ -542,49 +542,74 @@ class ActivityLogger:
         targets: List[Tuple[str, str, Path]] = []
 
         if system_name == "Linux":
-            home = self._get_active_user_home()
+            homes: List[Path] = []
+            active_home = self._get_active_user_home()
+            if active_home not in homes:
+                homes.append(active_home)
 
-            # Firefox-style profile directories
-            firefox_dirs = [
-                home / ".mozilla/firefox",
-                home / "snap/firefox/common/.mozilla/firefox",
-            ]
-            for ff_dir in firefox_dirs:
-                if ff_dir.exists():
-                    targets.append(("firefox", "Firefox", ff_dir))
+            try:
+                for candidate in Path("/home").iterdir():
+                    if candidate.is_dir() and candidate not in homes:
+                        homes.append(candidate)
+            except Exception:
+                pass
 
-            chromium_roots = {
-                "Chrome": [
-                    home / ".config/google-chrome",
-                    home / "snap/google-chrome/common/.config/google-chrome",
-                ],
-                "Chromium": [
-                    home / ".config/chromium",
-                    home / "snap/chromium/common/chromium",
-                ],
-                "Brave": [
-                    home / ".config/BraveSoftware/Brave-Browser",
-                ],
-                "Edge": [
-                    home / ".config/microsoft-edge",
-                ],
-                "Opera": [
-                    home / ".config/opera",
-                    home / ".config/opera-beta",
-                    home / ".config/opera-developer",
-                ],
-                "Vivaldi": [
-                    home / ".config/vivaldi",
-                ],
-                "Yandex": [
-                    home / ".config/yandex-browser",
-                ],
-            }
+            try:
+                root_home = Path("/root")
+                if root_home not in homes:
+                    homes.append(root_home)
+            except Exception:
+                pass
 
-            for browser_name, roots in chromium_roots.items():
-                for root in roots:
-                    for history_db in self._discover_chromium_history_files(root):
-                        targets.append(("chromium", browser_name, history_db))
+            for home in homes:
+                # Firefox-style profile directories
+                firefox_dirs = [
+                    home / ".mozilla/firefox",
+                    home / "snap/firefox/common/.mozilla/firefox",
+                    home / ".var/app/org.mozilla.firefox/.mozilla/firefox",
+                ]
+                for ff_dir in firefox_dirs:
+                    if ff_dir.exists():
+                        targets.append(("firefox", "Firefox", ff_dir))
+
+                chromium_roots = {
+                    "Chrome": [
+                        home / ".config/google-chrome",
+                        home / "snap/google-chrome/common/.config/google-chrome",
+                        home / ".var/app/com.google.Chrome/config/google-chrome",
+                    ],
+                    "Chromium": [
+                        home / ".config/chromium",
+                        home / "snap/chromium/common/chromium",
+                        home / ".var/app/org.chromium.Chromium/config/chromium",
+                    ],
+                    "Brave": [
+                        home / ".config/BraveSoftware/Brave-Browser",
+                        home / ".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser",
+                    ],
+                    "Edge": [
+                        home / ".config/microsoft-edge",
+                        home / ".var/app/com.microsoft.Edge/config/microsoft-edge",
+                    ],
+                    "Opera": [
+                        home / ".config/opera",
+                        home / ".config/opera-beta",
+                        home / ".config/opera-developer",
+                        home / ".var/app/com.opera.Opera/config/opera",
+                    ],
+                    "Vivaldi": [
+                        home / ".config/vivaldi",
+                        home / ".var/app/com.vivaldi.Vivaldi/config/vivaldi",
+                    ],
+                    "Yandex": [
+                        home / ".config/yandex-browser",
+                    ],
+                }
+
+                for browser_name, roots in chromium_roots.items():
+                    for root in roots:
+                        for history_db in self._discover_chromium_history_files(root):
+                            targets.append(("chromium", browser_name, history_db))
 
         elif system_name == "Windows":
             user_profile = os.environ.get('USERPROFILE', '')
@@ -691,9 +716,39 @@ class ActivityLogger:
 
         return deduped
 
+    def _flush_browser_wal(self, db_path: Path) -> None:
+        """
+        Force SQLite WAL (Write-Ahead Log) checkpoint to persist recent writes to main DB.
+        This ensures browser history entries aren't stuck in cache for 20-30 minutes.
+        """
+        try:
+            if not db_path.exists():
+                return
+            
+            # Try to open and checkpoint the WAL
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("PRAGMA busy_timeout = 1000")
+            try:
+                # Force WAL checkpoint (RESTART mode = reset WAL after checkpoint)
+                conn.execute("PRAGMA wal_autocheckpoint = 1")
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA wal_checkpoint(RESTART)")
+            except Exception:
+                pass  # DB might be locked, that's OK
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _parse_chrome_history(self, history_path: Path, browser_name: str = "Chrome/Chromium"):
         """Parse Chrome/Chromium history database"""
         try:
+            # Force WAL flush before reading to get recent history
+            self._flush_browser_wal(history_path)
+            
             # Copy database to avoid lock issues
             import shutil
             profile_tag = history_path.parent.name.replace(" ", "_")
@@ -759,6 +814,9 @@ class ActivityLogger:
                 if not history_db.exists():
                     continue
 
+                # Force WAL flush before reading to get recent history
+                self._flush_browser_wal(history_db)
+
                 # Copy database to avoid lock issues
                 import shutil
                 profile_tag = profile.name.replace(" ", "_")
@@ -792,6 +850,9 @@ class ActivityLogger:
     def _parse_safari_history(self, history_path: Path):
         """Parse Safari history database"""
         try:
+            # Force WAL flush before reading to get recent history
+            self._flush_browser_wal(history_path)
+            
             import shutil
             temp_db = f"/tmp/safari_history_{os.getpid()}.db"
             shutil.copy2(history_path, temp_db)
@@ -856,20 +917,46 @@ class ActivityLogger:
                 )
 
             web_attack = self._detect_web_attack_payload(url, title)
-            if web_attack and self.callback:
-                alert_key = f"{web_attack['type']}:{domain}"
+            if web_attack:
+                alert_payload = {
+                    'type': web_attack['type'],
+                    'severity': web_attack['severity'],
+                    'risk': web_attack['severity'],
+                    'description': web_attack['description'],
+                    'short_description': web_attack['short_description'],
+                    'source_ip': web_attack['source_ip'],
+                    'source_domain': domain,
+                    'domain': domain,
+                    'url': url,
+                    'browser': browser,
+                    'title': title,
+                    'indicator_matches': web_attack['indicator_matches'],
+                    'timestamp': datetime.now().isoformat(),
+                }
+                logger.warning(
+                    "Web attack detected via browser history: %s on %s (%s)",
+                    web_attack['type'],
+                    domain,
+                    browser,
+                )
+                if self.callback:
+                    # Web attacks should bypass deduplication so repeated DVWA attempts still alert.
+                    self.callback(alert_payload)
+            elif self.callback:
+                # Keep a lightweight notification path for non-attack visits if the domain was not
+                # seen recently. This preserves the existing activity stream without spamming alerts.
+                alert_key = f"website:{domain}"
                 if self._should_trigger_scan(alert_key):
                     self.callback({
-                        'type': web_attack['type'],
-                        'severity': web_attack['severity'],
-                        'risk': web_attack['severity'],
-                        'description': web_attack['description'],
-                        'short_description': web_attack['short_description'],
-                        'source_ip': web_attack['source_ip'],
+                        'type': 'WEBSITE_VISIT',
+                        'risk': risk_level,
+                        'severity': risk_level,
+                        'source_ip': 'UNKNOWN',
                         'source_domain': domain,
+                        'domain': domain,
                         'url': url,
                         'browser': browser,
-                        'indicator_matches': web_attack['indicator_matches'],
+                        'title': title,
                         'timestamp': datetime.now().isoformat(),
                     })
             
@@ -1043,6 +1130,8 @@ class ActivityLogger:
         """Detect SQLi/XSS-style payload markers in visited URL/query/title."""
         try:
             parsed = urlparse(str(url or ''))
+            path_lower = str(parsed.path or '').lower()
+            url_lower = str(url or '').lower()
             raw_parts = [
                 str(url or ''),
                 str(parsed.path or ''),
@@ -1064,8 +1153,15 @@ class ActivityLogger:
 
             sqli_hits = [pat.pattern for pat in self.SQLI_PATTERNS if pat.search(decoded)]
             xss_hits = [pat.pattern for pat in self.XSS_PATTERNS if pat.search(decoded)]
+            dvwa_hits = []
+            if '/vulnerabilities/' in url_lower or '/vulnerabilities/' in path_lower:
+                dvwa_hits = [marker for marker in [
+                    '/vulnerabilities/xss_r/',
+                    '/vulnerabilities/xss_s/',
+                    '/vulnerabilities/sqli/',
+                ] if marker in url_lower or marker in path_lower]
 
-            if not sqli_hits and not xss_hits:
+            if not sqli_hits and not xss_hits and not dvwa_hits:
                 return None
 
             source_ip = 'UNKNOWN'
@@ -1086,10 +1182,15 @@ class ActivityLogger:
                 short_description = 'URL contains SQL injection markers'
                 description = 'Detected SQL injection payload markers in URL/query parameters.'
                 severity = 'HIGH'
-            else:
+            elif xss_hits:
                 attack_type = 'WEB_XSS_ATTEMPT'
                 short_description = 'URL contains XSS/script injection markers'
                 description = 'Detected cross-site scripting payload markers in URL/query/title content.'
+                severity = 'HIGH'
+            else:
+                attack_type = 'WEB_ATTACK_PATTERN'
+                short_description = 'DVWA vulnerable route accessed'
+                description = 'Detected browser activity on a DVWA vulnerable lab route.'
                 severity = 'HIGH'
 
             return {
@@ -1101,6 +1202,7 @@ class ActivityLogger:
                 'indicator_matches': {
                     'sqli_markers': sqli_hits[:8],
                     'xss_markers': xss_hits[:8],
+                    'dvwa_markers': dvwa_hits[:8],
                 },
             }
         except Exception:
