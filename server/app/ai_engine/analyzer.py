@@ -11,14 +11,14 @@ from datetime import datetime, timezone
 
 # Import the Gemini integration
 try:
-    from app.gemini_integration import gemini_integration
+    from ..gemini_integration import gemini_integration
     GEMINI_AVAILABLE = True
 except ImportError:
     logging.warning("Gemini integration not available")
     GEMINI_AVAILABLE = False
     gemini_integration = None
 
-from app.config import settings
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 

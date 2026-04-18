@@ -328,6 +328,7 @@ STARTUP_REPORT_PATH = Path.home() / ".sentinelai_startup_assessment.json"
 QUARANTINE_INDEX_PATH = Path.home() / ".sentinelai_quarantine" / "quarantine_index.json"
 HEALTH_OVERRIDE_PATH = Path.home() / ".sentinelai_health_override.json"
 SECURITY_EVENT_LOG_PATH = Path(__file__).resolve().parents[5] / "logs" / "security_events.log"
+PROTECTION_LOG_PATH = Path(__file__).resolve().parents[5] / "logs" / "protection.log"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -434,6 +435,50 @@ def _merge_dashboard_logs(system_logs, security_summaries):
     combined.extend(security_summaries)
     combined.sort(key=lambda item: _parse_utc_timestamp(item.get("timestamp")) or datetime.min, reverse=True)
     return combined
+
+
+def _load_protection_log_entries(limit: int = 200):
+    if not PROTECTION_LOG_PATH.exists():
+        return []
+
+    records = []
+    try:
+        with PROTECTION_LOG_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
+            lines = handle.readlines()[-max(1, limit):]
+        for idx, raw in enumerate(reversed(lines), 1):
+            line = raw.strip()
+            if not line:
+                continue
+            # Expected format: [YYYY-MM-DD HH:MM:SS,mmm] [LEVEL] message
+            ts = None
+            level = "INFO"
+            message = line
+            if line.startswith("[") and "]" in line:
+                first_close = line.find("]")
+                ts_raw = line[1:first_close].strip()
+                ts = _parse_utc_timestamp(ts_raw.replace(",", "."))
+                tail = line[first_close + 1 :].strip()
+                if tail.startswith("[") and "]" in tail:
+                    second_close = tail.find("]")
+                    level = tail[1:second_close].strip().upper() or "INFO"
+                    message = tail[second_close + 1 :].strip() or line
+                else:
+                    message = tail or line
+
+            records.append(
+                {
+                    "id": f"protection-log-{idx}",
+                    "level": level,
+                    "component": "protection",
+                    "message": message,
+                    "details": {},
+                    "timestamp": (ts.isoformat() + "Z") if ts else None,
+                }
+            )
+    except Exception:
+        logger.debug("Failed to read protection log fallback", exc_info=True)
+
+    return records
 
 
 def _activity_db():
@@ -1514,11 +1559,21 @@ async def get_dashboard_logs(
     result = await db.execute(query)
     logs = result.scalars().all()
     security_summaries = _load_security_summary_logs()
+    protection_entries = _load_protection_log_entries(limit=limit)
     if level and level.upper() != "WARNING":
         security_summaries = []
+    if level:
+        wanted = level.upper()
+        protection_entries = [item for item in protection_entries if str(item.get("level", "")).upper() == wanted]
     if component and component.lower() != "security_summary":
         security_summaries = []
-    return _merge_dashboard_logs(logs, security_summaries)[:limit]
+    if component and component.lower() != "protection":
+        protection_entries = []
+
+    merged = _merge_dashboard_logs(logs, security_summaries)
+    merged.extend(protection_entries)
+    merged.sort(key=lambda item: _parse_utc_timestamp(item.get("timestamp")) or datetime.min, reverse=True)
+    return merged[:limit]
 
 
 # ---------------------------------------------------------------------------

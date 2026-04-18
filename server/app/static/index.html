@@ -4056,7 +4056,7 @@
             
             // Scans
             scan: '/api/v1/scan',
-            scans: '/api/scans',
+            scans: '/api/v1/scan/history?source=all',
             scanResult: (id) => `/api/v1/scan/results/${id}`,
             scanFeedback: '/api/v1/scan/feedback',
             
@@ -8235,7 +8235,9 @@
 
             try {
                 const data = await apiRequest(API_ENDPOINTS.scans, { timeoutMs: 20000 });
-                latestScanHistory = Array.isArray(data) ? data : [];
+                latestScanHistory = Array.isArray(data)
+                    ? data
+                    : (Array.isArray(data?.scans) ? data.scans : []);
                 renderScanHistory();
                 return latestScanHistory;
             } catch (error) {

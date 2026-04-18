@@ -7,14 +7,20 @@ echo ""
 
 cd /home/kali/Documents/SENTINELAI-main/server
 
+ROOT_ENV="/home/kali/Documents/SENTINELAI-main/.env"
+ROOT_ENV_EXAMPLE="/home/kali/Documents/SENTINELAI-main/.env.example"
+
+# Snapshot credentials before startup so .env can be restored if deleted.
+/home/kali/Documents/SENTINELAI-main/tools/backup_env.sh
+
 # Check .env
-if [ ! -f ".env" ]; then
+if [ ! -f "$ROOT_ENV" ]; then
     echo "❌ No .env file found!"
     echo "📝 Creating from template..."
-    cp .env.example .env
+    cp "$ROOT_ENV_EXAMPLE" "$ROOT_ENV"
     echo ""
     echo "⚠️  IMPORTANT: Edit .env and add your API keys:"
-    echo "   nano .env"
+    echo "   nano $ROOT_ENV"
     echo ""
     echo "Get FREE API keys:"
     echo "   • VirusTotal: https://www.virustotal.com/gui/join-us"
@@ -33,9 +39,9 @@ echo "🔍 Checking API configuration..."
 source venv/bin/activate
 
 # Quick check
-HAS_VT=$(grep "^VIRUSTOTAL_API_KEY=" .env | grep -v "your_virustotal" | wc -l)
-HAS_US=$(grep "^URLSCAN_API_KEY=" .env | grep -v "your_urlscan" | wc -l)
-HAS_AB=$(grep "^ABUSEIPDB_API_KEY=" .env | grep -v "your_abuseipdb" | wc -l)
+HAS_VT=$(grep "^VIRUSTOTAL_API_KEY=" "$ROOT_ENV" | grep -v "your_virustotal" | wc -l)
+HAS_US=$(grep "^URLSCAN_API_KEY=" "$ROOT_ENV" | grep -v "your_urlscan" | wc -l)
+HAS_AB=$(grep "^ABUSEIPDB_API_KEY=" "$ROOT_ENV" | grep -v "your_abuseipdb" | wc -l)
 
 if [ "$HAS_VT" -eq 0 ]; then
     echo "⚠️  VirusTotal API key not configured (HIGHLY RECOMMENDED)"
@@ -50,7 +56,7 @@ fi
 if [ "$HAS_VT" -eq 0 ] && [ "$HAS_US" -eq 0 ] && [ "$HAS_AB" -eq 0 ]; then
     echo ""
     echo "❌ No API keys configured!"
-    echo "   Edit .env and add at least VirusTotal API key"
+    echo "   Edit $ROOT_ENV and add at least VirusTotal API key"
     echo "   Then run: ./start.sh"
     exit 1
 fi

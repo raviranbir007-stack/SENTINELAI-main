@@ -2753,6 +2753,53 @@ async def list_incidents(
                 },
             })
 
+        # Fallback: surface recent background monitor threats as incident rows
+        # when attack/defense tables are sparse so dashboard is not blank.
+        if not incidents:
+            try:
+                from ....core.activity_database import activity_db
+
+                background_threats = activity_db.get_recent_threats(limit=max_items, hours=hours)
+                for idx, item in enumerate(background_threats):
+                    verdict = str(item.get("verdict") or "unknown").lower()
+                    if verdict in {"critical", "malicious"}:
+                        sev = "critical"
+                    elif verdict in {"suspicious", "high"}:
+                        sev = "high"
+                    else:
+                        sev = "medium"
+
+                    incidents.append(
+                        {
+                            "incident_id": f"bg-{idx}-{abs(hash(str(item.get('value', ''))))}",
+                            "incident_kind": "background_threat",
+                            "incident_type": item.get("type") or "artifact",
+                            "title": f"Background {str(item.get('type') or 'artifact').upper()} Threat",
+                            "target": item.get("value") or "unknown",
+                            "source_ip": item.get("value") if str(item.get("type") or "").lower() == "ip" else None,
+                            "source_domain": item.get("value") if str(item.get("type") or "").lower() in {"domain", "url"} else None,
+                            "source_country": None,
+                            "severity": sev,
+                            "status": "detected",
+                            "blocked": False,
+                            "quarantined": False,
+                            "ignored": False,
+                            "action": "DETECTED",
+                            "detected_at": str(item.get("time") or ""),
+                            "client": {},
+                            "source": "Background Monitor",
+                            "description": f"Auto-detected {verdict} artifact during background monitoring",
+                            "short_description": f"{verdict.title()} verdict from background scan",
+                            "api_sources": [],
+                            "evidence_sources": [],
+                            "corroboration_count": int(item.get("sources") or 0),
+                            "blocked_at": None,
+                            "raw_details": {"background_threat": item},
+                        }
+                    )
+            except Exception as exc:
+                logger.debug("Background incident fallback unavailable: %s", exc)
+
         incidents.sort(key=lambda item: item.get("detected_at") or "", reverse=True)
 
         return {

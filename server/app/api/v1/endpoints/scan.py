@@ -1085,17 +1085,88 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
 async def get_scan_history(
     source: Optional[str] = None,
     limit: int = 100,
+    db: AsyncSession = Depends(get_db),
 ):
     # ...existing code...
     # Get recent scan history from in-memory cache.
     # source=manual (default) | all
     # Background auto-monitor scans are NOT stored here - they live in activity_monitoring.db.
     # Use GET /api/v1/monitoring/activity for background scan records.
-    items = _scan_history
+    items = list(_scan_history)
     if source != "all":
         items = [s for s in items if s.get("scan_source", "manual") == "manual"]
+
+    # Merge persisted scan history so data survives process restarts.
+    try:
+        query = select(ScanHistory).order_by(ScanHistory.scan_timestamp.desc()).limit(max(1, min(limit, 500)))
+        if source and source != "all":
+            query = query.where(ScanHistory.scan_source == source)
+        result = await db.execute(query)
+        rows = result.scalars().all()
+        existing_ids = {str(item.get("scan_id", "")) for item in items}
+        for row in rows:
+            scan_id = str(row.scan_id or "")
+            if scan_id and scan_id in existing_ids:
+                continue
+            items.append(
+                {
+                    "scan_id": row.scan_id,
+                    "target": row.target,
+                    "target_type": row.target_type,
+                    "type": row.target_type,
+                    "status": row.status or "complete",
+                    "threat_level": row.threat_level or "unknown",
+                    "verdict": row.threat_level or "unknown",
+                    "confidence": float(row.confidence or 0.0),
+                    "threats_detected": int(row.threats_detected or 0),
+                    "scan_source": row.scan_source or "manual",
+                    "timestamp": row.scan_timestamp.isoformat() if row.scan_timestamp else None,
+                    "is_read": bool(getattr(row, "is_read", False)),
+                    "analysis": row.analysis_data or {},
+                }
+            )
+            if scan_id:
+                existing_ids.add(scan_id)
+    except Exception as exc:
+        logger.debug("scan history DB merge unavailable: %s", exc)
+
+    # Fallback background scan summaries from activity monitor DB.
+    if source in (None, "all", "background"):
+        try:
+            from ....core.activity_database import activity_db
+
+            existing_ids = {str(item.get("scan_id", "")) for item in items}
+            for idx, entry in enumerate(activity_db.get_recent_activity(limit=max(1, min(limit, 200)))):
+                scan_id = f"BG-{idx}-{abs(hash(str(entry.get('value', ''))))}"
+                if scan_id in existing_ids:
+                    continue
+                verdict = str(entry.get("verdict") or "unknown").lower()
+                items.append(
+                    {
+                        "scan_id": scan_id,
+                        "target": entry.get("value"),
+                        "target_type": entry.get("type") or "artifact",
+                        "type": entry.get("type") or "artifact",
+                        "status": "complete",
+                        "threat_level": verdict,
+                        "verdict": verdict,
+                        "confidence": float(entry.get("confidence") or 0.0),
+                        "threats_detected": int(entry.get("indicator_count") or 0),
+                        "scan_source": "background",
+                        "timestamp": str(entry.get("time") or ""),
+                        "is_read": False,
+                        "analysis": {
+                            "summary": f"Background monitor analyzed {entry.get('type', 'artifact')} {entry.get('value', '')}",
+                        },
+                    }
+                )
+                existing_ids.add(scan_id)
+        except Exception as exc:
+            logger.debug("scan history background merge unavailable: %s", exc)
+
+    items.sort(key=lambda s: str(s.get("timestamp") or ""), reverse=True)
     return {
-        "total": len(items),
+        "total": len(items[:limit]),
         "source_filter": source or "manual",
         "note": "Background scans are tracked at /api/v1/monitoring/activity",
         "scans": items[:limit],

@@ -1615,7 +1615,7 @@ class ReportRequest(BaseModel):
 
 
 @router.post("/reports/generate")
-async def generate_report(req: ReportRequest):
+async def generate_report(req: ReportRequest, db: AsyncSession = Depends(get_db)):
     """Generate an AI report (PDF) for a target using the Gemini-backed report generator.
 
     If the Gemini API key is not configured, return a clear 400 error so the frontend

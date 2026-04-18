@@ -44,6 +44,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
+LEGACY_REPORT_DIRS = [
+    GENERATED_REPORTS_DIR,
+    Path(__file__).resolve().parents[5] / "generated_reports",
+    Path(__file__).resolve().parents[5] / "server" / "generated_reports",
+    Path(__file__).resolve().parents[4] / "app" / "generated_reports",
+]
 
 
 def utcnow() -> datetime:
@@ -311,37 +317,60 @@ async def generate_report(data: ReportRequest, db: AsyncSession = Depends(get_db
 @router.get("/")
 async def list_reports():
     try:
+        reports = []
+        seen_ids = set()
+
+        # 1) API compatibility store
         try:
             from ....api.compat import REPORTS_STORE
 
             if REPORTS_STORE:
-                reports = list(reversed(REPORTS_STORE))
-                response = JSONResponse(
-                    {"reports": reports, "count": len(reports)},
-                    headers={
-                        "Cache-Control": "public, max-age=5",
-                        "ETag": f'"{len(reports)}-{utcnow().timestamp():.0f}"'
-                    }
-                )
-                return response
+                for report in reversed(REPORTS_STORE):
+                    report_id = str(report.get("report_id") or "").strip()
+                    if report_id and report_id not in seen_ids:
+                        reports.append(report)
+                        seen_ids.add(report_id)
         except Exception:
             pass
 
-        reports_dir = GENERATED_REPORTS_DIR
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        # 2) In-memory generated report cache from report generator
+        try:
+            cache = getattr(report_generator, "_reports_cache", {}) or {}
+            for report_id, payload in cache.items():
+                rid = str(report_id or "").strip()
+                if not rid or rid in seen_ids:
+                    continue
+                size_bytes = len(payload) if isinstance(payload, (bytes, bytearray)) else 0
+                reports.append({
+                    "report_id": rid,
+                    "filename": f"{rid}.pdf",
+                    "title": rid,
+                    "created_at": utcnow().isoformat(),
+                    "size_bytes": size_bytes,
+                    "download_url": f"/api/v1/reports/download/{rid}",
+                })
+                seen_ids.add(rid)
+        except Exception:
+            pass
 
-        reports = []
-        for f in sorted(reports_dir.glob("*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True):
-            reports.append({
-                "report_id": f.stem,
-                "filename": f.name,
-                "title": f.stem,
-                "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
-                "size_bytes": f.stat().st_size,
-                "download_url": f"/api/v1/reports/download/{f.stem}"
-            })
+        # 3) Filesystem stores (current + legacy locations)
+        for reports_dir in LEGACY_REPORT_DIRS:
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            files = list(reports_dir.glob("*.pdf")) + list(reports_dir.glob("*.txt"))
+            for f in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
+                rid = str(f.stem or "").strip()
+                if not rid or rid in seen_ids:
+                    continue
+                reports.append({
+                    "report_id": rid,
+                    "filename": f.name,
+                    "title": f.stem,
+                    "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                    "size_bytes": f.stat().st_size,
+                    "download_url": f"/api/v1/reports/download/{f.stem}"
+                })
+                seen_ids.add(rid)
 
-        # Return with cache headers: cache for 5 seconds to reduce rapid polling
         response = JSONResponse(
             {"reports": reports, "count": len(reports)},
             headers={

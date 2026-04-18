@@ -8,6 +8,9 @@ set -e  # Exit on any error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Snapshot root .env before startup so credentials can be recovered if deleted.
+"$SCRIPT_DIR/../tools/backup_env.sh"
+
 echo "======================================================================"
 echo "🛡️  SENTINEL-AI Threat Intelligence Platform - Production Start"
 echo "======================================================================"

@@ -64,6 +64,9 @@ check_python_package requests
 
 echo -e "${GREEN}✅ All dependencies present${NC}"
 
+# Snapshot credentials before starting services so accidental file deletion is recoverable.
+./tools/backup_env.sh
+
 # Create log directory
 mkdir -p logs
 LOG_DIR="logs"

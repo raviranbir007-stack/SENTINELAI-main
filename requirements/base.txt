@@ -29,6 +29,8 @@ bcrypt==4.1.2
 aiohttp==3.13.2
 httpx==0.28.1
 requests==2.31.0
+# Keep chardet below v6 to avoid RequestsDependencyWarning with requests 2.31.x.
+chardet==5.2.0
 
 # AI client: migrate to modern google-genai (preferred). Keep legacy fallback if needed.
 google-genai==1.56.0

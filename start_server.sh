@@ -7,6 +7,9 @@ cd "$(dirname "$0")"
 # Activate virtual environment
 source .venv/bin/activate
 
+# Snapshot credentials before startup so .env can be restored if files are lost.
+./tools/backup_env.sh
+
 # Set Python path
 export PYTHONPATH="$PWD/server:$PYTHONPATH"
 
