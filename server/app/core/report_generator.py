@@ -120,6 +120,8 @@ class ReportGenerator:
         self._last_circuit_notice_at = 0.0
         self._last_gemini_failure_reason = ""
         self._quota_cooldown_until = 0.0
+        self._gemini_key_cooldown_until: Dict[str, float] = {}
+        self._gemini_next_key_index = 0
         self._last_quota_warning_at = 0.0
         self._analysis_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
         try:
@@ -1914,14 +1916,28 @@ class ReportGenerator:
                 return 0
 
             last_error_message = ""
-            key_pool = self.gemini_keys[:] if self.gemini_keys else ([self.gemini_key] if self.gemini_key else [])
+            all_keys = self.gemini_keys[:] if self.gemini_keys else ([self.gemini_key] if self.gemini_key else [])
+            now_ts = time.time()
+            available_key_entries = [
+                (idx, key)
+                for idx, key in enumerate(all_keys)
+                if now_ts >= float(self._gemini_key_cooldown_until.get(key, 0.0) or 0.0)
+            ]
+            if not available_key_entries:
+                earliest_ready = min(float(self._gemini_key_cooldown_until.get(key, 0.0) or 0.0) for key in all_keys)
+                wait_seconds = int(max(1, earliest_ready - now_ts))
+                self._last_gemini_failure_reason = f"all gemini keys cooling down ({wait_seconds}s remaining)"
+                return None
+
+            rotation_start = int(self._gemini_next_key_index or 0) % len(available_key_entries)
+            ordered_key_entries = available_key_entries[rotation_start:] + available_key_entries[:rotation_start]
             model_pool = self.gemini_model_candidates[:] if self.gemini_model_candidates else ["gemini-2.5-flash"]
 
             for attempt in range(1, max_attempts + 1):
                 saw_transient = False
                 # Try modern google.genai client first
                 if hasattr(genai, "Client") or (hasattr(genai, "client") and hasattr(genai.client, "Client")):
-                    for key_index, api_key in enumerate(key_pool):
+                    for key_index, api_key in ordered_key_entries:
                         try:
                             client = _build_genai_client(api_key)
                             if client is None:
@@ -1947,6 +1963,8 @@ class ReportGenerator:
                                         self._failure_count = 0
                                         self._last_gemini_failure_reason = ""
                                         self._daily_reports.append(datetime.now())
+                                        if all_keys:
+                                            self._gemini_next_key_index = (key_index + 1) % len(all_keys)
                                         logger.info("Gemini analysis succeeded using model %s (key #%d)", model_name, key_index + 1)
                                         return text
                                     self._failure_count = 0
@@ -1969,7 +1987,11 @@ class ReportGenerator:
                                             int(self.gemini_quota_cooldown_seconds),
                                             int(retry_delay) if retry_delay else 0,
                                         )
-                                        if len(key_pool) <= 1:
+                                        self._gemini_key_cooldown_until[api_key] = max(
+                                            float(self._gemini_key_cooldown_until.get(api_key, 0.0) or 0.0),
+                                            now_ts + float(effective_cooldown),
+                                        )
+                                        if len(all_keys) <= 1:
                                             self._quota_cooldown_until = max(
                                                 float(self._quota_cooldown_until or 0.0),
                                                 now_ts + float(effective_cooldown),
@@ -2057,6 +2079,22 @@ class ReportGenerator:
                 return sanitized
             normalized_report_type = self._normalize_report_type(threat_data.get("report_type", "executive_summary"))
             raw_word_count = len(str(genai_result).split())
+
+            # If output is too short/incomplete, try once more on the next rotated key
+            # before giving up to deterministic fallback.
+            if len(getattr(self, "gemini_keys", []) or []) > 1:
+                retry_result = await _call_genai_with_retry(prompt, max_attempts=1)
+                if retry_result:
+                    retry_sanitized = self._sanitize_ai_output(
+                        retry_result,
+                        threat_data.get("report_type", "executive_summary"),
+                    )
+                    if retry_sanitized:
+                        logger.info(
+                            "Gemini initial response incomplete; recovered with rotated key on single retry"
+                        )
+                        self._store_cached_analysis(cache_key, retry_sanitized)
+                        return retry_sanitized
 
             # Keep partial-but-meaningful executive output by blending with deterministic analysis.
             # This reduces hard fallbacks during quota pressure while preserving reliability.
@@ -2975,23 +3013,35 @@ Time Range Covered: {time_range_label}
             raw_status = str(api_meta.get("status", "not_executed") or "not_executed").strip().lower()
             configured = bool(api_meta.get("configured", bool(api_data)))
             applicable = bool(api_meta.get("applicable", input_type not in {"advanced_report"}))
+            
+            # Determine status message based on raw status
             if raw_status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
-                status = "Data collected"
+                status = "Provider data collected successfully"
             elif raw_status in {"rate_limited", "quota_exceeded"}:
-                status = "Quota limited; fallback intelligence used"
+                status = "Fallback intelligence used (rate limited)"
             elif raw_status in {"error", "failed", "timeout"}:
-                status = "Collection failed; fallback intelligence used"
+                status = "Fallback intelligence used (provider unavailable)"
+            elif raw_status in {"not_authorized", "forbidden", "401", "403"}:
+                status = "Fallback intelligence used (authorization failed)"
             elif raw_status in {"pending", "in_progress", "queued"}:
                 status = "Provider analysis did not complete in this scan window"
             elif raw_status == "skipped_local_mode":
                 status = "External APIs disabled for local-only analysis"
+            elif raw_status == "not_configured":
+                status = "Fallback intelligence used (provider not configured)"
+            elif raw_status == "not_applicable":
+                status = "Fallback intelligence used (out of scope)"
+            elif raw_status == "limited":
+                status = "Fallback intelligence used (limited availability)"
             else:
+                # Generic fallback for unknown statuses
                 reason = []
                 if not configured:
                     reason.append("not configured")
                 if not applicable:
                     reason.append("out of scope")
                 status = f"Fallback intelligence used ({', '.join(reason) if reason else 'provider unavailable'})"
+            
             rows.append(
                 [
                     str(api_meta.get("name", fallback_name)),
@@ -4547,19 +4597,37 @@ Time Range Covered: {time_range_label}
                 f"Cross-source corroboration evaluated {int(forensic.get('corroboration_count', 0) or 0)} source(s).",
             )
 
-        api_status_values = [str((meta or {}).get("status", "unknown") or "unknown").lower() for meta in api_status.values() if isinstance(meta, dict)]
-        checked_count = sum(1 for status in api_status_values if status in {"checked", "clean", "no_threat", "available", "online"})
-        applicable_expected = int(forensic.get("total_apis_available", 0) or 0)
+        status_metas = [meta for meta in api_status.values() if isinstance(meta, dict)]
+        api_status_values = [str((meta or {}).get("status", "unknown") or "unknown").lower() for meta in status_metas]
+        checked_statuses = {"success", "completed", "ok", "checked", "clean", "no_threat", "available", "online"}
+        checked_count = sum(1 for status in api_status_values if status in checked_statuses)
+        applicable_expected = sum(1 for meta in status_metas if bool(meta.get("applicable")))
+        if applicable_expected <= 0:
+            applicable_expected = int(forensic.get("total_apis_available", 0) or 0)
+        not_applicable_count = sum(1 for status in api_status_values if status == "not_applicable")
+        rate_limited_count = sum(1 for status in api_status_values if status in {"rate_limited", "quota_exceeded"})
         if api_results or api_status:
             if checked_count > 0:
                 api_status_label = "COMPLETED"
-                api_status_details = f"{checked_count}/{applicable_expected or checked_count} applicable external source(s) completed."
+                api_status_details = (
+                    f"{checked_count}/{applicable_expected or checked_count} applicable external source(s) completed "
+                    f"(completed/applicable/not_applicable/rate_limited: "
+                    f"{checked_count}/{applicable_expected or checked_count}/{not_applicable_count}/{rate_limited_count})."
+                )
             elif any(status in {"rate_limited", "quota_exceeded", "not_configured", "not_authorized", "error", "skipped_local_mode"} for status in api_status_values):
                 api_status_label = "LIMITED"
-                api_status_details = "External API coverage was constrained, so local heuristics and ML fallback carried the verdict."
+                api_status_details = (
+                    "External API coverage was constrained, so local heuristics and ML fallback carried the verdict "
+                    f"(completed/applicable/not_applicable/rate_limited: "
+                    f"{checked_count}/{applicable_expected or 0}/{not_applicable_count}/{rate_limited_count})."
+                )
             else:
                 api_status_label = "LIMITED"
-                api_status_details = "External API payload was present but no provider completed in this scan window."
+                api_status_details = (
+                    "External API payload was present but no provider completed in this scan window "
+                    f"(completed/applicable/not_applicable/rate_limited: "
+                    f"{checked_count}/{applicable_expected or 0}/{not_applicable_count}/{rate_limited_count})."
+                )
             add_method("Threat Intelligence APIs", api_status_label, api_status_details)
 
         unavailable_reasons = forensic.get("external_corroboration_unavailable_reasons", []) if isinstance(forensic.get("external_corroboration_unavailable_reasons"), list) else []
@@ -4591,7 +4659,10 @@ Time Range Covered: {time_range_label}
             "methods": methods,
             "method_names": local_method_names,
             "fallback_reason": fallback_reason,
-            "api_summary": f"{checked_count}/{applicable_expected or checked_count or 0} applicable API source(s) completed",
+            "api_summary": (
+                "completed/applicable/not_applicable/rate_limited: "
+                f"{checked_count}/{applicable_expected or checked_count or 0}/{not_applicable_count}/{rate_limited_count}"
+            ),
         }
 
     def _summarize_static_pe_analysis(self, threat_analysis: Dict[str, Any], file_analysis: Dict[str, Any], is_advanced_report: bool) -> tuple[str, str]:
@@ -4660,6 +4731,18 @@ Time Range Covered: {time_range_label}
             api_results = threat_analysis.get("api_results", {}) if isinstance(threat_analysis.get("api_results"), dict) else {}
             apis_called = api_results.get("apis_called", []) or []
             apis_expected = api_results.get("apis_expected", []) or []
+            api_status = api_results.get("api_status", {}) if isinstance(api_results, dict) else {}
+            status_metas = [
+                meta for meta in (api_status.values() if isinstance(api_status, dict) else [])
+                if isinstance(meta, dict)
+            ]
+            applicable_metas = [meta for meta in status_metas if bool(meta.get("applicable"))]
+            applicable_status_values = [str(meta.get("status", "unknown") or "unknown").lower() for meta in applicable_metas]
+            completed_count = sum(
+                1
+                for s in applicable_status_values
+                if s in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}
+            )
             source_details = forensic_metadata.get("source_details", []) or []
 
             total_scans = sum(int((item.get("activity") or {}).get("threat_scans", 0) or 0) for item in interval_summaries if isinstance(item, dict))
@@ -4698,11 +4781,12 @@ Time Range Covered: {time_range_label}
             })
             methods.append({
                 "name": "Threat Intelligence APIs",
-                "status": "COMPLETED" if apis_called else ("LIMITED" if apis_expected else "NOT EXECUTED"),
+                "status": "COMPLETED" if completed_count > 0 else ("LIMITED" if (apis_expected or applicable_metas) else "NOT EXECUTED"),
                 "details": (
-                    f"Threat intelligence providers queried: {', '.join(apis_called)}."
-                    if apis_called
-                    else ("Provider coverage metadata was included but no provider completed in this run." if apis_expected else "This comprehensive report was generated from local monitoring telemetry without direct external provider execution.")
+                    f"Threat intelligence providers completed: {completed_count}/{len(applicable_metas) or completed_count} applicable source(s)"
+                    + (f" ({', '.join(apis_called)})." if apis_called else ".")
+                    if completed_count > 0
+                    else ("Provider coverage metadata was included but no provider completed in this run." if (apis_expected or applicable_metas) else "This comprehensive report was generated from local monitoring telemetry without direct external provider execution.")
                 ),
             })
             return methods
@@ -4742,8 +4826,8 @@ Time Range Covered: {time_range_label}
         else:
             methods.append({
                 "name": "Signature Matching",
-                "status": "NOT EXECUTED",
-                "details": "Target profile is not a file artifact in this report payload; file signature matching was not executed."
+                "status": "NOT APPLICABLE",
+                "details": "Target profile is not a file artifact in this report payload; file signature matching does not apply."
             })
         
         # 2. Entropy Analysis
@@ -4767,8 +4851,8 @@ Time Range Covered: {time_range_label}
         else:
             methods.append({
                 "name": "Shannon Entropy Analysis",
-                "status": "NOT EXECUTED",
-                "details": "Target profile is not a file artifact in this report payload; entropy analysis was not executed."
+                "status": "NOT APPLICABLE",
+                "details": "Target profile is not a file artifact in this report payload; entropy analysis does not apply."
             })
 
         # 2b. IOC and contextual string heuristics
@@ -4776,11 +4860,11 @@ Time Range Covered: {time_range_label}
         suspicious_count = len(file_data.get("suspicious_strings", []) or [])
         methods.append({
             "name": "IOC & Context Heuristics",
-            "status": "COMPLETED" if (ioc_count or suspicious_count or has_file_payload) else ("LIMITED" if is_file_scan else "NOT EXECUTED"),
+            "status": "COMPLETED" if (ioc_count or suspicious_count or has_file_payload) else ("LIMITED" if is_file_scan else "NOT APPLICABLE"),
             "details": (
                 f"Extracted {ioc_count} IOC value(s) and {suspicious_count} suspicious context string(s) for heuristic enrichment."
                 if (ioc_count or suspicious_count or has_file_payload)
-                else ("File scan context exists, but IOC/context telemetry was not present in this report payload." if is_file_scan else "Target profile is not a file artifact in this report payload; IOC/context file heuristics were not executed.")
+                else ("File scan context exists, but IOC/context telemetry was not present in this report payload." if is_file_scan else "Target profile is not a file artifact in this report payload; file IOC/context heuristics do not apply.")
             ),
         })
 
@@ -4811,8 +4895,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "PE/COFF Binary Analysis",
-                "status": "NOT EXECUTED",
-                "details": "Target profile is not a file artifact in this report payload; PE/COFF analysis was not executed."
+                "status": "NOT APPLICABLE",
+                "details": "Target profile is not a file artifact in this report payload; PE/COFF analysis does not apply."
             })
         elif not lief_available:
             methods.append({
@@ -4839,8 +4923,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "Code Disassembly",
-                "status": "NOT EXECUTED",
-                "details": "Target profile is not a file artifact in this report payload; disassembly analysis was not executed."
+                "status": "NOT APPLICABLE",
+                "details": "Target profile is not a file artifact in this report payload; disassembly analysis does not apply."
             })
         elif not capstone_available:
             methods.append({
@@ -4868,8 +4952,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "Machine Learning Classification",
-                "status": "NOT EXECUTED",
-                "details": "Target profile is not a file artifact in this report payload; ML file classifier was not executed."
+                "status": "NOT APPLICABLE",
+                "details": "Target profile is not a file artifact in this report payload; file ML classification does not apply."
             })
         elif not sklearn_available:
             methods.append({
@@ -4896,7 +4980,7 @@ Time Range Covered: {time_range_label}
         applicable_metas = [meta for meta in status_metas if bool(meta.get("applicable"))]
         applicable_status_values = [str(meta.get("status", "unknown")).lower() for meta in applicable_metas]
 
-        checked_count = sum(1 for s in applicable_status_values if s in {"checked", "online", "available", "clean", "no_threat"})
+        checked_count = sum(1 for s in applicable_status_values if s in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"})
         pending_count = sum(1 for s in applicable_status_values if s == "pending")
         not_applicable_count = sum(1 for s in (str(meta.get("status", "unknown")).lower() for meta in status_metas) if s == "not_applicable")
         unauthorized_count = sum(1 for s in applicable_status_values if s == "not_authorized")

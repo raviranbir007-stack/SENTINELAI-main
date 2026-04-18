@@ -674,7 +674,7 @@ class ThreatAnalyzer:
         statuses = [meta for meta in api_status.values() if isinstance(meta, dict)]
 
         applicable = [meta for meta in statuses if bool(meta.get("applicable"))]
-        checked_statuses = {"checked", "online", "available", "clean", "no_threat"}
+        checked_statuses = {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}
         unavailable_statuses = {"not_configured", "not_authorized", "rate_limited", "error", "skipped_local_mode"}
 
         checked_applicable = sum(
@@ -906,25 +906,35 @@ class ThreatAnalyzer:
 
         previous_status = api_status.get(api_key, {}) if isinstance(api_status.get(api_key, {}), dict) else {}
 
-        # Patch: If API is not configured or not applicable, do not mark as error
+        # Determine API status based on response:
+        # - If API was successfully executed and returned data: "success"
+        # - If API was checked but not applicable for input type: "not_applicable"  
+        # - If API key not configured: "not_configured"
+        # - If other errors: specific error status
         if error_message:
             error_lower = error_message.lower()
-            if "not configured" in error_lower or "api key missing" in error_lower:
+            if "not configured" in error_lower or "api key missing" in error_lower or "api key is missing" in error_lower:
                 status = "not_configured"
-            elif "not applicable" in error_lower or "not supported" in error_lower:
+            elif (
+                "not applicable" in error_lower
+                or "not supported" in error_lower
+                or "did not resolve to a public ip" in error_lower
+                or "outside provider scope" in error_lower
+            ):
                 status = "not_applicable"
             elif "urlscan blocked" in error_lower or "scan prevented" in error_lower:
                 status = "limited"
-            elif "authorization failed" in error_lower or "unauthorized" in error_lower or "forbidden" in error_lower:
+            elif "authorization failed" in error_lower or "unauthorized" in error_lower or "forbidden" in error_lower or "401" in error_lower or "403" in error_lower:
                 status = "not_authorized"
-            elif "rate limit" in error_lower:
+            elif "rate limit" in error_lower or "429" in error_lower:
                 status = "rate_limited"
-            elif "not yet complete" in error_lower or "scan not found" in error_lower:
+            elif "not yet complete" in error_lower or "scan not found" in error_lower or "queued" in error_lower:
                 status = "pending"
             else:
                 status = "error"
         else:
-            status = "checked"
+            # No error = API was successfully called and executed
+            status = "success"
             if display_name not in called:
                 called.append(display_name)
 
@@ -932,12 +942,12 @@ class ThreatAnalyzer:
             "name": display_name,
             "status": status,
             "configured": previous_status.get("configured", status != "not_configured") and status != "not_configured",
-            "applicable": previous_status.get("applicable"),
+            "applicable": False if status == "not_applicable" else previous_status.get("applicable"),
             "supported_inputs": previous_status.get("supported_inputs"),
             "error": error_message or None,
         }
 
-        # Patch: Add more specific warning messages for not_configured and not_applicable
+        # Add more specific warning messages for errors only
         if warnings is not None and status in {"not_configured", "rate_limited", "error", "not_applicable"}:
             warning_map = {
                 "not_configured": f"{display_name} API key not configured",
@@ -1795,12 +1805,34 @@ class ThreatAnalyzer:
                                 threats.append({"source": api_name, "severity": "high", "indicator": f"Suspicious detection: {suspicious}/{total_engines} vendor(s)", "count": suspicious})
                 elif api_key == "urlscan":
                     urlscan_result = await self.urlscan.scan_url(url)
-                    self._track_api_result(result, api_key, api_name, urlscan_result, warnings)
-                    if urlscan_result and not urlscan_result.get("error"):
-                        if "uuid" in urlscan_result:
-                            logger.debug(f"URLScan.io scan submitted successfully: {urlscan_result.get('uuid')}")
-                        if isinstance(urlscan_result, dict) and "data" in urlscan_result:
-                            result_data = urlscan_result.get("data", {})
+                    effective_result = urlscan_result
+                    if (
+                        isinstance(urlscan_result, dict)
+                        and not urlscan_result.get("error")
+                        and urlscan_result.get("uuid")
+                        and "data" not in urlscan_result
+                    ):
+                        try:
+                            import asyncio
+
+                            await asyncio.sleep(1.5)
+                            fetched_result = await self.urlscan.get_results(urlscan_result.get("uuid"))
+                            if isinstance(fetched_result, dict) and not fetched_result.get("error"):
+                                effective_result = fetched_result
+                            else:
+                                logger.debug(
+                                    "URLScan results not yet ready for uuid=%s; keeping submission payload",
+                                    urlscan_result.get("uuid"),
+                                )
+                        except Exception as fetch_err:
+                            logger.debug("URLScan result fetch attempt failed: %s", fetch_err)
+
+                    self._track_api_result(result, api_key, api_name, effective_result, warnings)
+                    if effective_result and not effective_result.get("error"):
+                        if "uuid" in effective_result:
+                            logger.debug(f"URLScan.io scan submitted successfully: {effective_result.get('uuid')}")
+                        if isinstance(effective_result, dict) and "data" in effective_result:
+                            result_data = effective_result.get("data", {})
                             classifications = result_data.get("classifications", {})
                             if isinstance(classifications, dict):
                                 if classifications.get("phishing"):
@@ -3281,7 +3313,8 @@ class ThreatAnalyzer:
             api_status_counts[status] = api_status_counts.get(status, 0) + 1
 
         unavailable_statuses = {"not_configured", "not_authorized", "rate_limited", "error", "skipped_local_mode"}
-        available_statuses = {"checked", "clean", "no_threat"}
+        available_statuses = {"success", "completed", "ok", "checked", "clean", "no_threat", "available", "online"}
+        checked_statuses = {"success", "completed", "ok", "checked", "clean", "no_threat", "available", "online"}
 
         result["forensic_metadata"] = {
             "evidence_sources": evidence_sources,
@@ -3313,7 +3346,8 @@ class ThreatAnalyzer:
             "scan_coverage": f"{apis_checked}/{apis_applicable} applicable APIs",
             "api_status": api_status_map,
             "api_status_counts": api_status_counts,
-            "external_corroboration_available": (apis_applicable == 0) or bool(api_status_counts.get("checked", 0)),
+            "external_corroboration_available": (apis_applicable == 0)
+            or bool(sum(api_status_counts.get(s, 0) for s in checked_statuses)),
             "external_corroboration_unavailable_reasons": [
                 status for status in unavailable_statuses if api_status_counts.get(status, 0)
             ],

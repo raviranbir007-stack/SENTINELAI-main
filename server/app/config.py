@@ -117,6 +117,75 @@ class Settings(BaseSettings):
     @property
     def backend_cors_origins_list(self) -> List[str]:
         return [h.strip() for h in self.BACKEND_CORS_ORIGINS.split(",") if h.strip()]
+
+    @property
+    def gemini_api_keys_list(self) -> List[str]:
+        """Get all Gemini API keys from various sources as a single list"""
+        keys = []
+        seen = set()
+        
+        # Add primary key if set
+        if self.GEMINI_API_KEY and self.GEMINI_API_KEY not in seen:
+            keys.append(self.GEMINI_API_KEY)
+            seen.add(self.GEMINI_API_KEY)
+        
+        # Add CSV keys from GEMINI_API_KEYS
+        for key in self.GEMINI_API_KEYS.split(","):
+            key = key.strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        # Add numbered keys GEMINI_API_KEY_1 through GEMINI_API_KEY_20
+        for i in range(1, 21):
+            key = getattr(self, f"GEMINI_API_KEY_{i}", "").strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        # Add CSV keys from GOOGLE_API_KEYS (alternative naming)
+        for key in self.GOOGLE_API_KEYS.split(","):
+            key = key.strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        # Add numbered GOOGLE keys
+        for i in range(1, 6):
+            key = getattr(self, f"GOOGLE_API_KEY_{i}", "").strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        return keys
+
+    @property
+    def openai_api_keys_list(self) -> List[str]:
+        """Get all OpenAI API keys from various sources as a single list"""
+        keys = []
+        seen = set()
+        
+        # Add primary key if set
+        if self.OPENAI_API_KEY and self.OPENAI_API_KEY not in seen:
+            keys.append(self.OPENAI_API_KEY)
+            seen.add(self.OPENAI_API_KEY)
+        
+        # Add CSV keys from OPENAI_API_KEYS
+        for key in self.OPENAI_API_KEYS.split(","):
+            key = key.strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        # Add numbered keys OPENAI_API_KEY_1 through OPENAI_API_KEY_5
+        for i in range(1, 6):
+            key = getattr(self, f"OPENAI_API_KEY_{i}", "").strip()
+            if key and key not in seen:
+                keys.append(key)
+                seen.add(key)
+        
+        return keys
+
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
@@ -155,11 +224,91 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_API_KEYS: str = os.getenv("GEMINI_API_KEYS", "")
     GOOGLE_API_KEYS: str = os.getenv("GOOGLE_API_KEYS", "")
+    
+    # Gemini numbered API keys (supports up to 20 keys)
+    GEMINI_API_KEY_1: str = os.getenv("GEMINI_API_KEY_1", "")
+    GEMINI_API_KEY_2: str = os.getenv("GEMINI_API_KEY_2", "")
+    GEMINI_API_KEY_3: str = os.getenv("GEMINI_API_KEY_3", "")
+    GEMINI_API_KEY_4: str = os.getenv("GEMINI_API_KEY_4", "")
+    GEMINI_API_KEY_5: str = os.getenv("GEMINI_API_KEY_5", "")
+    GEMINI_API_KEY_6: str = os.getenv("GEMINI_API_KEY_6", "")
+    GEMINI_API_KEY_7: str = os.getenv("GEMINI_API_KEY_7", "")
+    GEMINI_API_KEY_8: str = os.getenv("GEMINI_API_KEY_8", "")
+    GEMINI_API_KEY_9: str = os.getenv("GEMINI_API_KEY_9", "")
+    GEMINI_API_KEY_10: str = os.getenv("GEMINI_API_KEY_10", "")
+    GEMINI_API_KEY_11: str = os.getenv("GEMINI_API_KEY_11", "")
+    GEMINI_API_KEY_12: str = os.getenv("GEMINI_API_KEY_12", "")
+    GEMINI_API_KEY_13: str = os.getenv("GEMINI_API_KEY_13", "")
+    GEMINI_API_KEY_14: str = os.getenv("GEMINI_API_KEY_14", "")
+    GEMINI_API_KEY_15: str = os.getenv("GEMINI_API_KEY_15", "")
+    GEMINI_API_KEY_16: str = os.getenv("GEMINI_API_KEY_16", "")
+    GEMINI_API_KEY_17: str = os.getenv("GEMINI_API_KEY_17", "")
+    GEMINI_API_KEY_18: str = os.getenv("GEMINI_API_KEY_18", "")
+    GEMINI_API_KEY_19: str = os.getenv("GEMINI_API_KEY_19", "")
+    GEMINI_API_KEY_20: str = os.getenv("GEMINI_API_KEY_20", "")
+    
+    # Google numbered API keys (alternative naming)
+    GOOGLE_API_KEY_1: str = os.getenv("GOOGLE_API_KEY_1", "")
+    GOOGLE_API_KEY_2: str = os.getenv("GOOGLE_API_KEY_2", "")
+    GOOGLE_API_KEY_3: str = os.getenv("GOOGLE_API_KEY_3", "")
+    GOOGLE_API_KEY_4: str = os.getenv("GOOGLE_API_KEY_4", "")
+    GOOGLE_API_KEY_5: str = os.getenv("GOOGLE_API_KEY_5", "")
+    
+    # Gemini Model and Report Generation Configuration
+    GEMINI_MODEL_CANDIDATES: str = os.getenv("GEMINI_MODEL_CANDIDATES", "gemini-1.5-flash,gemini-2.5-flash,gemini-1.5-pro")
+    GEMINI_DAILY_REPORT_LIMIT: int = int(os.getenv("GEMINI_DAILY_REPORT_LIMIT", "80"))
+    GEMINI_HOURLY_REPORT_LIMIT: int = int(os.getenv("GEMINI_HOURLY_REPORT_LIMIT", "20"))
+    GEMINI_EXECUTIVE_ONLY: bool = os.getenv("GEMINI_EXECUTIVE_ONLY", "false").lower() in {"1", "true", "yes", "on"}
+    GEMINI_QUOTA_COOLDOWN_SECONDS: int = int(os.getenv("GEMINI_QUOTA_COOLDOWN_SECONDS", "900"))
+    GEMINI_ANALYSIS_CACHE_TTL_SECONDS: int = int(os.getenv("GEMINI_ANALYSIS_CACHE_TTL_SECONDS", "1800"))
+    GEMINI_ANALYSIS_CACHE_SIZE: int = int(os.getenv("GEMINI_ANALYSIS_CACHE_SIZE", "64"))
+    GEMINI_MIN_REQUEST_INTERVAL: float = float(os.getenv("GEMINI_MIN_REQUEST_INTERVAL", "2.0"))
+    GEMINI_MAX_ATTEMPTS: int = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
+    GEMINI_CIRCUIT_THRESHOLD: int = int(os.getenv("GEMINI_CIRCUIT_THRESHOLD", "5"))
+    GEMINI_CIRCUIT_OPEN_SECONDS: int = int(os.getenv("GEMINI_CIRCUIT_OPEN_SECONDS", "60"))
+    GEMINI_REQUEST_TIMEOUT_SECONDS: float = float(os.getenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "45"))
+    
+    # OpenAI API Keys (for future AI integration)
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_KEY_1: str = os.getenv("OPENAI_API_KEY_1", "")
+    OPENAI_API_KEY_2: str = os.getenv("OPENAI_API_KEY_2", "")
+    OPENAI_API_KEY_3: str = os.getenv("OPENAI_API_KEY_3", "")
+    OPENAI_API_KEY_4: str = os.getenv("OPENAI_API_KEY_4", "")
+    OPENAI_API_KEY_5: str = os.getenv("OPENAI_API_KEY_5", "")
+    OPENAI_API_KEYS: str = os.getenv("OPENAI_API_KEYS", "")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
+    OPENAI_ORG_ID: str = os.getenv("OPENAI_ORG_ID", "")
 
     # Defense decisioning controls (network-defense)
     SENTINEL_AUTO_BLOCK_MIN_SEVERITY: str = os.getenv("SENTINEL_AUTO_BLOCK_MIN_SEVERITY", "high")
     SENTINEL_ENABLE_MANUAL_APPROVAL: bool = os.getenv("SENTINEL_ENABLE_MANUAL_APPROVAL", "True").lower() == "true"
     SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE: float = float(os.getenv("SENTINEL_MANUAL_REVIEW_MIN_CONFIDENCE", "0.65"))
+    
+    # Sentinel API Governance & Performance Configuration
+    SENTINEL_API_MAX_CONCURRENT_CALLS: int = int(os.getenv("SENTINEL_API_MAX_CONCURRENT_CALLS", "12"))
+    SENTINEL_API_QUEUE_WAIT_TIMEOUT: float = float(os.getenv("SENTINEL_API_QUEUE_WAIT_TIMEOUT", "2.0"))
+    SENTINEL_API_FAILURE_THRESHOLD: int = int(os.getenv("SENTINEL_API_FAILURE_THRESHOLD", "4"))
+    SENTINEL_API_CIRCUIT_COOLDOWN_SECONDS: float = float(os.getenv("SENTINEL_API_CIRCUIT_COOLDOWN_SECONDS", "90"))
+    SENTINEL_API_BUDGET_DAILY: int = int(os.getenv("SENTINEL_API_BUDGET_DAILY", "5000"))
+    
+    # Sentinel Adaptive Hardening & Monitoring
+    SENTINEL_ENABLE_STARTUP_MONITORS: bool = os.getenv("SENTINEL_ENABLE_STARTUP_MONITORS", "true").lower() in {"1", "true", "yes", "on"}
+    SENTINEL_ESCALATE_EXTERNAL_API_ON_THREAT: bool = os.getenv("SENTINEL_ESCALATE_EXTERNAL_API_ON_THREAT", "true").lower() in {"1", "true", "yes", "on"}
+    SENTINEL_ENABLE_NETWORK_MONITORING: bool = os.getenv("SENTINEL_ENABLE_NETWORK_MONITORING", "true").lower() in {"1", "true", "yes", "on"}
+    SENTINEL_MONITOR_STATUS_INTERVAL: int = int(os.getenv("SENTINEL_MONITOR_STATUS_INTERVAL", "3600"))
+    SENTINEL_NETWORK_SCAN_COOLDOWN: int = int(os.getenv("SENTINEL_NETWORK_SCAN_COOLDOWN", "600"))
+    SENTINEL_NETWORK_POLL_INTERVAL: int = int(os.getenv("SENTINEL_NETWORK_POLL_INTERVAL", "15"))
+    SENTINEL_SCAN_LOCAL_TARGETS: bool = os.getenv("SENTINEL_SCAN_LOCAL_TARGETS", "false").lower() in {"1", "true", "yes", "on"}
+    SENTINEL_PROMPT_COOLDOWN: int = int(os.getenv("SENTINEL_PROMPT_COOLDOWN", "900"))
+    SENTINEL_URL_REVISIT_COOLDOWN: int = int(os.getenv("SENTINEL_URL_REVISIT_COOLDOWN", "60"))
+    SENTINEL_BROWSER_HISTORY_BATCH: int = int(os.getenv("SENTINEL_BROWSER_HISTORY_BATCH", "1000"))
+    SENTINEL_DOWNLOAD_POLL_INTERVAL: int = int(os.getenv("SENTINEL_DOWNLOAD_POLL_INTERVAL", "15"))
+    SENTINEL_DOWNLOAD_SETTLE_SECONDS: int = int(os.getenv("SENTINEL_DOWNLOAD_SETTLE_SECONDS", "20"))
+    SENTINEL_DOWNLOAD_MAX_FILE_SIZE: int = int(os.getenv("SENTINEL_DOWNLOAD_MAX_FILE_SIZE", str(150 * 1024 * 1024)))
+    SENTINEL_PROMPT_DUPLICATE_SUPPRESS_SECONDS: int = int(os.getenv("SENTINEL_PROMPT_DUPLICATE_SUPPRESS_SECONDS", "5"))
+    SENTINEL_BROWSER_HISTORY_PATHS: str = os.getenv("SENTINEL_BROWSER_HISTORY_PATHS", "")
+    SENTINEL_DETECTOR_THRESHOLD_PROFILES_JSON: str = os.getenv("SENTINEL_DETECTOR_THRESHOLD_PROFILES_JSON", "")
+    SENTINEL_DETECTOR_CALIBRATION_JSON: str = os.getenv("SENTINEL_DETECTOR_CALIBRATION_JSON", "")
 
     @property
     def admin_infra_hostnames_list(self) -> List[str]:
@@ -173,13 +322,42 @@ class Settings(BaseSettings):
 # Create settings instance with validation logging
 settings = Settings()
 
-# Debug: log API key configuration status
+# Debug: log comprehensive API key and configuration status
 import logging
 _config_logger = logging.getLogger(__name__)
-_config_logger.debug(f"🔑 Settings loaded from {ENV_FILE}")
-_config_logger.debug(f"VIRUSTOTAL_API_KEY configured: {bool(settings.VIRUSTOTAL_API_KEY)}")
-_config_logger.debug(f"ABUSEIPDB_API_KEY configured: {bool(settings.ABUSEIPDB_API_KEY)}")
-_config_logger.debug(f"SHODAN_API_KEY configured: {bool(settings.SHODAN_API_KEY)}")
-_config_logger.debug(f"HYBRIDANALYSIS_API_KEY configured: {bool(settings.HYBRIDANALYSIS_API_KEY)}")
-_config_logger.debug(f"URLSCAN_API_KEY configured: {bool(settings.URLSCAN_API_KEY)}")
-_config_logger.debug(f"EXTERNAL_APIS_ENABLED: {settings.EXTERNAL_APIS_ENABLED}")
+
+def _mask_key(key: str, show_chars: int = 6) -> str:
+    """Mask sensitive keys for logging"""
+    key = str(key or "").strip()
+    if not key or len(key) <= show_chars:
+        return "NOT_SET" if not key else f"SHORT({len(key)})"
+    return key[:show_chars] + "*" * (len(key) - show_chars)
+
+threat_key_count = sum(
+    bool(v)
+    for v in [
+        settings.VIRUSTOTAL_API_KEY,
+        settings.ABUSEIPDB_API_KEY,
+        settings.SHODAN_API_KEY,
+        settings.HYBRIDANALYSIS_API_KEY,
+        settings.URLSCAN_API_KEY,
+    ]
+)
+gemini_keys_count = len(settings.gemini_api_keys_list)
+openai_keys_count = len(settings.openai_api_keys_list)
+
+if os.getenv("SENTINEL_CONFIG_SUMMARY_LOGGED") != "1":
+    _config_logger.info(
+        "SENTINEL-AI config loaded | env=%s | debug=%s | external_apis=%s",
+        ENV_FILE,
+        settings.DEBUG,
+        settings.EXTERNAL_APIS_ENABLED,
+    )
+    _config_logger.info(
+        "Config summary | threat_keys=%s/5 | gemini_keys=%s | openai_keys=%s | model=%s",
+        threat_key_count,
+        gemini_keys_count,
+        openai_keys_count,
+        settings.OPENAI_MODEL,
+    )
+    os.environ["SENTINEL_CONFIG_SUMMARY_LOGGED"] = "1"
