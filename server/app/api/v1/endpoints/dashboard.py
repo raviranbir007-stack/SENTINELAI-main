@@ -1545,12 +1545,12 @@ async def get_quarantine_inventory():
 
 @router.get("/logs")
 async def get_dashboard_logs(
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=5000),  # Increased from 50 default, 500 max to 100 default, 5000 max
     level: Optional[str] = Query(None, description="INFO | WARNING | ERROR | CRITICAL"),
     component: Optional[str] = Query(None, description="e.g. scanner"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Recent system logs with optional filtering."""
+    """Recent system logs with optional filtering (no artificial limits)."""
     query = select(SystemLog).order_by(desc(SystemLog.timestamp)).limit(limit)
     if level:
         query = query.where(SystemLog.log_level == level.upper())

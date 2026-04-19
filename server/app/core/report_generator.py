@@ -1918,13 +1918,25 @@ class ReportGenerator:
             last_error_message = ""
             all_keys = self.gemini_keys[:] if self.gemini_keys else ([self.gemini_key] if self.gemini_key else [])
             now_ts = time.time()
+            
+            def _normalize_cooldown_value(val: Any) -> float:
+                """Safely convert cooldown value to float, handling list/invalid types."""
+                try:
+                    if isinstance(val, (list, dict)):
+                        return 0.0
+                    f_val = float(val or 0.0)
+                    return f_val if f_val > 0 else 0.0
+                except (TypeError, ValueError):
+                    return 0.0
+            
             available_key_entries = [
                 (idx, key)
                 for idx, key in enumerate(all_keys)
-                if now_ts >= float(self._gemini_key_cooldown_until.get(key, 0.0) or 0.0)
+                if now_ts >= _normalize_cooldown_value(self._gemini_key_cooldown_until.get(key, 0.0))
             ]
             if not available_key_entries:
-                earliest_ready = min(float(self._gemini_key_cooldown_until.get(key, 0.0) or 0.0) for key in all_keys)
+                cooldown_values = [_normalize_cooldown_value(self._gemini_key_cooldown_until.get(key, 0.0)) for key in all_keys]
+                earliest_ready = min(cooldown_values) if cooldown_values else now_ts
                 wait_seconds = int(max(1, earliest_ready - now_ts))
                 self._last_gemini_failure_reason = f"all gemini keys cooling down ({wait_seconds}s remaining)"
                 return None
@@ -1987,10 +1999,15 @@ class ReportGenerator:
                                             int(self.gemini_quota_cooldown_seconds),
                                             int(retry_delay) if retry_delay else 0,
                                         )
-                                        self._gemini_key_cooldown_until[api_key] = max(
-                                            float(self._gemini_key_cooldown_until.get(api_key, 0.0) or 0.0),
-                                            now_ts + float(effective_cooldown),
-                                        )
+                                        # Safely store cooldown value, ensuring it's always a float
+                                        try:
+                                            self._gemini_key_cooldown_until[api_key] = max(
+                                                float(self._gemini_key_cooldown_until.get(api_key, 0.0) or 0.0),
+                                                now_ts + float(effective_cooldown),
+                                            )
+                                        except (TypeError, ValueError):
+                                            self._gemini_key_cooldown_until[api_key] = now_ts + float(effective_cooldown)
+                                        
                                         if len(all_keys) <= 1:
                                             self._quota_cooldown_until = max(
                                                 float(self._quota_cooldown_until or 0.0),
@@ -2013,7 +2030,8 @@ class ReportGenerator:
                                                 model_name,
                                                 key_index + 1,
                                             )
-                                        continue
+                                        # When quota is hit on current key, break model loop to try next key
+                                        break
                                     if kind == "auth":
                                         logger.warning("Gemini auth issue on key #%d; trying fallback keys", key_index + 1)
                                         break
@@ -2047,9 +2065,32 @@ class ReportGenerator:
                     except Exception as e:
                         msg = str(e)
                         last_error_message = msg
-                        logger.warning("legacy generativeai attempt %d failed: %s", attempt, msg)
-                        if _classify_error(msg) == "transient":
+                        error_kind = _classify_error(msg)
+                        
+                        # Handle quota errors in legacy client too
+                        if error_kind == "quota":
+                            now_ts = time.time()
+                            retry_delay = _extract_retry_delay_seconds(msg)
+                            effective_cooldown = max(
+                                int(self.gemini_quota_cooldown_seconds),
+                                int(retry_delay) if retry_delay else 0,
+                            )
+                            # Mark all legacy keys on cooldown
+                            for key in all_keys:
+                                try:
+                                    self._gemini_key_cooldown_until[key] = max(
+                                        float(self._gemini_key_cooldown_until.get(key, 0.0) or 0.0),
+                                        now_ts + float(effective_cooldown),
+                                    )
+                                except (TypeError, ValueError):
+                                    self._gemini_key_cooldown_until[key] = now_ts + float(effective_cooldown)
+                            
+                            self._last_gemini_failure_reason = f"provider quota/rate limited (legacy client); cooldown {effective_cooldown}s"
+                            logger.warning("Gemini quota issue (legacy client); entering cooldown for %ds", effective_cooldown)
+                        elif error_kind == "transient":
                             saw_transient = True
+                        
+                        logger.warning("legacy generativeai attempt %d failed: %s", attempt, msg)
 
                 self._failure_count += 1
                 if self._failure_count >= self.circuit_threshold:

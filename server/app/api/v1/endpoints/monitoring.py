@@ -101,7 +101,7 @@ async def get_monitoring_stats(
 
 @router.get("/activity")
 async def get_recent_activity(
-    limit: int = Query(50, ge=1, le=200, description="Max entries to return"),
+    limit: int = Query(200, ge=1, le=2000, description="Max entries to return - increased to show more recent activity"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -169,7 +169,7 @@ async def get_recent_activity(
 
 @router.get("/websites")
 async def get_visited_websites(
-    limit: int = Query(50, ge=1, le=200, description="Max entries"),
+    limit: int = Query(200, ge=1, le=2000, description="Max entries - fetch more recent history"),
     hours: int = Query(24, ge=1, le=720, description="Lookback window hours"),
 ):
     """

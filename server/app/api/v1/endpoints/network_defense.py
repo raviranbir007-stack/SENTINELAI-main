@@ -2479,7 +2479,7 @@ async def list_attacks(
 @router.get("/incidents")
 async def list_incidents(
     hours: int = 72,
-    limit: int = 500,
+    limit: int = 1000,  # Increased from 500 to show more recent incidents
     client_id: Optional[str] = None,
     blocked_only: bool = False,
     quarantined_only: bool = False,
@@ -2753,15 +2753,61 @@ async def list_incidents(
                 },
             })
 
-        # Fallback: surface recent background monitor threats as incident rows
-        # when attack/defense tables are sparse so dashboard is not blank.
+        # Fallback: surface ONLY genuine threats from background monitor (exclude clean/benign infrastructure)
+        # Only add background threats if they have actual malicious/suspicious/critical verdicts
+        # Do NOT include automated background noise (clean CDN/DNS/cloud provider IPs)
         if not incidents:
             try:
                 from ....core.activity_database import activity_db
 
-                background_threats = activity_db.get_recent_threats(limit=max_items, hours=hours)
+                # Known benign infrastructure IPs (DNS, CDN, cloud providers) - filter these out
+                BENIGN_INFRASTRUCTURE_IPS = {
+                    # Google DNS & services
+                    '8.8.8.8', '8.8.4.4', '142.250.192.195', '142.251.41.14', '172.217.27.170',
+                    '2001:4860:4860::8888', '2001:4860:4860::8844', '2607:f8b0:4004:814::200e',
+                    # Cloudflare DNS & services
+                    '1.1.1.1', '1.0.0.1', '151.101.209.91', '2606:4700:4700::1111', '2606:4700:4700::1001',
+                    '2620:1ec:46::68',
+                    # AWS
+                    '52.168.117.174', '54.239.28.30', '2600:1901:0:38d7::',
+                    # Microsoft Azure
+                    '20.189.173.1', '40.74.30.199',
+                    # Quad9
+                    '9.9.9.9', '149.112.112.112', '2620:fe::fe', '2620:fe::9',
+                    # OpenDNS
+                    '208.67.222.222', '208.67.220.220',
+                    # Verisign
+                    '64.6.64.6', '64.6.65.6',
+                    # Adguard
+                    '94.140.14.14', '94.140.15.15',
+                }
+
+                background_threats = activity_db.get_recent_threats(limit=max_items * 3, hours=hours)  # Get more to filter
+                
+                genuine_threat_count = 0
                 for idx, item in enumerate(background_threats):
                     verdict = str(item.get("verdict") or "unknown").lower()
+                    artifact_value = str(item.get("value") or "").strip()
+                    artifact_type = str(item.get("type") or "").lower().strip()
+                    
+                    # FILTER 1: Skip "clean" verdicts - these are false positives/noise
+                    if verdict in {"clean", "safe", "ok", "benign", "whitelisted"}:
+                        continue
+                    
+                    # FILTER 2: Skip known benign infrastructure IPs
+                    if artifact_type == "ip" and artifact_value in BENIGN_INFRASTRUCTURE_IPS:
+                        continue
+                    
+                    # FILTER 3: Only include actual threats (malicious/suspicious/critical)
+                    if verdict not in {"critical", "malicious", "suspicious", "high", "medium"}:
+                        continue
+                    
+                    # Only add up to max_items genuine threats
+                    if genuine_threat_count >= max_items:
+                        break
+                    
+                    genuine_threat_count += 1
+                    
                     if verdict in {"critical", "malicious"}:
                         sev = "critical"
                     elif verdict in {"suspicious", "high"}:
@@ -2771,13 +2817,13 @@ async def list_incidents(
 
                     incidents.append(
                         {
-                            "incident_id": f"bg-{idx}-{abs(hash(str(item.get('value', ''))))}",
+                            "incident_id": f"bg-{genuine_threat_count}-{abs(hash(str(artifact_value)))}",
                             "incident_kind": "background_threat",
-                            "incident_type": item.get("type") or "artifact",
-                            "title": f"Background {str(item.get('type') or 'artifact').upper()} Threat",
-                            "target": item.get("value") or "unknown",
-                            "source_ip": item.get("value") if str(item.get("type") or "").lower() == "ip" else None,
-                            "source_domain": item.get("value") if str(item.get("type") or "").lower() in {"domain", "url"} else None,
+                            "incident_type": artifact_type or "artifact",
+                            "title": f"Background {str(artifact_type or 'artifact').upper()} Threat",
+                            "target": artifact_value or "unknown",
+                            "source_ip": artifact_value if artifact_type == "ip" else None,
+                            "source_domain": artifact_value if artifact_type in {"domain", "url"} else None,
                             "source_country": None,
                             "severity": sev,
                             "status": "detected",
@@ -2787,7 +2833,7 @@ async def list_incidents(
                             "action": "DETECTED",
                             "detected_at": str(item.get("time") or ""),
                             "client": {},
-                            "source": "Background Monitor",
+                            "source": "Threat Intelligence (Background)",
                             "description": f"Auto-detected {verdict} artifact during background monitoring",
                             "short_description": f"{verdict.title()} verdict from background scan",
                             "api_sources": [],

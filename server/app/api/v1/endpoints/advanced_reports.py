@@ -23,6 +23,65 @@ logger = logging.getLogger(__name__)
 
 GENERATED_REPORTS_DIR = Path(__file__).resolve().parents[4] / "generated_reports"
 
+# Known benign infrastructure IPs to filter from reports/incidents
+BENIGN_INFRASTRUCTURE_IPS = {
+    # Google DNS & services
+    '8.8.8.8', '8.8.4.4', '142.250.192.195', '142.251.41.14', '172.217.27.170',
+    '2001:4860:4860::8888', '2001:4860:4860::8844', '2607:f8b0:4004:814::200e',
+    # Cloudflare DNS & services
+    '1.1.1.1', '1.0.0.1', '151.101.209.91', '2606:4700:4700::1111', '2606:4700:4700::1001',
+    '2620:1ec:46::68',
+    # AWS
+    '52.168.117.174', '54.239.28.30', '2600:1901:0:38d7::',
+    # Microsoft Azure
+    '20.189.173.1', '40.74.30.199',
+    # Quad9
+    '9.9.9.9', '149.112.112.112', '2620:fe::fe', '2620:fe::9',
+    # OpenDNS
+    '208.67.222.222', '208.67.220.220',
+    # Verisign
+    '64.6.64.6', '64.6.65.6',
+    # Adguard
+    '94.140.14.14', '94.140.15.15',
+}
+
+
+def _is_benign_infrastructure_indicator(indicator_value: str, indicator_type: str | None = None) -> bool:
+    """Check if an indicator is known benign infrastructure (should not appear in threat reports)."""
+    value = str(indicator_value or "").strip()
+    if not value:
+        return False
+    
+    # Check exact IP matches
+    if value in BENIGN_INFRASTRUCTURE_IPS:
+        return True
+    
+    # Check domain/URL matches for known CDNs (if applicable)
+    lower_val = value.lower()
+    cdn_keywords = {"google.com", "cloudflare.com", "aws.amazon.com", "azure.microsoft.com", 
+                    "gstatic.com", "doubleclick.net"}
+    if any(cdn in lower_val for cdn in cdn_keywords):
+        return True
+    
+    return False
+
+
+def _is_clean_verdict_only(indicator: dict) -> bool:
+    """Check if indicator only has clean/safe verdicts (noise, no threat)."""
+    verdict = str(indicator.get("verdict") or "").lower().strip()
+    severity = str(indicator.get("severity") or "").lower().strip()
+    status = str(indicator.get("status") or "").lower().strip()
+    
+    # Filter out CLEAN/SAFE verdicts
+    if verdict in {"clean", "safe", "ok", "benign", "whitelisted", "not_detected"}:
+        return True
+    if severity in {"safe", "benign", "low_risk"}:
+        return True
+    if status in {"clean", "safe"}:
+        return True
+    
+    return False
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -156,7 +215,7 @@ def _to_float_01(value: object) -> float:
     return max(0.0, min(raw, 1.0))
 
 
-async def _collect_interval_security_metrics(db: AsyncSession, hours: int, scan_limit: int = 120, attack_limit: int = 120) -> dict:
+async def _collect_interval_security_metrics(db: AsyncSession, hours: int, scan_limit: int = 500, attack_limit: int = 500) -> dict:
     threshold = utcnow() - timedelta(hours=hours)
 
     attack_rows = (
@@ -281,7 +340,8 @@ async def generate_comprehensive_report(req: AdvancedReportRequest, db: AsyncSes
 
         # Keep threat rows aligned to the selected time window so 24h/7d/30d reports
         # reflect only the clicked interval.
-        recent_threats = activity_db.get_recent_threats(limit=200, hours=primary_hours)
+        # Fetch more threats for comprehensive reporting (increased from 200 to 1000)
+        recent_threats = activity_db.get_recent_threats(limit=1000, hours=primary_hours)
         distribution = activity_db.get_threat_distribution(hours=primary_hours)
 
         def _normalize_conf(value: object) -> float:
@@ -302,6 +362,9 @@ async def generate_comprehensive_report(req: AdvancedReportRequest, db: AsyncSes
                 "timestamp": item.get("time"),
             }
             for item in recent_threats
+            # FILTER: Exclude benign infrastructure IPs and CLEAN/SAFE verdicts
+            if not _is_benign_infrastructure_indicator(item.get("value"), item.get("type"))
+            and not _is_clean_verdict_only(item)
         ]
         threat_indicators.extend(
             {
@@ -372,6 +435,9 @@ async def generate_comprehensive_report(req: AdvancedReportRequest, db: AsyncSes
                     "score": _normalize_conf(item.get("confidence")),
                 }
                 for item in recent_threats[:12]
+                # FILTER: Exclude benign infrastructure IPs and CLEAN verdicts
+                if not _is_benign_infrastructure_indicator(item.get("value"), item.get("type"))
+                and not _is_clean_verdict_only(item)
             ],
             "attack_events_covered": int(primary_server_metrics.get("attack_count", 0) or 0),
             "scan_history_covered": int(primary_server_metrics.get("scan_count", 0) or 0),
@@ -429,7 +495,7 @@ async def generate_comprehensive_report(req: AdvancedReportRequest, db: AsyncSes
                 hours = interval_hours_map.get(interval, 24)
                 interval_activity = activity_db.get_activity_summary(hours=hours)
                 interval_vulns = report_generator._get_endpoint_vuln_summary(hours=hours)
-                interval_recent_threats = activity_db.get_recent_threats(limit=200, hours=hours)
+                interval_recent_threats = activity_db.get_recent_threats(limit=1000, hours=hours)
                 interval_distribution = activity_db.get_threat_distribution(hours=hours)
                 interval_server_metrics = await _collect_interval_security_metrics(db, hours)
 
@@ -651,7 +717,7 @@ async def generate_interval_analysis_report(req: AdvancedReportRequest, db: Asyn
                 "vulns": vuln_summary,
             })
 
-        recent_threats = activity_db.get_recent_threats(limit=20)
+        recent_threats = activity_db.get_recent_threats(limit=200)
         primary_hours = interval_hours_map["24h"]
         distribution = activity_db.get_threat_distribution(hours=primary_hours)
 

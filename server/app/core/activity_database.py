@@ -565,7 +565,7 @@ class ActivityDatabase:
             logger.error(f"Error getting activity summary: {e}")
             return {}
     
-    def get_recent_threats(self, limit: int = 10, hours: int | None = None) -> List[Dict]:
+    def get_recent_threats(self, limit: int = 100, hours: int | None = None) -> List[Dict]:
         """Get recent threats detected, optionally constrained to a time window."""
         try:
             conn = self._connect()

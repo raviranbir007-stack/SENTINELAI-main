@@ -977,8 +977,10 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
 
     _scan_history.insert(0, scan_data)  # Add to front
     # Keep only last 100 scans
-    if len(_scan_history) > 100:
-        _scan_history = _scan_history[:100]
+    # Keep configurable limit - default 1000 instead of 100 to allow more recent history
+    max_memory_scans = max(100, int(os.getenv("SENTINEL_MAX_MEMORY_SCANS", "1000")))
+    if len(_scan_history) > max_memory_scans:
+        _scan_history = _scan_history[:max_memory_scans]
     
     # Store in database (retry once if scan_id collides)
     try:
@@ -1084,7 +1086,8 @@ async def _store_scan_result(scan_data: dict, db: AsyncSession):
 @router.get("/history")
 async def get_scan_history(
     source: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 500,  # Changed default from 100 to 500 for more history
+    fetch_all: bool = False,  # New parameter to fetch all records without limit
     db: AsyncSession = Depends(get_db),
 ):
     # ...existing code...
@@ -1098,7 +1101,11 @@ async def get_scan_history(
 
     # Merge persisted scan history so data survives process restarts.
     try:
-        query = select(ScanHistory).order_by(ScanHistory.scan_timestamp.desc()).limit(max(1, min(limit, 500)))
+        # If fetch_all=true, retrieve ALL records; otherwise use limit (max 5000 for safety)
+        query_limit = None if fetch_all else max(1, min(limit, 5000))
+        query = select(ScanHistory).order_by(ScanHistory.scan_timestamp.desc())
+        if query_limit:
+            query = query.limit(query_limit)
         if source and source != "all":
             query = query.where(ScanHistory.scan_source == source)
         result = await db.execute(query)

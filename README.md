@@ -1,62 +1,132 @@
 # SENTINEL-AI
 
-Unified IDS/IPS and monitoring system written in Python.
+SENTINEL-AI is a Python-based security platform for endpoint monitoring, threat detection, defense orchestration, and operational reporting. It combines a local client, a server-side API and dashboard, and external threat-intelligence integrations into a single workflow for defensive security operations.
 
-## Features
+## Overview
 
-- Real-time intrusion detection and prevention
-- Browser activity monitoring (Firefox, Chrome, Edge, Safari, etc.)
-- Operating system log monitoring (syslog/journal) with database storage and callbacks
-- Accurate browser monitoring even when server is run with sudo (detects real user home directory)
-- Persistent file logging (logs/protection.log) for audit and troubleshooting
-- Automatic traffic analysis and artifact scanning
-- Cross-platform support (Linux, macOS, Windows fallback)
-- Quarantine and alerting mechanisms
+The repository is organized around two primary components:
 
-## Quick start
+- `client/` contains the endpoint client and local scanning modules.
+- `server/` contains the FastAPI backend, dashboard API, defense workflows, and reporting logic.
 
-Run the integrated system:
+Supporting folders provide dependency manifests, automated tests, and operational utilities.
+
+## Key Capabilities
+
+- Real-time endpoint telemetry collection
+- Intrusion detection and prevention orchestration
+- Network, process, file, DNS, USB, email, and behavior monitoring
+- Threat enrichment through VirusTotal, AbuseIPDB, URLScan, Shodan, and Hybrid Analysis
+- AI-assisted analysis and reporting with Gemini support
+- Dashboard and API endpoints for monitoring, defense, threats, and reports
+- Rotating log files and health checks for operational visibility
+
+## Architecture
+
+1. The client agent collects endpoint telemetry and performs local scans.
+2. The server receives data, applies analysis, and exposes dashboard and API workflows.
+3. Threat-intelligence services enrich indicators with external context.
+4. Defense modules coordinate alerting, blocking, and response actions.
+5. Reporting modules generate operational and advanced security reports.
+
+## Project Structure
+
+- `client/sentinel_client_v3.py` is the main client entry point.
+- `client/scanner/` contains the endpoint monitoring and scan engines.
+- `server/run_server.py` is the integrated launcher.
+- `server/app/main.py` defines the FastAPI application lifecycle.
+- `server/app/api/v1/endpoints/` contains the public API surface.
+- `server/app/core/` contains the detection, response, and reporting logic.
+- `server/app/services/` contains external integration adapters.
+- `tests/` contains the automated test suite.
+- `tools/` contains helper scripts for validation and reporting.
+- `requirements/` contains the dependency sets for different runtime targets.
+
+## Quick Start
+
+### 1. Create a virtual environment
 
 ```bash
-sudo python3 server/run_server.py
+cd /home/kali/Documents/SENTINELAI-main
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements/server.txt
+pip install -r requirements/client.txt
 ```
 
-Or use provided shell scripts (`START.sh`, `run_complete_system.sh`).
+### 2. Configure environment variables
 
-See documentation files for additional configuration notes.
-
-## Email Alerts and Client-Safe API Mode
-
-Set these in `server/.env`:
-
-```env
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your-gmail@gmail.com
-SMTP_PASSWORD=your-gmail-app-password
-FROM_EMAIL=alerts@sentinel-ai.com
-ALERT_EMAIL=your-gmail@gmail.com
-CLIENT_REGISTRATION_ALERT_EMAILS=soc@example.com,sec-lead@example.com
-
-SENTINEL_CLIENT_SAFE_DASHBOARD_MODE=true
-SENTINEL_ADMIN_BYPASS_KEY=replace-with-long-random-secret
+```bash
+cp .env.example .env
 ```
 
-- `ALERT_EMAIL` receives core security alerts.
-- `CLIENT_REGISTRATION_ALERT_EMAILS` receives "new client registered" notifications (deduplicated automatically).
-- In client-safe mode, admin management routes are blocked unless header `X-Sentinel-Admin-Bypass` matches `SENTINEL_ADMIN_BYPASS_KEY`.
-- To force your current server OS to be treated as admin (not client), set `ADMIN_INFRA_HOSTNAMES` and/or `ADMIN_INFRA_IPS` in `server/.env`.
+Configure the required secrets and integrations in `.env`, including:
 
-## Testing and Diagnostics
+- `VIRUSTOTAL_API_KEY`
+- `ABUSEIPDB_API_KEY`
+- `SHODAN_API_KEY`
+- `HYBRIDANALYSIS_API_KEY`
+- `URLSCAN_API_KEY`
 
-- **Browser activity**: refer to `BROWSER_MONITORING.md` for tips when running as root.
-- **API connectivity**: run `python3 test_services_api.py` to verify that VirusTotal, AbuseIPDB, URLScan, Shodan and Hybrid Analysis are reachable and returning results.
-- **Monitoring simulation**: use the demo snippet in `BROWSER_MONITORING.md` or simply open a website while the server is running and watch the console/logs.
+Optional values for AI and notifications can also be added, such as:
 
-## Main Client Entry Point
+- `GEMINI_API_KEY`
+- `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `FROM_EMAIL`, `ALERT_EMAIL`, `CLIENT_REGISTRATION_ALERT_EMAILS`
 
-**Use only `client/sentinel_client_v3.py` as the main entry point for all client deployments.**
+### 3. Start the system
 
-All other client files (`sentinel_client.py`, `sentinel_client_enhanced.py`, `sentinel_integrated_protection.py`, `sentinel_realtime_protection.py`, `sentinel_automated.py`) are now deprecated and retained for legacy reference only. All new development, deployment, and integration should use `sentinel_client_v3.py`.
+```bash
+sudo /home/kali/Documents/SENTINELAI-main/.venv/bin/python /home/kali/Documents/SENTINELAI-main/server/run_server.py
+```
 
-For specialized or legacy use cases, review the deprecated files for reference, but do not use them as the main client.
+Then open:
+
+- Dashboard: `http://localhost:8000`
+- API docs: `http://localhost:8000/api/docs`
+- Health check: `http://localhost:8000/api/v1/health`
+
+## Main API Areas
+
+The API is grouped under the `/api/v1` prefix:
+
+- `/auth` for authentication workflows
+- `/scan` for scan submission and analysis
+- `/threats` for findings and threat management
+- `/dashboard` for status and summary views
+- `/monitoring` for background monitor control
+- `/network` for network defense operations
+- `/defense` for response and containment actions
+- `/reports` and `/advanced-reports` for standard and advanced reporting
+- `/ai-prediction` and `/analyze` for AI-assisted analysis
+
+## Testing
+
+Run the main test suite from the repository root:
+
+```bash
+cd /home/kali/Documents/SENTINELAI-main
+source .venv/bin/activate
+pytest -q
+```
+
+Additional validation scripts are available in `tests/` and `tools/` for targeted checks.
+
+## Operational Notes
+
+- Logs are written to `logs/` with rotation enabled.
+- The server can run with elevated host-level prevention controls when launched with the appropriate privileges.
+- Admin infrastructure identity can be controlled through `ADMIN_INFRA_HOSTNAMES` and `ADMIN_INFRA_IPS` in `.env`.
+- Keep environment files and API keys private; do not commit secrets to the repository.
+
+## Contributing
+
+1. Create a feature branch for the change.
+2. Keep each commit focused and testable.
+3. Run the relevant validation steps before opening a pull request.
+4. Include clear technical notes and evidence of verification.
+
+## Security Notice
+
+SENTINEL-AI includes active monitoring and defensive controls. Use it only on systems you own or are explicitly authorized to test.
