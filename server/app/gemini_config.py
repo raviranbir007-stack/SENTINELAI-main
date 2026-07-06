@@ -72,7 +72,7 @@ class GeminiConfig:
         'BLOCK_LOW_AND_ABOVE'
     ]
     
-    def __init__(self, config_file: str = None):
+    def __init__(self, config_file: Optional[str] = None):
         """
         Initialize Gemini configuration
         
@@ -268,7 +268,7 @@ class GeminiConfig:
         
         return validation_result
     
-    def get_config(self, key: str = None, default: Any = None) -> Any:
+    def get_config(self, key: Optional[str] = None, default: Any = None) -> Any:
         """
         Get configuration value or entire config
         
@@ -335,7 +335,7 @@ class GeminiConfig:
             self.config = backup  # Revert to backup
             return False
     
-    def save_to_file(self, filepath: str = None) -> bool:
+    def save_to_file(self, filepath: Optional[str] = None) -> bool:
         """
         Save configuration to JSON file
         
@@ -551,7 +551,7 @@ class GeminiConfig:
 # Factory function for creating config instance
 _config_instance = None
 
-def get_gemini_config(config_file: str = None) -> GeminiConfig:
+def get_gemini_config(config_file: Optional[str] = None) -> GeminiConfig:
     """
     Get or create Gemini configuration instance
     
@@ -828,7 +828,7 @@ def configure_gemini_for_environment(environment: str = 'production') -> GeminiC
     return config
 
 
-def create_minimal_config(api_key: str, model: str = None) -> GeminiConfig:
+def create_minimal_config(api_key: str, model: Optional[str] = None) -> GeminiConfig:
     """
     Create a minimal configuration with just API key and model
     

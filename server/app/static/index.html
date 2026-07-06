@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>SENTINEL-AI - Threat Detection, Prevention & Response System</title>
+    <title>SENTINEL-AI - Threat Detection, Prediction & Response System</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -2453,6 +2453,50 @@
             display: inline-block;
         }
 
+        .scan-action-btn {
+            gap: 0.5rem;
+        }
+
+        .scan-action-btn .scan-action-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.1em;
+            min-width: 1.1em;
+            transform-origin: center center;
+            transition: filter 0.2s ease;
+            will-change: transform;
+        }
+
+        .scan-action-btn:hover:not(.is-scanning) .scan-action-icon,
+        .scan-action-btn:focus-visible:not(.is-scanning) .scan-action-icon {
+            animation: scanIconHover 0.9s ease-in-out infinite;
+            filter: drop-shadow(0 0 8px rgba(45, 212, 191, 0.35));
+        }
+
+        .scan-action-btn.is-scanning {
+            pointer-events: none;
+            cursor: progress;
+        }
+
+        .scan-action-btn.is-scanning .scan-action-icon {
+            animation: scanIconSpin 0.85s linear infinite;
+            filter: drop-shadow(0 0 10px rgba(45, 212, 191, 0.45));
+        }
+
+        @keyframes scanIconSpin {
+            from { transform: rotate(0deg) scale(1.02); }
+            to { transform: rotate(360deg) scale(1.02); }
+        }
+
+        @keyframes scanIconHover {
+            0% { transform: translate(0, 0) rotate(0deg) scale(1.02); }
+            25% { transform: translate(1px, -1px) rotate(10deg) scale(1.08); }
+            50% { transform: translate(0, -2px) rotate(0deg) scale(1.12); }
+            75% { transform: translate(-1px, -1px) rotate(-10deg) scale(1.08); }
+            100% { transform: translate(0, 0) rotate(0deg) scale(1.02); }
+        }
+
         .btn.is-loading {
             position: relative;
             display: inline-flex;
@@ -2582,13 +2626,16 @@
                         <span class="badge">⚡ LIVE PROTECTION</span>
                         <h1>
                             SENTINEL-AI<br>
-                            <span class="glow-text">Threat Detection, Prevention &amp; Response System</span>
+                            <span class="glow-text">Threat Detection, Prediction &amp; Response System</span>
                         </h1>
                         <p>Monitor threats, review posture, scan targets, and investigate incidents from one clean operational console powered by 5 threat intelligence APIs with based AI and ML analysis.</p>
                         
                         <div class="scan-form">
                             <input type="text" class="scan-input" id="scanInput" maxlength="2048" placeholder="Enter IP, URL, or hash to scan...">
-                            <button class="btn btn-cyber" id="scanBtn">⚡ SCAN</button>
+                            <button class="btn btn-cyber scan-action-btn" id="scanBtn">
+                                <span class="scan-action-icon" aria-hidden="true">🔍</span>
+                                <span class="scan-action-label">SCAN</span>
+                            </button>
                         </div>
                         <div class="scan-helper">Supports IPs, domains, URLs, and hashes. Results appear below and in scan history.</div>
                         
@@ -3179,9 +3226,9 @@
                         <div class="form-group">
                             <label>Generate Report by Time Range (All Scans)</label>
                             <div class="time-buttons">
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 Last 24 Hours (All Scans)</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 Last 7 Days (All Scans)</button>
-                                <button class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 Last 30 Days (All Scans)</button>
+                                <button id="report-24h-btn" class="btn btn-secondary btn-sm" onclick="generateReportForInterval('24h')">📄 Last 24 Hours (All Scans)</button>
+                                <button id="report-7d-btn" class="btn btn-secondary btn-sm" onclick="generateReportForInterval('7d')">📄 Last 7 Days (All Scans)</button>
+                                <button id="report-30d-btn" class="btn btn-secondary btn-sm" onclick="generateReportForInterval('30d')">📄 Last 30 Days (All Scans)</button>
                             </div>
                             <small style="color: var(--muted-foreground); font-size: 0.75rem; display: block; margin-top: 0.5rem;">
                                 Each report includes ALL scans performed in the selected time period with detailed threat analysis and forensic reliability tracking.
@@ -3260,7 +3307,10 @@
                                 maxlength="2048"
                                    placeholder="192.168.1.1 · example.com · https://site.com · sha256..."
                                    style="flex:1;min-width:280px;">
-                            <button class="btn btn-cyber" id="newScanBtn" style="white-space:nowrap;min-width:130px;">🔍 Start Scan</button>
+                            <button class="btn btn-cyber scan-action-btn" id="newScanBtn" style="white-space:nowrap;min-width:130px;">
+                                <span class="scan-action-icon" aria-hidden="true">🔍</span>
+                                <span class="scan-action-label">Start Scan</span>
+                            </button>
                         </div>
                         <div id="newScanInputHint" style="font-size:0.72rem;color:var(--muted-foreground);margin-top:0.4rem;">Auto-detects IPs, domains, URLs, file names, and hashes.</div>
                     </div>
@@ -4371,6 +4421,10 @@
 
         function setButtonLoadingState(button, loading, loadingLabel) {
             if (!button) return;
+            if (button.classList.contains('scan-action-btn')) {
+                setScanButtonLoadingState(button, loading);
+                return;
+            }
             if (loading) {
                 if (!button.dataset.originalLabel) {
                     button.dataset.originalLabel = button.innerHTML;
@@ -4389,6 +4443,31 @@
             delete button.dataset.originalLabel;
         }
 
+        function setScanButtonLoadingState(button, loading) {
+            if (!button) return;
+            const icon = button.querySelector('.scan-action-icon');
+            const label = button.querySelector('.scan-action-label');
+
+            if (loading) {
+                if (label && !button.dataset.originalScanLabel) {
+                    button.dataset.originalScanLabel = label.textContent || '';
+                }
+                button.disabled = true;
+                button.classList.add('is-scanning');
+                if (label) {
+                    label.textContent = 'Scanning...';
+                }
+                return;
+            }
+
+            button.disabled = false;
+            button.classList.remove('is-scanning');
+            if (label && button.dataset.originalScanLabel) {
+                label.textContent = button.dataset.originalScanLabel;
+            }
+            delete button.dataset.originalScanLabel;
+        }
+
         function resolveButtonReference(buttonOrSelector) {
             if (!buttonOrSelector) return null;
             if (typeof buttonOrSelector === 'string') {
@@ -4402,6 +4481,66 @@
             const button = resolveButtonReference(buttonOrSelector);
             setButtonLoadingState(button, true, label);
             return () => setButtonLoadingState(button, false);
+        }
+
+        /**
+         * Update loading state for report interval buttons.
+         * - interval: '24h' | '7d' | '30d'
+         * - isLoading: boolean
+         * Ensures only the active interval button shows the spinner and disables
+         * only that button while preserving styling.
+         */
+        function updateReportButtons(interval, isLoading) {
+            const mapping = { '24h': 'report-24h-btn', '7d': 'report-7d-btn', '30d': 'report-30d-btn' };
+            const targetId = mapping[interval];
+            const ids = Object.values(mapping);
+
+            // When entering loading: restore other buttons and set only the target to loading
+            if (isLoading) {
+                ids.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    if (id === targetId) return; // leave target alone for now
+                    // restore any other button that might be in loading state
+                    if (el.dataset.originalLabel) {
+                        el.disabled = false;
+                        el.classList.remove('is-loading');
+                        el.removeAttribute('aria-busy');
+                        el.innerHTML = el.dataset.originalLabel;
+                        delete el.dataset.originalLabel;
+                    } else {
+                        el.disabled = false;
+                        el.classList.remove('is-loading');
+                        el.removeAttribute('aria-busy');
+                    }
+                });
+
+                const target = document.getElementById(targetId);
+                if (!target) return;
+                if (!target.dataset.originalLabel) target.dataset.originalLabel = target.innerHTML;
+                target.disabled = true;
+                target.classList.add('is-loading');
+                target.setAttribute('aria-busy', 'true');
+                target.innerHTML = `<span class="spinner" aria-hidden="true"></span> Generating...`;
+                return;
+            }
+
+            // When leaving loading, restore the specific button
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (el.dataset.originalLabel) {
+                    el.disabled = false;
+                    el.classList.remove('is-loading');
+                    el.removeAttribute('aria-busy');
+                    el.innerHTML = el.dataset.originalLabel;
+                    delete el.dataset.originalLabel;
+                } else {
+                    el.disabled = false;
+                    el.classList.remove('is-loading');
+                    el.removeAttribute('aria-busy');
+                }
+            });
         }
 
         async function runWithButtonLoading(buttonOrSelector, label, fn) {
@@ -9867,7 +10006,7 @@
             }
 
             const btn = document.getElementById('scanBtn') || document.getElementById('newScanBtn');
-            setButtonLoadingState(btn, true, 'Scanning...');
+            setScanButtonLoadingState(btn, true);
 
             await new Promise(requestAnimationFrame);
 
@@ -9916,10 +10055,7 @@
                     }, 5000);
                 }
             } finally {
-                setButtonLoadingState(btn, false);
-                if (btn) {
-                    btn.innerHTML = btn.id === 'newScanBtn' ? '🔍 Start Scan' : '⚡ SCAN';
-                }
+                setScanButtonLoadingState(btn, false);
             }
         }
 
@@ -10810,8 +10946,8 @@
         }
 
         async function generateReportForInterval(interval) {
-            const releasePrimary = createButtonLoadingGuard('[onclick="generateReportForInterval(\'24h\')"]', 'Generating...');
-            const releaseSecondary = createButtonLoadingGuard('[onclick="generateReportForInterval(selectedReportInterval || \'24h\')"]', 'Generating...');
+            // Use centralized per-interval loading UI so only the clicked button shows the spinner
+            updateReportButtons(interval, true);
             const btnText = interval === '24h' ? 'Last 24 Hours' : interval === '7d' ? 'Last 7 Days' : 'Last 30 Days';
             const reportLabel = REPORT_TYPE_DETAILS[selectedReportType]?.label || 'Report';
             showToast(`${reportLabel} • ${btnText}`, 'info');
@@ -10878,8 +11014,8 @@
                 console.error('Report generation error:', error);
                 showToast(`Failed to generate ${btnText} report: ` + error.message, 'error');
             } finally {
-                releasePrimary();
-                releaseSecondary();
+                // restore only the button that was set to loading
+                updateReportButtons(interval, false);
             }
         }
 
@@ -10980,7 +11116,7 @@
                     type: scanContext.type || scanContext.target_type || 'scan',
                     timeRange: '24h',
                     report_type: selectedReportType,
-                    intervals: ['24h', '7d', '30d'],
+                    intervals: ['24h'],
                 };
 
                 const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.generateReport}`, {

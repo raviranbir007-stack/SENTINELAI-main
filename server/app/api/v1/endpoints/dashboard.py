@@ -2,13 +2,15 @@ import os
 import socket
 import ipaddress
 import re
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
-from ....models import ScanHistory
+from ....models import AuditLog, ClientInstallation, ScanHistory, User
+from .auth import require_permission
 
 router = APIRouter()
 
@@ -74,6 +76,16 @@ def _request_origin_is_local_device(request: Request) -> bool:
         return origin.lower() in local_names
     except Exception:
         return origin.lower() == "localhost"
+
+
+def _dashboard_scope(user: User) -> tuple[Optional[int], Optional[int]]:
+    user_data: Any = user
+    organization_id = getattr(user_data, "organization_id", None)
+    department_id = getattr(user_data, "department_id", None)
+    return (
+        int(organization_id) if organization_id is not None else None,
+        int(department_id) if department_id is not None else None,
+    )
 
 
 @router.get("/runtime-context")
@@ -173,7 +185,7 @@ async def restore_system_health(db: AsyncSession = Depends(get_db)):
             for scan in scan_rows:
                 level = str(scan.threat_level or "").lower()
                 if level in {"malicious", "suspicious", "critical", "high"} and not bool(getattr(scan, "is_read", False)):
-                    scan.is_read = True
+                    setattr(scan, "is_read", True)
                     marked_read += 1
             if marked_read:
                 await db.commit()
@@ -695,6 +707,17 @@ def _activity_db():
         return None
 
 
+def _apply_tenant_scope(query, organization_id: Optional[int], department_id: Optional[int]):
+    if organization_id is None:
+        return query
+
+    query = query.join(ClientInstallation, ScanHistory.client_id == ClientInstallation.id)
+    query = query.where(ClientInstallation.organization_id == organization_id)
+    if department_id is not None:
+        query = query.where(ClientInstallation.department_id == department_id)
+    return query
+
+
 def _api_capacity_profile(api_key: str) -> dict:
     defaults = {
         "virustotal": {
@@ -742,6 +765,8 @@ async def options_catch_all(path: str):
 @router.get("/summary")
 async def get_dashboard_summary(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -756,11 +781,9 @@ async def get_dashboard_summary(
     """
     threshold = _get_time_threshold(time_range)
 
-    result = await db.execute(
-        select(ScanHistory)
-        .where(ScanHistory.scan_timestamp >= threshold)
-        .order_by(desc(ScanHistory.scan_timestamp))
-    )
+    query = select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold)
+    query = _apply_tenant_scope(query, organization_id, department_id)
+    result = await db.execute(query.order_by(desc(ScanHistory.scan_timestamp)))
     scans = result.scalars().all()
 
     manual_scans = [s for s in scans if (s.scan_source or "manual") == "manual"]
@@ -836,6 +859,8 @@ async def get_dashboard_summary(
 async def get_dashboard_stats(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
     source: Optional[str] = Query(None, description="Filter: manual | background | all"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Numeric stat breakdown — manual scans by default, filterable by source."""
@@ -893,6 +918,7 @@ async def get_dashboard_stats(
         )
         .where(ScanHistory.scan_timestamp >= threshold)
     )
+    query = _apply_tenant_scope(query, organization_id, department_id)
     if source and source != "all":
         query = query.where(ScanHistory.scan_source == source)
     result = await db.execute(query)
@@ -923,20 +949,18 @@ async def get_dashboard_threats(
     severity: Optional[str] = Query(None, description="Filter: critical | high | medium | low"),
     source: Optional[str] = Query(None, description="Filter: manual | background | all"),
     limit: int = Query(100, ge=1, le=500, description="Max results"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Recent threats with severity / source filtering."""
     threshold = _get_time_threshold(time_range)
-    query = (
-        select(ScanHistory)
-        .where(ScanHistory.scan_timestamp >= threshold)
-        .order_by(desc(ScanHistory.scan_timestamp))
-        .limit(limit)
-    )
+    query = select(ScanHistory).where(ScanHistory.scan_timestamp >= threshold)
+    query = _apply_tenant_scope(query, organization_id, department_id)
     if source and source != "all":
         query = query.where(ScanHistory.scan_source == source)
 
-    result = await db.execute(query)
+    result = await db.execute(query.order_by(desc(ScanHistory.scan_timestamp)).limit(limit))
     scans = result.scalars().all()
 
     threats = []
@@ -1858,6 +1882,76 @@ async def get_audit_telemetry(limit: int = Query(100, ge=1, le=500), event_type:
             "generated_at": utcnow().isoformat() + "Z",
             "warning": "telemetry unavailable",
         }
+
+
+@router.get("/audit-logs")
+async def get_audit_logs(
+    limit: int = Query(100, ge=1, le=500),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    outcome: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("audits.read")),
+):
+    """Return DB-backed audit logs scoped to the current tenant or an admin-selected tenant."""
+    user_org_id, user_dept_id = _dashboard_scope(current_user)
+    is_admin = bool(getattr(current_user, "is_admin", False))
+
+    effective_org_id = organization_id if is_admin and organization_id is not None else user_org_id
+    effective_dept_id = department_id if is_admin and department_id is not None else user_dept_id
+
+    query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if effective_org_id is not None:
+        query = query.where(AuditLog.organization_id == effective_org_id)
+    elif not is_admin:
+        query = query.where(AuditLog.organization_id.is_(None))
+
+    if effective_dept_id is not None:
+        query = query.where(AuditLog.department_id == effective_dept_id)
+    elif not is_admin and user_dept_id is not None:
+        query = query.where(AuditLog.department_id == user_dept_id)
+
+    if action:
+        query = query.where(AuditLog.action == action)
+    if resource_type:
+        query = query.where(AuditLog.resource_type == resource_type)
+    if outcome:
+        query = query.where(AuditLog.outcome == outcome)
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+    items = [
+        {
+            "id": row.id,
+            "organization_id": row.organization_id,
+            "department_id": row.department_id,
+            "actor_user_id": row.actor_user_id,
+            "action": row.action,
+            "resource_type": row.resource_type,
+            "resource_id": row.resource_id,
+            "outcome": row.outcome,
+            "source_ip": row.source_ip,
+            "user_agent": row.user_agent,
+            "before_state": row.before_state,
+            "after_state": row.after_state,
+            "details": row.details,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+    return {
+        "total": len(items),
+        "items": items,
+        "limit": limit,
+        "organization_id": effective_org_id,
+        "department_id": effective_dept_id,
+        "action": action,
+        "resource_type": resource_type,
+        "outcome": outcome,
+        "generated_at": utcnow().isoformat() + "Z",
+    }
 
 
 @router.get("/telemetry/accuracy-metrics")

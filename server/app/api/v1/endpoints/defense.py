@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import logging
 
-from .auth import get_current_user
+from .auth import get_current_user, require_permission
 try:
     from server.app.database import get_db
 except ImportError:
@@ -47,7 +47,7 @@ class BlockRequest(BaseModel):
 @router.post("/event")
 async def receive_defense_event(
     event: DefenseEvent,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(require_permission("alerts.manage")),
     db=Depends(get_db)
 ):
     """
@@ -116,7 +116,7 @@ async def receive_defense_event(
 @router.post("/quarantine")
 async def initiate_quarantine(
     request: QuarantineRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(require_permission("alerts.manage")),
     db=Depends(get_db)
 ):
     """
@@ -141,7 +141,7 @@ async def initiate_quarantine(
             request.client_id,
             'INITIATE' if not request.admin_password else 'LIFT',
             request.reason,
-            current_user['username'],
+            current_user.username,
             datetime.now()
         ))
         db.commit()
@@ -163,7 +163,7 @@ async def initiate_quarantine(
 @router.post("/block")
 async def add_block(
     request: BlockRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(require_permission("alerts.manage")),
     db=Depends(get_db)
 ):
     """
@@ -183,7 +183,7 @@ async def add_block(
             request.target_type,
             request.target,
             request.reason,
-            current_user['username'],
+            current_user.username,
             datetime.now()
         ))
         db.commit()
@@ -205,7 +205,7 @@ async def add_block(
 @router.get("/status/{client_id}")
 async def get_defense_status(
     client_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(require_permission("alerts.read")),
     db=Depends(get_db)
 ):
     """
@@ -278,7 +278,7 @@ async def get_defense_status(
 
 @router.get("/statistics")
 async def get_defense_statistics(
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(require_permission("alerts.read")),
     db=Depends(get_db)
 ):
     """

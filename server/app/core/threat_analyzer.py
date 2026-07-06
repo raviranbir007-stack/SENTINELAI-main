@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from ..services.abuseipdb import AbuseIPDBService
 from ..services.hybrid_analysis import HybridAnalysisService
@@ -27,17 +27,26 @@ from .corroboration_engine import corroboration_engine
 from .security_telemetry import security_telemetry
 from .alert_suppression import alert_suppression_engine
 
+get_anomaly_model: Callable[[], Any] | None = None
+get_threat_model: Callable[[], Any] | None = None
+
 # Import ML models
 try:
-    from ..ml_models import get_anomaly_model, get_threat_model
+    from ..ml_models import get_anomaly_model as _get_anomaly_model, get_threat_model as _get_threat_model
+
+    get_anomaly_model = _get_anomaly_model
+    get_threat_model = _get_threat_model
     ML_MODELS_AVAILABLE = True
 except ImportError:
     ML_MODELS_AVAILABLE = False
     logging.warning("ML models not available")
 
 # Import AI analyzer
+AIAnalyzer: type[Any] | None = None
 try:
-    from ..ai_engine.analyzer import ThreatAnalyzer as AIAnalyzer
+    from ..ai_engine.analyzer import ThreatAnalyzer as _AIAnalyzer
+
+    AIAnalyzer = _AIAnalyzer
     AI_ANALYZER_AVAILABLE = True
 except ImportError:
     AI_ANALYZER_AVAILABLE = False
@@ -48,6 +57,10 @@ logger = logging.getLogger(__name__)
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 ALL_EXTERNAL_APIS = [
@@ -108,7 +121,7 @@ class ThreatAnalyzer:
         self.hybrid_analysis = HybridAnalysisService()
         
         # Initialize ML models if available, else raise error (ML required)
-        if ML_MODELS_AVAILABLE:
+        if ML_MODELS_AVAILABLE and callable(get_anomaly_model) and callable(get_threat_model):
             try:
                 self.anomaly_model = get_anomaly_model()
                 self.threat_model = get_threat_model()
@@ -121,7 +134,7 @@ class ThreatAnalyzer:
             raise RuntimeError("ML models are required but not available.")
         
         # Initialize AI analyzer if available
-        if AI_ANALYZER_AVAILABLE:
+        if AI_ANALYZER_AVAILABLE and AIAnalyzer is not None:
             try:
                 self.ai_analyzer = AIAnalyzer()
                 logger.debug("AI analyzer initialized successfully")
@@ -557,8 +570,24 @@ class ThreatAnalyzer:
             if isinstance(meta, dict) and meta.get("status") in {"checked", "clean", "no_threat"}
         ]
 
-        confidence = float(result.get("confidence", 0.0) or 0.0)
-        verdict = str(result.get("verdict", "unknown")).lower()
+        # CRITICAL FIX: Validate verdict and confidence with safe type conversion
+        try:
+            confidence = float(result.get("confidence", 0.0) or 0.0)
+            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0,1]
+        except (TypeError, ValueError):
+            confidence = 0.0
+        
+        verdict_raw = result.get("verdict", "unknown")
+        try:
+            verdict = str(verdict_raw or "unknown").lower().strip()
+        except (TypeError, AttributeError):
+            verdict = "unknown"
+        
+        # Validate verdict is in allowed set
+        ALLOWED_VERDICTS = {"clean", "suspicious", "malicious", "critical", "unknown"}
+        if verdict not in ALLOWED_VERDICTS:
+            verdict = "unknown"
+        
         if verdict in {"malicious", "critical"} and detection_source_count >= 2:
             action = "block_or_quarantine"
         elif verdict == "suspicious" and confidence >= 0.65 and detection_source_count >= 2:
@@ -598,7 +627,7 @@ class ThreatAnalyzer:
         self,
         result: Dict[str, Any],
         threats: List[Dict[str, Any]],
-        corroboration_analysis: Dict[str, Any] = None,
+        corroboration_analysis: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Construct enriched forensic analysis block for every scan."""
         api_results = result.get("api_results", {}) or {}
@@ -893,11 +922,27 @@ class ThreatAnalyzer:
         if display_name not in attempted:
             attempted.append(display_name)
 
-        # Ensure only dicts are stored; non-dict responses (e.g. raw JSON arrays
-        # from Hybrid Analysis) are treated as errors so .get() never fails later.
-        if not isinstance(response, dict):
-            response = {"error": f"Unexpected response type: {type(response).__name__}"}
-
+        # CRITICAL FIX: Enforce response is dict - NEVER pass non-dict to downstream code
+        if response is None:
+            response = {"error": "API returned null"}
+        elif not isinstance(response, dict):
+            try:
+                if isinstance(response, str):
+                    response = {"error": response}
+                elif isinstance(response, list):
+                    response = {"error": f"API returned list instead of dict: {len(response)} items"}
+                else:
+                    response = {"error": f"API returned {type(response).__name__} instead of dict"}
+            except Exception as e:
+                response = {"error": f"Failed to parse response: {str(e)}"}
+        
+        # Validate critical fields exist
+        if "error" not in response and not any(k in response for k in ["data", "results", "verdict", "status"]):
+            response["error"] = "API response missing expected fields"
+        
+        # CRITICAL: Never allow None to propagate
+        response = response or {"error": "Empty API response"}
+        
         api_results[api_key] = response
 
         error_message = ""
@@ -1046,7 +1091,7 @@ class ThreatAnalyzer:
                 analysis_result = await self._analyze_domain(normalized_value, analysis_result)
 
             elif input_type == InputType.FILE_HASH:
-                hash_type = metadata.get("hash_type")
+                hash_type = str((metadata or {}).get("hash_type") or "sha256")
                 analysis_result = await self._analyze_file_hash(
                     normalized_value, hash_type, analysis_result
                 )
@@ -1083,10 +1128,39 @@ class ThreatAnalyzer:
             }
 
         except Exception as e:
-            logger.error(f"Error analyzing {normalized_value}: {str(e)}")
+            logger.error(f"Error analyzing {normalized_value}: {str(e)}", exc_info=True)
+            # Fallback to SUSPICIOUS with complete metadata
             analysis_result["verdict"] = ThreatLevel.SUSPICIOUS
-            analysis_result["summary"] = f"Error during analysis: {str(e)}"
-
+            analysis_result["confidence"] = 0.0  # Low confidence due to error
+            analysis_result["summary"] = f"Analysis error - manual review required: {str(e)[:100]}"
+            
+            # CRITICAL: Ensure all required fields exist for downstream processing
+            if "api_results" not in analysis_result:
+                analysis_result["api_results"] = {}
+            if "threat_indicators" not in analysis_result:
+                analysis_result["threat_indicators"] = []
+            if "forensic_metadata" not in analysis_result:
+                analysis_result["forensic_metadata"] = {
+                    "corroboration_count": 0,
+                    "corroboration_threshold_met": False,
+                    "evidence_sources": [],
+                    "apis_checked": 0,
+                    "scan_coverage": "0/0 APIs (error)",
+                    "error_cause": str(e)[:100],
+                }
+            
+            # Add warning flag
+            analysis_result.setdefault("warnings", []).append(f"Analysis error: {str(e)[:80]}")
+        
+        # Final validation before return
+        if not analysis_result.get("verdict"):
+            analysis_result["verdict"] = ThreatLevel.CLEAN
+        try:
+            confidence = float(analysis_result.get("confidence", 0.0) or 0.0)
+            analysis_result["confidence"] = max(0.0, min(1.0, confidence))
+        except (TypeError, ValueError):
+            analysis_result["confidence"] = 0.0
+        
         return analysis_result
 
     def _is_local_or_private_target(self, input_type: InputType, value: str) -> bool:
@@ -1256,8 +1330,8 @@ class ThreatAnalyzer:
                 if api_key == "abuseipdb":
                     abuseipdb_result = await self.abuseipdb.check_ip(ip)
                     self._track_api_result(result, api_key, api_name, abuseipdb_result, warnings)
-                    if abuseipdb_result and abuseipdb_result.get("data"):
-                        data = abuseipdb_result.get("data", {})
+                    if isinstance(abuseipdb_result, dict) and abuseipdb_result.get("data"):
+                        data = _as_dict(abuseipdb_result.get("data"))
                         abuse_score = data.get("abuseConfidenceScore", 0)
                         if abuse_score > 75:
                             threats.append({"source": api_name, "severity": "critical", "indicator": f"High abuse confidence score: {abuse_score}%", "score": abuse_score})
@@ -1788,10 +1862,11 @@ class ThreatAnalyzer:
                 if api_key == "virustotal":
                     vt_result = await self.virustotal.scan_url(url)
                     self._track_api_result(result, api_key, api_name, vt_result, warnings)
-                    if vt_result and not vt_result.get("error"):
+                    if isinstance(vt_result, dict) and not vt_result.get("error"):
                         if "data" in vt_result:
-                            attributes = vt_result.get("data", {}).get("attributes", {})
-                            analysis = attributes.get("stats") or attributes.get("last_analysis_stats", {})
+                            vt_data = _as_dict(vt_result.get("data"))
+                            attributes = _as_dict(vt_data.get("attributes"))
+                            analysis = _as_dict(attributes.get("stats") or attributes.get("last_analysis_stats"))
                             malicious = analysis.get("malicious", 0)
                             suspicious = analysis.get("suspicious", 0)
                             harmless = analysis.get("harmless", 0)
@@ -1815,14 +1890,15 @@ class ThreatAnalyzer:
                         try:
                             import asyncio
 
+                            uuid = str(urlscan_result.get("uuid") or "")
                             await asyncio.sleep(1.5)
-                            fetched_result = await self.urlscan.get_results(urlscan_result.get("uuid"))
+                            fetched_result = await self.urlscan.get_results(uuid)
                             if isinstance(fetched_result, dict) and not fetched_result.get("error"):
                                 effective_result = fetched_result
                             else:
                                 logger.debug(
                                     "URLScan results not yet ready for uuid=%s; keeping submission payload",
-                                    urlscan_result.get("uuid"),
+                                    uuid,
                                 )
                         except Exception as fetch_err:
                             logger.debug("URLScan result fetch attempt failed: %s", fetch_err)
@@ -1832,13 +1908,12 @@ class ThreatAnalyzer:
                         if "uuid" in effective_result:
                             logger.debug(f"URLScan.io scan submitted successfully: {effective_result.get('uuid')}")
                         if isinstance(effective_result, dict) and "data" in effective_result:
-                            result_data = effective_result.get("data", {})
-                            classifications = result_data.get("classifications", {})
-                            if isinstance(classifications, dict):
-                                if classifications.get("phishing"):
-                                    threats.append({"source": api_name, "severity": "critical", "indicator": "Phishing site detected"})
-                                if classifications.get("malware"):
-                                    threats.append({"source": api_name, "severity": "critical", "indicator": "Malware detected"})
+                            result_data = _as_dict(effective_result.get("data"))
+                            classifications = _as_dict(result_data.get("classifications"))
+                            if classifications.get("phishing"):
+                                threats.append({"source": api_name, "severity": "critical", "indicator": "Phishing site detected"})
+                            if classifications.get("malware"):
+                                threats.append({"source": api_name, "severity": "critical", "indicator": "Malware detected"})
                 elif api_key == "abuseipdb":
                     enrichment_ip = self._resolve_public_ip(url, "url")
                     if enrichment_ip:
@@ -2130,9 +2205,10 @@ class ThreatAnalyzer:
                 if api_key == "virustotal":
                     vt_result = await self.virustotal.scan_domain(domain)
                     self._track_api_result(result, api_key, api_name, vt_result, warnings)
-                    if vt_result and not vt_result.get("error"):
-                        attrs = (vt_result.get("data") or {}).get("attributes", {})
-                        stats = attrs.get("last_analysis_stats") or attrs.get("stats") or {}
+                    if isinstance(vt_result, dict) and not vt_result.get("error"):
+                        vt_data = _as_dict(vt_result.get("data"))
+                        attrs = _as_dict(vt_data.get("attributes"))
+                        stats = _as_dict(attrs.get("last_analysis_stats") or attrs.get("stats"))
                         malicious = int(stats.get("malicious", 0) or 0)
                         suspicious = int(stats.get("suspicious", 0) or 0)
                         harmless = int(stats.get("harmless", 0) or 0)
@@ -2150,11 +2226,15 @@ class ThreatAnalyzer:
                         malicious_hits = 0
                         suspicious_hits = 0
                         for item in results[:10]:
-                            verdicts = (item or {}).get("verdicts", {})
-                            overall = verdicts.get("overall", {}) if isinstance(verdicts, dict) else {}
-                            score = overall.get("score", 0) if isinstance(overall, dict) else 0
-                            is_mal = bool(overall.get("malicious", False)) if isinstance(overall, dict) else False
-                            tags = (item or {}).get("tags", [])
+                            if not isinstance(item, dict):
+                                continue
+                            verdicts = _as_dict(item.get("verdicts"))
+                            overall = _as_dict(verdicts.get("overall"))
+                            score = overall.get("score", 0)
+                            is_mal = bool(overall.get("malicious", False))
+                            tags = item.get("tags", [])
+                            if not isinstance(tags, list):
+                                tags = []
                             if is_mal:
                                 malicious_hits += 1
                             elif int(score or 0) > 0 or any(str(t).lower() in {"phishing", "malware", "suspicious"} for t in (tags or [])):
@@ -2282,13 +2362,11 @@ class ThreatAnalyzer:
                 if api_key == "virustotal":
                     vt_result = await self.virustotal.scan_file(file_hash)
                     self._track_api_result(result, api_key, api_name, vt_result, warnings)
-                    if vt_result and not vt_result.get("error"):
+                    if isinstance(vt_result, dict) and not vt_result.get("error"):
                         if "data" in vt_result:
-                            analysis = (
-                                vt_result.get("data", {})
-                                .get("attributes", {})
-                                .get("last_analysis_stats", {})
-                            )
+                            vt_data = _as_dict(vt_result.get("data"))
+                            attributes = _as_dict(vt_data.get("attributes"))
+                            analysis = _as_dict(attributes.get("last_analysis_stats"))
                             malicious = analysis.get("malicious", 0)
                             suspicious = analysis.get("suspicious", 0)
                             if malicious > 0:
@@ -2298,10 +2376,14 @@ class ThreatAnalyzer:
                 elif api_key == "hybrid_analysis":
                     ha_result = await self.hybrid_analysis.search_hash(file_hash)
                     self._track_api_result(result, api_key, api_name, ha_result, warnings)
-                    if ha_result and not ha_result.get("error"):
+                    if isinstance(ha_result, dict) and not ha_result.get("error"):
                         results = ha_result.get("results", [])
+                        if not isinstance(results, list):
+                            results = []
                         if results:
                             for item in results:
+                                if not isinstance(item, dict):
+                                    continue
                                 verdict = item.get("verdict")
                                 threat_score = item.get("threat_score", 0)
                                 if verdict == "malicious" or threat_score > 75:
@@ -2608,7 +2690,7 @@ class ThreatAnalyzer:
         sequence: List[Dict[str, Any]] = []
         seen = set()
 
-        def add_event(timestamp: str, stage: str, source: str, details: str, confidence: float = 0.0) -> None:
+        def add_event(timestamp: str | None, stage: str, source: str, details: str, confidence: float = 0.0) -> None:
             normalized_timestamp = str(timestamp or "").strip() or utcnow().isoformat()
             key = (normalized_timestamp, stage, source, details)
             if key in seen:
@@ -2975,6 +3057,8 @@ class ThreatAnalyzer:
             for api_name in apis_called:
                 api_key = api_name.lower().replace(".", "_").replace(" ", "_")
                 api_data = api_results.get(api_key, {})
+                if not isinstance(api_data, dict):
+                    api_data = {}
                 
                 source_info = {
                     "source": api_name,
@@ -3357,35 +3441,40 @@ class ThreatAnalyzer:
         # Enhanced: Apply Multi-API Corroboration Analysis
         try:
             api_results_dict = result.get("api_results", {})
+            if not isinstance(api_results_dict, dict):
+                api_results_dict = {}
             corroboration_analysis = corroboration_engine.analyze_corroboration(
                 api_results=api_results_dict,
                 threat_indicators=threats,
-                input_type=result.get("input_type")
+                input_type=str(result.get("input_type") or "unknown")
             )
+            if not isinstance(corroboration_analysis, dict):
+                corroboration_analysis = {}
             
             # Add corroboration analysis to result
             result["corroboration_analysis"] = corroboration_analysis
             
             # Override verdict if corroboration engine has higher confidence
-            if corroboration_analysis['verdict']['confidence'] > result['confidence']:
+            verdict_info = corroboration_analysis.get("verdict", {})
+            if isinstance(verdict_info, dict) and float(verdict_info.get("confidence", 0.0) or 0.0) > float(result.get("confidence", 0.0) or 0.0):
                 logger.debug(
                     f"Corroboration engine override: {result['verdict']} -> "
-                    f"{corroboration_analysis['verdict']['classification']} "
-                    f"(confidence: {result['confidence']:.2f} -> "
-                    f"{corroboration_analysis['verdict']['confidence']:.2f})"
+                    f"{verdict_info.get('classification')} "
+                    f"(confidence: {float(result.get('confidence', 0.0) or 0.0):.2f} -> "
+                    f"{float(verdict_info.get('confidence', 0.0) or 0.0):.2f})"
                 )
-                result['verdict'] = corroboration_analysis['verdict']['classification']
-                result['confidence'] = corroboration_analysis['verdict']['confidence']
-                result['summary'] = corroboration_analysis['verdict']['explanation']
+                result['verdict'] = verdict_info.get('classification')
+                result['confidence'] = verdict_info.get('confidence')
+                result['summary'] = verdict_info.get('explanation')
             
             # Add actionable recommendations
-            result['recommendations'] = corroboration_analysis['recommendations']
+            result['recommendations'] = corroboration_analysis.get('recommendations', [])
             
             # Add corroboration flags
-            result['flags'] = corroboration_analysis['flags']
+            result['flags'] = corroboration_analysis.get('flags', {})
 
             # Confidence-weighted verdict fusion (local + APIs + corroboration)
-            corroboration_conf = float(corroboration_analysis.get('verdict', {}).get('confidence', 0.0) or 0.0)
+            corroboration_conf = float((verdict_info if isinstance(verdict_info, dict) else {}).get('confidence', 0.0) or 0.0)
             fused_conf = (
                 (result.get('confidence', 0.0) * 0.40)
                 + (weighted_fusion_confidence * 0.30)
@@ -3393,11 +3482,13 @@ class ThreatAnalyzer:
             )
             result['confidence'] = max(0.0, min(1.0, round(fused_conf, 3)))
             
-            logger.debug(
-                f"Corroboration: {corroboration_analysis['corroboration']['level'].upper()} "
-                f"({corroboration_analysis['corroboration']['source_count']} sources, "
-                f"weighted score: {corroboration_analysis['corroboration']['weighted_score']:.2f})"
-            )
+            corroboration_block = corroboration_analysis.get('corroboration', {})
+            if isinstance(corroboration_block, dict):
+                logger.debug(
+                    f"Corroboration: {str(corroboration_block.get('level', 'unknown')).upper()} "
+                    f"({corroboration_block.get('source_count', 0)} sources, "
+                    f"weighted score: {float(corroboration_block.get('weighted_score', 0.0) or 0.0):.2f})"
+                )
             
         except Exception as e:
             logger.error(f"Error in corroboration analysis: {e}")

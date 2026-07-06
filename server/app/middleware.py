@@ -11,7 +11,7 @@ import time
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Tuple, Optional, DefaultDict, cast
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -32,7 +32,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         app: Callable,
         requests_per_minute: int = 4800,  # Default 80 req/sec - much higher for dashboard
         cleanup_interval: int = 300,  # Clean old IPs every 5 min
-        exempt_paths: list[str] = None,
+        exempt_paths: Optional[list[str]] = None,
     ):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
@@ -65,7 +65,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.request_times = defaultdict(list)
         self.last_cleanup = time.time()
         # Per-IP log throttling state for repeated rate-limit hits.
-        self._rate_limit_log_state: Dict[str, Dict[str, float]] = defaultdict(
+        self._rate_limit_log_state: DefaultDict[str, Dict[str, float]] = defaultdict(
             lambda: {"last_log_at": 0.0, "suppressed": 0.0}
         )
         self._rate_limit_log_interval = 3600.0
@@ -75,7 +75,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._temporary_block_seconds = int(os.getenv("SENTINEL_TEMP_BLOCK_SECONDS", "900") or 900)
         self._ip_suspicion_events: Dict[str, list[tuple[float, int, str, str]]] = defaultdict(list)
         self._temporarily_blocked_ips: Dict[str, float] = {}
-        self._blocked_log_state: Dict[str, Dict[str, float]] = defaultdict(
+        self._blocked_log_state: DefaultDict[str, Dict[str, float]] = defaultdict(
             lambda: {"last_log_at": 0.0, "suppressed": 0.0}
         )
         self._blocked_log_interval = 3600.0
@@ -296,8 +296,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _log_temporary_block_hit(self, client_ip: str, path: str, now: float) -> None:
         """Log temporary-block hits with duplicate suppression to avoid floods."""
         state = self._blocked_log_state[client_ip]
-        last_log_at = float(state.get("last_log_at", 0.0) or 0.0)
-        suppressed = int(state.get("suppressed", 0) or 0)
+        last_log_at_val = state.get("last_log_at")
+        try:
+            last_log_at = float(last_log_at_val or 0.0)
+        except Exception:
+            last_log_at = 0.0
+        suppressed_val = state.get("suppressed")
+        try:
+            suppressed = int(suppressed_val or 0)
+        except Exception:
+            suppressed = 0
         if (now - last_log_at) >= self._blocked_log_interval:
             state["last_log_at"] = now
             state["suppressed"] = 0
@@ -435,8 +443,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _log_rate_limit_exceeded(self, client_ip: str, request_count: int, now: float) -> None:
         """Emit compact rate-limit warning and suppress high-frequency duplicates."""
         state = self._rate_limit_log_state[client_ip]
-        last_log_at = float(state.get("last_log_at", 0.0) or 0.0)
-        suppressed = int(state.get("suppressed", 0) or 0)
+        last_log_at_val = state.get("last_log_at")
+        try:
+            last_log_at = float(last_log_at_val or 0.0)
+        except Exception:
+            last_log_at = 0.0
+        suppressed_val = state.get("suppressed")
+        try:
+            suppressed = int(suppressed_val or 0)
+        except Exception:
+            suppressed = 0
 
         if (now - last_log_at) >= self._rate_limit_log_interval:
             state["last_log_at"] = now
@@ -575,8 +591,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         now = time.time()
         key = (client_ip, int(status_code))
         state = self._error_log_state[key]
-        last_log_at = float(state.get("last_log_at", 0.0) or 0.0)
-        suppressed = int(state.get("suppressed", 0) or 0)
+        last_log_at_val = state.get("last_log_at")
+        try:
+            last_log_at = float(last_log_at_val or 0.0)
+        except Exception:
+            last_log_at = 0.0
+        suppressed_val = state.get("suppressed")
+        try:
+            suppressed = int(suppressed_val or 0)
+        except Exception:
+            suppressed = 0
 
         if (now - last_log_at) >= self._error_log_interval:
             if suppressed > 0:

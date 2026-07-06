@@ -1,6 +1,7 @@
 
 from fastapi import Body
 from fastapi import APIRouter
+from typing import Any, cast
 
 router = APIRouter()
 
@@ -30,7 +31,8 @@ async def mark_scan_as_read(scan_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == scan_id))
     scan_obj = result.scalar_one_or_none()
     if scan_obj:
-        scan_obj.is_read = True
+        scan_runtime = cast(Any, scan_obj)
+        scan_runtime.is_read = True
         await db.commit()
         return {"status": "ok", "scan_id": scan_id, "is_read": True, "system_health": _get_system_health_status(db)}
     return {"status": "not_found", "scan_id": scan_id, "system_health": _get_system_health_status(db)}
@@ -47,7 +49,8 @@ async def mark_all_scans_as_read(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(ScanHistory))
     scan_objs = result.scalars().all()
     for scan_obj in scan_objs:
-        scan_obj.is_read = True
+        scan_runtime = cast(Any, scan_obj)
+        scan_runtime.is_read = True
     await db.commit()
     return {"status": "ok", "all_marked_read": True, "system_health": "normal"}
 
@@ -62,7 +65,7 @@ def _get_system_health_status(db):
         # Check DB
         result = asyncio.get_event_loop().run_until_complete(db.execute(select(ScanHistory)))
         scan_objs = result.scalars().all()
-        if any(not s.is_read for s in scan_objs):
+        if any(not getattr(s, "is_read", False) for s in scan_objs):
             return "degraded"
         return "normal"
     except Exception:
@@ -1115,6 +1118,7 @@ async def get_scan_history(
             scan_id = str(row.scan_id or "")
             if scan_id and scan_id in existing_ids:
                 continue
+            row_runtime = cast(Any, row)
             items.append(
                 {
                     "scan_id": row.scan_id,
@@ -1124,10 +1128,10 @@ async def get_scan_history(
                     "status": row.status or "complete",
                     "threat_level": row.threat_level or "unknown",
                     "verdict": row.threat_level or "unknown",
-                    "confidence": float(row.confidence or 0.0),
-                    "threats_detected": int(row.threats_detected or 0),
+                    "confidence": float(row_runtime.confidence or 0.0),
+                    "threats_detected": int(row_runtime.threats_detected or 0),
                     "scan_source": row.scan_source or "manual",
-                    "timestamp": row.scan_timestamp.isoformat() if row.scan_timestamp else None,
+                    "timestamp": row_runtime.scan_timestamp.isoformat() if row_runtime.scan_timestamp is not None else None,
                     "is_read": bool(getattr(row, "is_read", False)),
                     "analysis": row.analysis_data or {},
                 }
@@ -1679,22 +1683,24 @@ async def get_scan_results(scan_id: str):
             # Build human-readable status message
             if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
                 status_message = "provider data collected successfully"
+            elif status == "not_executed":
+                status_message = "provider not executed in this scan window"
             elif explanation and status == "not_applicable":
-                status_message = "intelligence fallback active (reason: test/demo domain; provider not queried)"
+                status_message = "provider not applicable for this input type"
             elif status == "not_configured":
-                status_message = "intelligence fallback active (reason: provider key not configured in environment)"
+                status_message = "provider key not configured in environment"
             elif status == "rate_limited":
-                status_message = "intelligence fallback active (reason: provider quota or rate limit reached)"
+                status_message = "provider quota or rate limit reached"
             elif status == "skipped_local_mode":
-                status_message = "intelligence fallback active (reason: external APIs disabled for local-only analysis)"
+                status_message = "external APIs intentionally disabled for local-only analysis"
             elif not applicable:
-                status_message = f"intelligence fallback active (reason: indicator type is outside provider coverage)"
+                status_message = "indicator type is outside provider coverage"
             elif status in {"pending", "in_progress", "queued"}:
-                status_message = f"intelligence fallback active (reason: provider analysis did not complete in this scan window)"
+                status_message = "provider analysis did not complete in this scan window"
             elif status in {"timeout", "error", "failed", "not_applicable"}:
-                status_message = f"intelligence fallback active (reason: provider request failed during collection)"
+                status_message = "provider request failed during collection"
             else:
-                status_message = f"intelligence fallback active (reason: provider returned unrecognized status: {status})"
+                status_message = f"provider status recorded as {status}"
             
             lines.append(f"- {name}: {status_message}{' | error: ' + error if error else ''}")
         api_coverage_section = "\n".join(lines)

@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Table,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,6 +33,142 @@ class ThreatStatus(enum.Enum):
     FALSE_POSITIVE = "false_positive"
 
 
+user_roles = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+)
+
+
+role_permissions = Table(
+    "role_permissions",
+    Base.metadata,
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+    Column("permission_id", Integer, ForeignKey("permissions.id"), primary_key=True),
+)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, unique=True, index=True)
+    slug = Column(String(120), nullable=False, unique=True, index=True)
+    description = Column(Text)
+    retention_days = Column(Integer, default=90)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    departments = relationship("Department", back_populates="organization", cascade="all, delete-orphan")
+    users = relationship("User", back_populates="organization")
+    policies = relationship("Policy", back_populates="organization")
+    audit_logs = relationship("AuditLog", back_populates="organization")
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    slug = Column(String(120), nullable=False, index=True)
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    organization = relationship("Organization", back_populates="departments")
+    users = relationship("User", back_populates="department")
+    clients = relationship("ClientInstallation", back_populates="department")
+    policies = relationship("Policy", back_populates="department")
+
+
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(120), nullable=False, unique=True, index=True)
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    roles = relationship("Role", secondary=role_permissions, back_populates="permissions")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(80), nullable=False, unique=True, index=True)
+    description = Column(Text)
+    is_system = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    users = relationship("User", secondary=user_roles, back_populates="roles")
+    permissions = relationship("Permission", secondary=role_permissions, back_populates="roles")
+
+
+class Policy(Base):
+    __tablename__ = "policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    name = Column(String(120), nullable=False)
+    policy_type = Column(String(80), nullable=False, index=True)
+    enabled = Column(Boolean, default=True)
+    version = Column(Integer, default=1)
+    rules = Column(JSON, nullable=False, default=dict)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    organization = relationship("Organization", back_populates="policies")
+    department = relationship("Department", back_populates="policies")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    action = Column(String(120), nullable=False, index=True)
+    resource_type = Column(String(120), nullable=False, index=True)
+    resource_id = Column(String(120), nullable=True, index=True)
+    outcome = Column(String(50), nullable=False, default="success")
+    source_ip = Column(String(45))
+    user_agent = Column(Text)
+    before_state = Column(JSON)
+    after_state = Column(JSON)
+    details = Column(JSON)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization = relationship("Organization", back_populates="audit_logs")
+
+
+class EnrollmentToken(Base):
+    __tablename__ = "enrollment_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)
+    token_prefix = Column(String(32), nullable=False, index=True)
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    organization = relationship("Organization")
+    department = relationship("Department")
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -42,10 +179,15 @@ class User(Base):
     full_name = Column(String(100))
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
+    organization = relationship("Organization", back_populates="users")
+    department = relationship("Department", back_populates="users")
+    roles = relationship("Role", secondary=user_roles, back_populates="users")
     threats = relationship("Threat", back_populates="detected_by", foreign_keys="[Threat.detected_by_id]")
     overridden_threats = relationship("Threat", foreign_keys="[Threat.analyst_override_by_id]")
     logs = relationship("SystemLog", back_populates="user")
@@ -206,6 +348,8 @@ class ClientInstallation(Base):
     mac_address = Column(String(17))
     os_type = Column(String(50))  # Windows, Linux, macOS
     os_version = Column(String(100))
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
     
     # Network information
     network_segment = Column(String(50))  # e.g., 192.168.1.0/24
@@ -224,6 +368,8 @@ class ClientInstallation(Base):
     blocked_domains = Column(JSON)  # List of domains blocked
     
     # Relationships
+    organization = relationship("Organization")
+    department = relationship("Department", back_populates="clients")
     scans = relationship("ScanHistory", back_populates="client")
     attacks = relationship("AttackEvent", back_populates="target_client")
 

@@ -5,9 +5,9 @@ from pathlib import Path
 
 from .config import settings
 
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -86,12 +86,11 @@ if is_sqlite_async:
             cursor.close()
 
 # Create async session factory
-AsyncSessionLocal = sessionmaker(
+AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autoflush=False,
-    autocommit=False,
 )
 
 # Base class for models
@@ -122,6 +121,10 @@ async def init_db():
         # Safe column migrations — add new columns that might not exist in older DBs
         safe_migrations = [
             "ALTER TABLE scan_history ADD COLUMN scan_source VARCHAR(20) DEFAULT 'manual'",
+            "ALTER TABLE users ADD COLUMN organization_id INTEGER",
+            "ALTER TABLE users ADD COLUMN department_id INTEGER",
+            "ALTER TABLE client_installations ADD COLUMN organization_id INTEGER",
+            "ALTER TABLE client_installations ADD COLUMN department_id INTEGER",
             (
                 "UPDATE scan_history "
                 "SET scan_source = 'client_protection' "
@@ -140,6 +143,118 @@ async def init_db():
                     pass  # Column already present — ignore
                 else:
                     logger.debug(f"Migration skipped ({stmt[:50]}): {e}")
+
+    # Seed the default tenant and identity catalog so the platform starts usable.
+    try:
+        from .models import (
+            Department,
+            Policy,
+            Organization,
+            Permission,
+            Role,
+        )
+        from .core.policy_manager import DEFAULT_POLICY_RULES
+
+        default_permissions = {
+            "users.read": "View users and identity records",
+            "users.manage": "Create and update users and roles",
+            "devices.read": "View endpoint inventory",
+            "devices.manage": "Enroll, update, or disable endpoints",
+            "alerts.read": "View alerts and incidents",
+            "alerts.manage": "Acknowledge, escalate, or close alerts",
+            "reports.read": "View reports and dashboards",
+            "reports.export": "Export reports and evidence",
+            "policies.read": "View policies and control settings",
+            "policies.manage": "Create and update policies",
+            "audits.read": "View audit logs and compliance history",
+        }
+        role_permissions = {
+            "admin": set(default_permissions.keys()),
+            "analyst": {"alerts.read", "reports.read", "reports.export", "devices.read", "audits.read"},
+            "responder": {"alerts.read", "alerts.manage", "devices.read", "devices.manage", "audits.read"},
+            "auditor": {"alerts.read", "reports.read", "reports.export", "audits.read"},
+            "standard_user": {"alerts.read", "reports.read"},
+        }
+
+        async with AsyncSessionLocal() as session:
+            org_result = await session.execute(select(Organization).where(Organization.slug == "sentinel-default"))
+            organization = org_result.scalar_one_or_none()
+            if organization is None:
+                organization = Organization(
+                    name=settings.PROJECT_NAME,
+                    slug="sentinel-default",
+                    description="Default organization created on startup",
+                    retention_days=90,
+                    is_active=True,
+                )
+                session.add(organization)
+                await session.flush()
+
+            dept_result = await session.execute(
+                select(Department).where(
+                    Department.organization_id == organization.id,
+                    Department.slug == "general",
+                )
+            )
+            department = dept_result.scalar_one_or_none()
+            if department is None:
+                department = Department(
+                    organization_id=organization.id,
+                    name="General",
+                    slug="general",
+                    description="Default department",
+                    is_active=True,
+                )
+                session.add(department)
+                await session.flush()
+
+            permissions = {}
+            for code, description in default_permissions.items():
+                perm_result = await session.execute(select(Permission).where(Permission.code == code))
+                permission = perm_result.scalar_one_or_none()
+                if permission is None:
+                    permission = Permission(code=code, description=description)
+                    session.add(permission)
+                    await session.flush()
+                permissions[code] = permission
+
+            for role_name, permission_codes in role_permissions.items():
+                role_result = await session.execute(select(Role).where(Role.name == role_name))
+                role = role_result.scalar_one_or_none()
+                if role is None:
+                    role = Role(name=role_name, description=f"System role: {role_name}", is_system=True)
+                    session.add(role)
+                    await session.flush()
+                current_codes = {permission.code for permission in role.permissions}
+                for code in permission_codes:
+                    permission = permissions[code]
+                    if code not in current_codes:
+                        role.permissions.append(permission)
+
+            policy_result = await session.execute(
+                select(Policy).where(
+                    Policy.organization_id == organization.id,
+                    Policy.department_id.is_(None),
+                    Policy.policy_type == "detection",
+                    Policy.name == "Default Detection Policy",
+                )
+            )
+            policy = policy_result.scalar_one_or_none()
+            if policy is None:
+                policy = Policy(
+                    organization_id=organization.id,
+                    department_id=None,
+                    name="Default Detection Policy",
+                    policy_type="detection",
+                    enabled=True,
+                    version=1,
+                    rules=DEFAULT_POLICY_RULES,
+                )
+                session.add(policy)
+
+            await session.commit()
+    except Exception as exc:
+        logger.debug("Default tenant seeding skipped: %s", exc)
 
 
 async def close_db():

@@ -18,7 +18,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....database import get_db
-from ....models import SystemLog
+from ....models import ClientInstallation, SystemLog, User
+from .auth import require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +51,64 @@ def _adb():
         return None
 
 
+def _monitoring_scope(user: User, organization_id: Optional[int], department_id: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+    user_org_id = getattr(user, "organization_id", None)
+    user_dept_id = getattr(user, "department_id", None)
+    is_admin = bool(getattr(user, "is_admin", False))
+    effective_org_id = organization_id if is_admin and organization_id is not None else user_org_id
+    effective_dept_id = department_id if is_admin and department_id is not None else user_dept_id
+    return effective_org_id, effective_dept_id
+
+
+async def _tenant_client_scope(db: AsyncSession, organization_id: Optional[int], department_id: Optional[int]) -> tuple[set[str], set[int]]:
+    if organization_id is None:
+        return set(), set()
+
+    query = select(ClientInstallation.client_id, ClientInstallation.ip_address).where(ClientInstallation.organization_id == organization_id)
+    if department_id is not None:
+        query = query.where(ClientInstallation.department_id == department_id)
+    result = await db.execute(query)
+    client_ids: set[str] = set()
+    client_ips: set[int] = set()
+    for client_id, ip_address in result.all():
+        if client_id:
+            client_ids.add(str(client_id))
+        if ip_address:
+            client_ips.add(str(ip_address))
+    return client_ids, client_ips
+
+
+def _details_match_tenant(details: dict, client_ids: set[str], client_ips: set[str]) -> bool:
+    if not client_ids and not client_ips:
+        return True
+    details = details or {}
+    candidate_values = [
+        details.get("client_id"),
+        details.get("host_ip"),
+        details.get("source_ip"),
+        details.get("destination_ip"),
+        details.get("ip_address"),
+    ]
+    for value in candidate_values:
+        if value is None:
+            continue
+        text = str(value)
+        if text in client_ids or text in client_ips:
+            return True
+    return False
+
+
+def _filter_websites_by_tenant(items: list[dict], client_ips: set[str]) -> list[dict]:
+    if not client_ips:
+        return items
+    filtered = []
+    for item in items:
+        host_ip = str(item.get("host_ip") or "").strip()
+        if host_ip and host_ip in client_ips:
+            filtered.append(item)
+    return filtered
+
+
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
@@ -66,6 +125,9 @@ async def options_catch_all(path: str):
 @router.get("/stats")
 async def get_monitoring_stats(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """
     Summary of background surveillance activity for the chosen period.
@@ -81,6 +143,7 @@ async def get_monitoring_stats(
         return {"available": False, "reason": "Activity database not initialised"}
 
     hours = _hours(time_range)
+    effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
     try:
         stats = adb.get_background_stats(hours=hours)
         return {
@@ -88,6 +151,11 @@ async def get_monitoring_stats(
             "time_range": _label(time_range),
             "generated_at": utcnow().isoformat() + "Z",
             "note": "These scans run locally — no external API quota consumed.",
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+            },
             **stats,
         }
     except Exception as exc:
@@ -103,6 +171,9 @@ async def get_monitoring_stats(
 async def get_recent_activity(
     limit: int = Query(200, ge=1, le=2000, description="Max entries to return - increased to show more recent activity"),
     db: AsyncSession = Depends(get_db),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """
     Most recent background activity entries across all monitored artifact types.
@@ -113,6 +184,8 @@ async def get_recent_activity(
         return {"available": False, "items": []}
 
     try:
+        effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
+        tenant_client_ids, tenant_client_ips = await _tenant_client_scope(db, effective_org_id, effective_dept_id)
         items = adb.get_recent_activity(limit=limit)
 
         # Merge live defense/network action events so IDS/IPS/detection actions
@@ -128,6 +201,8 @@ async def get_recent_activity(
         defense_items = []
         for row in defense_logs:
             details = row.details if isinstance(row.details, dict) else {}
+            if effective_org_id is not None and not _details_match_tenant(details, tenant_client_ids, tenant_client_ips):
+                continue
             event_name = details.get("event") or (str(row.message).split(":", 1)[0] if row.message else "defense_event")
             severity = str(details.get("severity") or "medium").lower()
             verdict = "critical" if severity == "critical" else "malicious" if severity == "high" else "suspicious" if severity == "medium" else "safe"
@@ -156,6 +231,13 @@ async def get_recent_activity(
             "available": True,
             "count": len(merged),
             "generated_at": utcnow().isoformat() + "Z",
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+                "client_ids_known": len(tenant_client_ids),
+                "client_ips_known": len(tenant_client_ips),
+            },
             "items": merged,
         }
     except Exception as exc:
@@ -171,6 +253,10 @@ async def get_recent_activity(
 async def get_visited_websites(
     limit: int = Query(200, ge=1, le=2000, description="Max entries - fetch more recent history"),
     hours: int = Query(24, ge=1, le=720, description="Lookback window hours"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """
     Recently visited websites captured by the browser history monitor.
@@ -182,10 +268,19 @@ async def get_visited_websites(
 
     try:
         items = adb.get_visited_websites(limit=limit, hours=hours)
+        effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
+        tenant_client_ids, tenant_client_ips = await _tenant_client_scope(db, effective_org_id, effective_dept_id)
+        items = _filter_websites_by_tenant(items, tenant_client_ips) if effective_org_id is not None else items
         return {
             "available": True,
             "count": len(items),
             "generated_at": utcnow().isoformat() + "Z",
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+                "client_ips_known": len(tenant_client_ips),
+            },
             "items": items,
         }
     except Exception as exc:
@@ -200,6 +295,9 @@ async def get_visited_websites(
 @router.get("/threat-feed")
 async def get_threat_feed(
     limit: int = Query(20, ge=1, le=100, description="Max threats to return"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("alerts.read")),
 ):
     """
     Real-time feed of threats found by the background auto-monitor.
@@ -211,11 +309,17 @@ async def get_threat_feed(
 
     try:
         threats = adb.get_recent_threats(limit=limit)
+        effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
         return {
             "available": True,
             "count": len(threats),
             "generated_at": utcnow().isoformat() + "Z",
             "source": "background_auto_monitor",
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+            },
             "threats": threats,
         }
     except Exception as exc:
@@ -231,6 +335,9 @@ async def get_threat_feed(
 async def get_monitoring_trends(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
     interval: Optional[int] = Query(None, description="Bucket size in minutes (auto if omitted)"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """Time-bucketed background scan counts for trend charting."""
     adb = _adb()
@@ -239,6 +346,7 @@ async def get_monitoring_trends(
 
     hours = _hours(time_range)
     interval_min = interval or (60 if hours <= 48 else 360 if hours <= 168 else 1440)
+    effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
 
     try:
         series = adb.get_scan_trends(hours=hours, interval_minutes=interval_min)
@@ -247,6 +355,11 @@ async def get_monitoring_trends(
             "time_range": _label(time_range),
             "interval_minutes": interval_min,
             "data_points": len(series),
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+            },
             "series": series,
         }
     except Exception as exc:
@@ -261,6 +374,9 @@ async def get_monitoring_trends(
 @router.get("/distribution")
 async def get_threat_distribution(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """Threat type and verdict distribution for background-monitored artifacts."""
     adb = _adb()
@@ -268,12 +384,18 @@ async def get_threat_distribution(
         return {"available": False}
 
     hours = _hours(time_range)
+    effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
     try:
         dist = adb.get_threat_distribution(hours=hours)
         return {
             "available": True,
             "time_range": _label(time_range),
             "generated_at": utcnow().isoformat() + "Z",
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+            },
             **dist,
         }
     except Exception as exc:
@@ -288,6 +410,9 @@ async def get_threat_distribution(
 @router.get("/summary")
 async def get_activity_summary(
     time_range: Optional[str] = Query("24h", description="Time range: 24h, 7d, 30d"),
+    organization_id: Optional[int] = Query(default=None),
+    department_id: Optional[int] = Query(default=None),
+    current_user = Depends(require_permission("reports.read")),
 ):
     """Full activity summary from the background monitoring database."""
     adb = _adb()
@@ -295,11 +420,17 @@ async def get_activity_summary(
         return {"available": False}
 
     hours = _hours(time_range)
+    effective_org_id, effective_dept_id = _monitoring_scope(current_user, organization_id, department_id)
     try:
         summary = adb.get_activity_summary(hours=hours)
         return {
             "available": True,
             "time_range": _label(time_range),
+            "tenant_scope": {
+                "organization_id": effective_org_id,
+                "department_id": effective_dept_id,
+                "applies_to_shared_activity_db": False,
+            },
             **summary,
         }
     except Exception as exc:

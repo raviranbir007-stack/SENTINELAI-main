@@ -14,7 +14,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, cast
 from datetime import datetime, timezone
 
 # Ensure proper Python path for imports
@@ -686,12 +686,12 @@ async def analyze_with_gemini(request: AnalysisRequest):
     falling back to local analysis if Gemini is unavailable.
     """
     try:
-        from app.gemini_integration import analyze_security_threat
-        
-        # Analyze with Gemini
-        result = await analyze_security_threat(
+        from app.gemini_integration import get_gemini_client
+
+        client = get_gemini_client()
+        result = await client.analyze_with_gemini(
             prompt=request.prompt,
-            context=request.context
+            context=request.context or {},
         )
         
         return {
@@ -741,8 +741,10 @@ async def analyze_traffic(request: TrafficAnalysisRequest):
         """
         
         # Get analysis result
-        from app.gemini_integration import analyze_security_threat
-        analysis_result = await analyze_security_threat(prompt=prompt, context=context)
+        from app.gemini_integration import get_gemini_client
+
+        client = get_gemini_client()
+        analysis_result = await client.analyze_with_gemini(prompt=prompt, context=context)
         
         # Enhance with local analysis
         local_analysis = perform_local_traffic_analysis(request.traffic_data)
@@ -778,22 +780,17 @@ async def batch_analyze(request: BatchAnalysisRequest):
         from app.gemini_integration import get_gemini_client
         
         client = get_gemini_client()
-        
-        # Check if batch processing is available
-        system_status = get_system_status()
-        
-        if system_status["gemini"]["available"]:
-            # Use Gemini batch analysis
-            results = await client.batch_analyze(
-                prompts=request.prompts,
-                context=request.context
-            )
-            analysis_source = "gemini_batch"
-        else:
-            # Fallback to sequential local analysis
-            results = []
+
+        context = request.context or {}
+        results = []
+        if client.is_available():
             for prompt in request.prompts:
-                local_result = perform_local_analysis(prompt, request.context)
+                analysis = await client.analyze_with_gemini(prompt=prompt, context=context)
+                results.append(analysis)
+            analysis_source = "gemini_sequential"
+        else:
+            for prompt in request.prompts:
+                local_result = perform_local_analysis(prompt, context)
                 results.append(local_result)
             analysis_source = "local_batch"
         
@@ -864,87 +861,81 @@ async def analyst_override_threat(request: AnalystOverrideRequest):
     This endpoint enables manual intervention when automated detection needs 
     correction or additional context.
     """
-    from .database import SessionLocal
+    from .database import AsyncSessionLocal
     from .models import Threat, User, ThreatStatus, ThreatSeverity
-    from sqlalchemy.orm import Session
+    from sqlalchemy import select
     
-    db: Session = SessionLocal()
-    
-    try:
-        # Find the threat
-        threat = db.query(Threat).filter(Threat.threat_id == request.threat_id).first()
-        
-        if not threat:
-            raise HTTPException(status_code=404, detail=f"Threat {request.threat_id} not found")
-        
-        # Find analyst user (if username provided)
-        analyst_user = None
-        if request.analyst_username:
-            analyst_user = db.query(User).filter(User.username == request.analyst_username).first()
-        
-        # Store original verdict before override
-        original_verdict = threat.status.value if threat.status else "unknown"
-        
-        # Apply analyst override
-        threat.analyst_override = True
-        threat.analyst_override_notes = request.override_notes
-        threat.analyst_override_at = datetime.now(timezone.utc)
-        threat.original_verdict = original_verdict
-        
-        if analyst_user:
-            threat.analyst_override_by_id = analyst_user.id
-        
-        # Update threat status based on override verdict
-        verdict_mapping = {
-            "clean": ThreatStatus.FALSE_POSITIVE,
-            "suspicious": ThreatStatus.ANALYZING,
-            "malicious": ThreatStatus.DETECTED
-        }
-        
-        if request.override_verdict.lower() in verdict_mapping:
-            threat.status = verdict_mapping[request.override_verdict.lower()]
-        
-        # Update severity if provided
-        if request.override_severity:
-            severity_mapping = {
-                "low": ThreatSeverity.LOW,
-                "medium": ThreatSeverity.MEDIUM,
-                "high": ThreatSeverity.HIGH,
-                "critical": ThreatSeverity.CRITICAL
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(Threat).where(Threat.threat_id == request.threat_id))
+            threat = cast(Any, result.scalar_one_or_none())
+
+            if not threat:
+                raise HTTPException(status_code=404, detail=f"Threat {request.threat_id} not found")
+
+            analyst_user = None
+            if request.analyst_username:
+                result = await db.execute(select(User).where(User.username == request.analyst_username))
+                analyst_user = cast(Any, result.scalar_one_or_none())
+
+            original_verdict = threat.status.value if threat.status else "unknown"
+
+            threat.analyst_override = True
+            threat.analyst_override_notes = request.override_notes
+            threat.analyst_override_at = datetime.now(timezone.utc)
+            threat.original_verdict = original_verdict
+
+            if analyst_user:
+                threat.analyst_override_by_id = analyst_user.id
+
+            verdict_mapping = {
+                "clean": ThreatStatus.FALSE_POSITIVE,
+                "suspicious": ThreatStatus.ANALYZING,
+                "malicious": ThreatStatus.DETECTED,
             }
-            if request.override_severity.lower() in severity_mapping:
-                threat.severity = severity_mapping[request.override_severity.lower()]
-        
-        threat.last_updated = datetime.now(timezone.utc)
-        
-        db.commit()
-        db.refresh(threat)
-        
-        logger.info(f"Analyst override applied to threat {request.threat_id} by {request.analyst_username or 'unknown'}")
-        
-        return {
-            "status": "success",
-            "message": "Analyst override applied successfully",
-            "threat_id": request.threat_id,
-            "original_verdict": original_verdict,
-            "new_verdict": request.override_verdict,
-            "override_notes": request.override_notes,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "forensic_tracking": {
-                "override_applied": True,
-                "analyst": request.analyst_username or "unknown",
-                "override_time": threat.analyst_override_at.isoformat()
+
+            override_verdict = str(request.override_verdict or "").lower()
+            if override_verdict in verdict_mapping:
+                threat.status = verdict_mapping[override_verdict]
+
+            if request.override_severity:
+                severity_mapping = {
+                    "low": ThreatSeverity.LOW,
+                    "medium": ThreatSeverity.MEDIUM,
+                    "high": ThreatSeverity.HIGH,
+                    "critical": ThreatSeverity.CRITICAL,
+                }
+                override_severity = str(request.override_severity or "").lower()
+                if override_severity in severity_mapping:
+                    threat.severity = severity_mapping[override_severity]
+
+            threat.last_updated = datetime.now(timezone.utc)
+
+            await db.commit()
+            await db.refresh(threat)
+
+            logger.info(f"Analyst override applied to threat {request.threat_id} by {request.analyst_username or 'unknown'}")
+
+            return {
+                "status": "success",
+                "message": "Analyst override applied successfully",
+                "threat_id": request.threat_id,
+                "original_verdict": original_verdict,
+                "new_verdict": request.override_verdict,
+                "override_notes": request.override_notes,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "forensic_tracking": {
+                    "override_applied": True,
+                    "analyst": request.analyst_username or "unknown",
+                    "override_time": threat.analyst_override_at.isoformat(),
+                },
             }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error applying analyst override: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to apply analyst override")
-    finally:
-        db.close()
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error applying analyst override: {str(e)}")
+            await db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to apply analyst override")
 
 @app.post("/api/v1/analyst/notes")
 async def add_analyst_notes(request: AnalystNotesRequest):
@@ -953,44 +944,39 @@ async def add_analyst_notes(request: AnalystNotesRequest):
     
     Allows analysts to document their review and verification of scan results.
     """
-    from .database import SessionLocal
+    from .database import AsyncSessionLocal
     from .models import ScanHistory, User
-    from sqlalchemy.orm import Session
+    from sqlalchemy import select
     
-    db: Session = SessionLocal()
-    
-    try:
-        # Find the scan
-        scan = db.query(ScanHistory).filter(ScanHistory.scan_id == request.scan_id).first()
-        
-        if not scan:
-            raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
-        
-        # Update analyst notes
-        scan.analyst_notes = request.analyst_notes
-        scan.analyst_verified = request.verified
-        
-        db.commit()
-        db.refresh(scan)
-        
-        logger.info(f"Analyst notes added to scan {request.scan_id} by {request.analyst_username or 'unknown'}")
-        
-        return {
-            "status": "success",
-            "message": "Analyst notes added successfully",
-            "scan_id": request.scan_id,
-            "verified": request.verified,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error adding analyst notes: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to add analyst notes")
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(ScanHistory).where(ScanHistory.scan_id == request.scan_id))
+            scan = cast(Any, result.scalar_one_or_none())
+
+            if not scan:
+                raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
+
+            scan.analyst_notes = request.analyst_notes
+            scan.analyst_verified = request.verified
+
+            await db.commit()
+            await db.refresh(scan)
+
+            logger.info(f"Analyst notes added to scan {request.scan_id} by {request.analyst_username or 'unknown'}")
+
+            return {
+                "status": "success",
+                "message": "Analyst notes added successfully",
+                "scan_id": request.scan_id,
+                "verified": request.verified,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error adding analyst notes: {str(e)}")
+            await db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to add analyst notes")
 
 @app.get("/api/v1/forensics/threat/{threat_id}")
 async def get_threat_forensics(threat_id: str):
@@ -1000,76 +986,74 @@ async def get_threat_forensics(threat_id: str):
     - Corroboration details
     - Analyst overrides and notes
     """
-    from .database import SessionLocal
+    from .database import AsyncSessionLocal
     from .models import Threat, User
-    from sqlalchemy.orm import Session
+    from sqlalchemy import select
     
-    db: Session = SessionLocal()
-    
-    try:
-        threat = db.query(Threat).filter(Threat.threat_id == threat_id).first()
-        
-        if not threat:
-            raise HTTPException(status_code=404, detail=f"Threat {threat_id} not found")
-        
-        # Build forensic report
-        forensic_data = {
-            "threat_id": threat.threat_id,
-            "threat_type": threat.threat_type,
-            "severity": threat.severity.value if threat.severity else None,
-            "status": threat.status.value if threat.status else None,
-            
-            # Evidence and Corroboration
-            "evidence_sources": threat.evidence_sources or [],
-            "corroboration_count": threat.corroboration_count or 0,
-            "corroboration_threshold_met": threat.corroboration_threshold_met or False,
-            
-            # API Results (full evidence)
-            "api_results": {
-                "virus_total": threat.virus_total_result,
-                "abuseipdb": threat.abuseipdb_result,
-                "shodan": threat.shodan_result,
-                "hybrid_analysis": threat.hybrid_analysis_result,
-                "urlscan": threat.urlscan_result
-            },
-            
-            # AI Analysis
-            "ai_confidence": threat.ai_confidence,
-            "ai_analysis": threat.ai_analysis,
-            
-            # Analyst Override Information
-            "analyst_override": {
-                "overridden": threat.analyst_override or False,
-                "override_notes": threat.analyst_override_notes,
-                "original_verdict": threat.original_verdict,
-                "override_timestamp": threat.analyst_override_at.isoformat() if threat.analyst_override_at else None,
-                "overridden_by": None
-            },
-            
-            # Timestamps
-            "detection_time": threat.detection_time.isoformat() if threat.detection_time else None,
-            "last_updated": threat.last_updated.isoformat() if threat.last_updated else None
-        }
-        
-        # Get analyst who made the override
-        if threat.analyst_override_by_id:
-            analyst = db.query(User).filter(User.id == threat.analyst_override_by_id).first()
-            if analyst:
-                forensic_data["analyst_override"]["overridden_by"] = {
-                    "username": analyst.username,
-                    "full_name": analyst.full_name,
-                    "email": analyst.email
-                }
-        
-        return forensic_data
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving forensic data: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve forensics")
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(Threat).where(Threat.threat_id == threat_id))
+            threat = cast(Any, result.scalar_one_or_none())
+
+            if not threat:
+                raise HTTPException(status_code=404, detail=f"Threat {threat_id} not found")
+
+            # Build forensic report
+            forensic_data = {
+                "threat_id": threat.threat_id,
+                "threat_type": threat.threat_type,
+                "severity": threat.severity.value if threat.severity else None,
+                "status": threat.status.value if threat.status else None,
+
+                # Evidence and Corroboration
+                "evidence_sources": threat.evidence_sources or [],
+                "corroboration_count": threat.corroboration_count or 0,
+                "corroboration_threshold_met": threat.corroboration_threshold_met or False,
+
+                # API Results (full evidence)
+                "api_results": {
+                    "virus_total": threat.virus_total_result,
+                    "abuseipdb": threat.abuseipdb_result,
+                    "shodan": threat.shodan_result,
+                    "hybrid_analysis": threat.hybrid_analysis_result,
+                    "urlscan": threat.urlscan_result,
+                },
+
+                # AI Analysis
+                "ai_confidence": threat.ai_confidence,
+                "ai_analysis": threat.ai_analysis,
+
+                # Analyst Override Information
+                "analyst_override": {
+                    "overridden": threat.analyst_override or False,
+                    "override_notes": threat.analyst_override_notes,
+                    "original_verdict": threat.original_verdict,
+                    "override_timestamp": threat.analyst_override_at.isoformat() if threat.analyst_override_at else None,
+                    "overridden_by": None,
+                },
+
+                # Timestamps
+                "detection_time": threat.detection_time.isoformat() if threat.detection_time else None,
+                "last_updated": threat.last_updated.isoformat() if threat.last_updated else None,
+            }
+
+            # Get analyst who made the override
+            if threat.analyst_override_by_id:
+                result = await db.execute(select(User).where(User.id == threat.analyst_override_by_id))
+                analyst = cast(Any, result.scalar_one_or_none())
+                if analyst:
+                    forensic_data["analyst_override"]["overridden_by"] = {
+                        "username": analyst.username,
+                        "full_name": analyst.full_name,
+                        "email": analyst.email,
+                    }
+
+            return forensic_data
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error retrieving forensic data: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve forensics")
 
 # Helper Functions
 
@@ -1084,7 +1068,7 @@ def perform_local_traffic_analysis(traffic_data: Dict[str, Any]) -> Dict[str, An
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
-def perform_local_analysis(prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+def perform_local_analysis(prompt: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Perform local analysis (fallback when Gemini is unavailable)"""
     # Your existing local analysis logic here
     return {

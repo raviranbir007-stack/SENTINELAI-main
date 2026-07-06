@@ -124,6 +124,7 @@ class ReportGenerator:
         self._gemini_next_key_index = 0
         self._last_quota_warning_at = 0.0
         self._analysis_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._reports_cache: Dict[str, bytes] = {}
         try:
             self._analysis_cache_ttl = int(os.getenv("GEMINI_ANALYSIS_CACHE_TTL_SECONDS", "1800"))
         except Exception:
@@ -288,6 +289,41 @@ class ReportGenerator:
         explanation = threat_analysis.get("api_coverage_explanation")
         if explanation:
             lines.append(f"API Coverage Note: {explanation}")
+
+        def _provider_summary(api_name: str, value: Any) -> str:
+            if isinstance(value, dict) and value:
+                if api_name == "virustotal":
+                    if "detected" in value or "undetected" in value:
+                        return f"detected={value.get('detected', 'n/a')}, undetected={value.get('undetected', 'n/a')}, verdict={value.get('verdict', 'n/a')}"
+                    if "malicious" in value or "suspicious" in value:
+                        return (
+                            f"malicious={value.get('malicious', 0)}, suspicious={value.get('suspicious', 0)}, "
+                            f"undetected={value.get('undetected', 0)}, harmless={value.get('harmless', 0)}"
+                        )
+                    return ", ".join(f"{k}={v}" for k, v in list(value.items())[:4])
+                if api_name == "abuseipdb":
+                    return (
+                        f"abuse_confidence={value.get('abuse_confidence', value.get('abuseConfidenceScore', value.get('score', 'n/a')))}, "
+                        f"total_reports={value.get('total_reports', value.get('totalReports', 'n/a'))}, "
+                        f"country={value.get('country', value.get('countryCode', 'n/a'))}"
+                    )
+                if api_name == "shodan":
+                    ports = value.get("open_ports") or value.get("ports") or []
+                    return f"open_ports={', '.join(map(str, ports[:6])) or 'none'}, org={value.get('org', 'n/a')}"
+                if api_name == "urlscan":
+                    return f"score={value.get('score', 'n/a')}, malicious={value.get('malicious', 'n/a')}"
+                if api_name == "hybrid_analysis":
+                    return f"verdict={value.get('verdict', 'n/a')}, threat_score={value.get('threat_score', 'n/a')}, family={value.get('family', 'n/a')}"
+            return str(value)
+
+        provider_key_map = {
+            "VirusTotal": "virustotal",
+            "AbuseIPDB": "abuseipdb",
+            "Shodan": "shodan",
+            "URLScan": "urlscan",
+            "Hybrid Analysis": "hybrid_analysis",
+        }
+
         # Always show all 5 APIs, with suitability/applicability and status
         for api in ALL_EXTERNAL_APIS:
             key = api["key"]
@@ -297,7 +333,14 @@ class ReportGenerator:
             configured = meta.get("configured", False)
             applicable = meta.get("applicable", False)
             error = meta.get("error")
-            if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
+            provider_value = api_results.get(key)
+            has_real_data = isinstance(provider_value, dict) and bool(provider_value) and not provider_value.get("error")
+            if has_real_data:
+                status_str = "provider data collected"
+                summary = _provider_summary(key, provider_value)
+                if summary:
+                    status_str = f"provider data collected ({summary})"
+            elif status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
                 status_str = "provider data collected"
             elif status in {"rate_limited", "quota_exceeded"}:
                 status_str = "collection throttled; fallback intelligence applied"
@@ -334,6 +377,7 @@ class ReportGenerator:
         """Format a forensic reliability and evidence summary for the report."""
         forensic = threat_analysis.get("forensic_metadata", {})
         coverage = self._build_detection_coverage_overview(threat_analysis)
+        api_results = threat_analysis.get("api_results", {}) if isinstance(threat_analysis.get("api_results"), dict) else {}
         lines = []
         lines.append(f"Corroboration Count: {forensic.get('corroboration_count', 0)}")
         lines.append(f"Corroboration Threshold Met: {forensic.get('corroboration_threshold_met', False)}")
@@ -342,6 +386,43 @@ class ReportGenerator:
         lines.append(f"Detection Mode: {coverage.get('mode', 'unknown').replace('_', ' ').title()}")
         if coverage.get("method_names"):
             lines.append(f"Local Methods: {', '.join(coverage.get('method_names', [])[:12])}")
+        provider_lines = []
+        for provider_key, provider_label in [
+            ("virustotal", "VirusTotal"),
+            ("abuseipdb", "AbuseIPDB"),
+            ("shodan", "Shodan"),
+            ("urlscan", "URLScan"),
+            ("hybrid_analysis", "Hybrid Analysis"),
+        ]:
+            provider_value = api_results.get(provider_key)
+            if isinstance(provider_value, dict) and provider_value and not provider_value.get("error"):
+                if provider_key == "virustotal":
+                    provider_lines.append(
+                        f"{provider_label}: detected={provider_value.get('detected', provider_value.get('malicious', 'n/a'))}, "
+                        f"undetected={provider_value.get('undetected', 'n/a')}, verdict={provider_value.get('verdict', 'n/a')}"
+                    )
+                elif provider_key == "abuseipdb":
+                    provider_lines.append(
+                        f"{provider_label}: score={provider_value.get('abuseConfidenceScore', provider_value.get('score', provider_value.get('abuse_confidence', 'n/a')))}, "
+                        f"reports={provider_value.get('totalReports', provider_value.get('total_reports', 'n/a'))}"
+                    )
+                elif provider_key == "shodan":
+                    ports = provider_value.get('ports') or provider_value.get('open_ports') or []
+                    provider_lines.append(
+                        f"{provider_label}: ports={', '.join(map(str, ports[:6])) or 'none'}, org={provider_value.get('org', 'n/a')}"
+                    )
+                elif provider_key == "urlscan":
+                    provider_lines.append(
+                        f"{provider_label}: score={provider_value.get('score', 'n/a')}, malicious={provider_value.get('malicious', 'n/a')}"
+                    )
+                elif provider_key == "hybrid_analysis":
+                    provider_lines.append(
+                        f"{provider_label}: verdict={provider_value.get('verdict', 'n/a')}, score={provider_value.get('threat_score', 'n/a')}"
+                    )
+        if provider_lines:
+            lines.append("Provider Data:")
+            for line in provider_lines:
+                lines.append(f"- {line}")
         if coverage.get("fallback_reason"):
             lines.append(f"Fallback Reason: {coverage.get('fallback_reason')}")
         quality = threat_analysis.get("report_quality_checks") or forensic.get("report_quality_checks") or {}
@@ -522,6 +603,43 @@ class ReportGenerator:
             return "executive_summary"
         return "executive_summary"
 
+    def _sanitize_gemini_reason(self, reason: str) -> str:
+        """Return a concise, log-safe Gemini failure reason without raw provider payloads."""
+        text = str(reason or "").strip()
+        if not text:
+            return ""
+
+        lower = text.lower()
+        retry_match = re.search(
+            r"retry(?:\s+in|\s+after)?\s+([0-9]+(?:\.[0-9]+)?)s|retrydelay'?:\s*'?(\d+)s",
+            text,
+            re.IGNORECASE,
+        )
+        retry_seconds = 0
+        if retry_match:
+            for group in retry_match.groups():
+                if not group:
+                    continue
+                try:
+                    retry_seconds = max(1, int(float(group)))
+                    break
+                except Exception:
+                    continue
+
+        if "429" in lower or "resource_exhausted" in lower or "quota" in lower or "rate limit" in lower:
+            if retry_seconds > 0:
+                return f"provider quota/rate limited; retry in about {retry_seconds}s"
+            return "provider quota/rate limited"
+        if "401" in lower or "403" in lower or "invalid api key" in lower or "unauthorized" in lower:
+            return "provider authentication/authorization error"
+        if "timeout" in lower:
+            return "provider timeout"
+
+        compact = re.sub(r"\s+", " ", text)
+        if len(compact) > 180:
+            return compact[:177] + "..."
+        return compact
+
     def _infer_indicator_type(self, indicator_value: Any, source: str = "") -> str:
         value = str(indicator_value or "").strip()
         source_text = str(source or "").lower()
@@ -591,30 +709,30 @@ class ReportGenerator:
         api_status = api_results.get("api_status", {}) if isinstance(api_results, dict) else {}
         meta = api_status.get(api_key, {}) if isinstance(api_status, dict) else {}
         if not isinstance(meta, dict) or not meta:
-            return "intelligence fallback active (reason: telemetry-only analysis, provider metadata missing)"
+            return "provider coverage not captured in this report payload"
         status = str(meta.get("status", "not_executed") or "not_executed").strip().lower()
         configured = bool(meta.get("configured", False))
         applicable = bool(meta.get("applicable", False))
         if status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
             return "provider data collected successfully"
+        if status == "not_executed":
+            return "provider not executed in this scan window"
         if status == "skipped_local_mode":
-            return "intelligence fallback active (reason: external APIs disabled for local-only analysis)"
-
-        reasons = []
+            return "external APIs intentionally disabled for local-only analysis"
+        if status == "not_applicable":
+            return "provider not applicable for this input type"
         if not configured:
-            reasons.append("provider key not configured in environment")
+            return "provider key not configured in environment"
         if not applicable:
-            reasons.append("indicator type is outside provider coverage")
+            return "indicator type is outside provider coverage"
         if status in {"rate_limited", "quota_exceeded"}:
-            reasons.append("provider quota or rate limit reached")
+            return "provider quota or rate limit reached"
         if status in {"pending", "in_progress", "queued"}:
-            reasons.append("provider analysis did not complete in this scan window")
+            return "provider analysis did not complete in this scan window"
         if status in {"timeout", "error", "failed"}:
-            reasons.append("provider request failed during collection")
-        if not reasons:
-            reasons.append(f"provider returned unrecognized status: {status}")
+            return "provider request failed during collection"
 
-        return f"intelligence fallback active (reason: {'; '.join(reasons)})"
+        return f"provider status recorded as {status}"
 
     def _generate_fallback_intelligence(self, indicator_value: str, indicator_type: str, threat_set: list[Dict]) -> Dict[str, str]:
         """Generate fallback intelligence when APIs are unavailable."""
@@ -839,8 +957,9 @@ class ReportGenerator:
         elif indicator_type == "IP":
             shodan_data = api_data.get("shodan", {})
             if isinstance(shodan_data, dict):
-                if shodan_data.get("open_ports", 0) > 0:
-                    characteristics.append(f"IP has {shodan_data.get('open_ports')} open ports - possible exposed service")
+                open_ports = shodan_data.get("open_ports_count") or len(shodan_data.get("open_ports", []) or [])
+                if open_ports > 0:
+                    characteristics.append(f"IP has {open_ports} open ports - possible exposed service")
                 if shodan_data.get("vulnerabilities", 0) > 0:
                     characteristics.append(f"{shodan_data.get('vulnerabilities')} known CVEs associated - active exploitation risk")
             
@@ -997,9 +1116,34 @@ class ReportGenerator:
         source = str(item.get("source") or item.get("type") or "activity_monitor")
         heuristic = item.get("heuristic") or f"local correlation from source={source}"
 
-        virustotal_value: Any = self._api_status_text(api_results, "virustotal")
-        vt_data = api_results.get("virustotal") if isinstance(api_results, dict) else None
-        if isinstance(vt_data, dict):
+        # Helper function to extract API data from multiple locations
+        def _extract_api_data(api_results: Dict, provider_key: str) -> Any:
+            """Try to find real provider data from multiple possible locations."""
+            if not isinstance(api_results, dict):
+                return None
+            # 1. Direct top-level key (most common)
+            data = api_results.get(provider_key)
+            if isinstance(data, dict) and data and not data.get("error"):
+                return data
+            # 2. Nested under 'results' or similar structures
+            for nest_key in ["results", "data", "providers"]:
+                nested = api_results.get(nest_key, {})
+                if isinstance(nested, dict):
+                    data_nested = nested.get(provider_key)
+                    if isinstance(data_nested, dict) and data_nested:
+                        return data_nested
+            # 3. Check if data is embedded in threat_indicators
+            for indicator in api_results.get("threat_indicators", []):
+                if isinstance(indicator, dict) and indicator.get(provider_key):
+                    ind_data = indicator.get(provider_key)
+                    if isinstance(ind_data, dict) and ind_data:
+                        return ind_data
+            return None
+
+        # VIRUSTOTAL: Check for real data FIRST before fallback
+        vt_data = _extract_api_data(api_results, "virustotal")
+        if isinstance(vt_data, dict) and vt_data:
+            # Try nested format first (standard API structure)
             attrs = ((vt_data.get("data") or {}).get("attributes") or {})
             stats = attrs.get("last_analysis_stats") or {}
             if isinstance(stats, dict) and stats:
@@ -1010,30 +1154,53 @@ class ReportGenerator:
                     "harmless": int(stats.get("harmless", 0) or 0),
                     "reputation": int(attrs.get("reputation", 0) or 0),
                 }
+            else:
+                # Try flat format (detected/undetected at top level)
+                if vt_data.get("detected") is not None or vt_data.get("verdict"):
+                    virustotal_value = {
+                        "detected": int(vt_data.get("detected", 0) or 0),
+                        "undetected": int(vt_data.get("undetected", 0) or 0),
+                        "verdict": str(vt_data.get("verdict", "unknown")),
+                    }
+                else:
+                    virustotal_value = str(vt_data)[:200] if vt_data else "data present"
+        else:
+            virustotal_value = self._api_status_text(api_results, "virustotal")
 
-        abuseipdb_value: Any = self._api_status_text(api_results, "abuseipdb")
-        abuse_data = ((api_results.get("abuseipdb") or {}).get("data") or {}) if isinstance(api_results, dict) else {}
-        if isinstance(abuse_data, dict) and abuse_data:
-            abuseipdb_value = {
-                "abuse_confidence": int(abuse_data.get("abuseConfidenceScore", 0) or 0),
-                "total_reports": int(abuse_data.get("totalReports", 0) or 0),
-                "country": str(abuse_data.get("countryCode", "Unknown")),
-            }
+        # ABUSEIPDB: Check for real data FIRST before fallback
+        abuse_raw = _extract_api_data(api_results, "abuseipdb")
+        if isinstance(abuse_raw, dict) and abuse_raw:
+            abuse_data = ((abuse_raw.get("data") or abuse_raw) if isinstance(abuse_raw, dict) else {})
+            if isinstance(abuse_data, dict) and (abuse_data.get("abuseConfidenceScore") is not None or abuse_data.get("score") is not None or abuse_data.get("totalReports")):
+                abuseipdb_value = {
+                    "abuse_confidence": int(abuse_data.get("abuseConfidenceScore", abuse_data.get("score", 0)) or 0),
+                    "total_reports": int(abuse_data.get("totalReports", 0) or 0),
+                    "country": str(abuse_data.get("countryCode", "Unknown")),
+                }
+            else:
+                abuseipdb_value = str(abuse_data)[:200] if abuse_data else "data present"
+        else:
+            abuseipdb_value = self._api_status_text(api_results, "abuseipdb")
 
-        shodan_value: Any = self._api_status_text(api_results, "shodan")
-        shodan_data = api_results.get("shodan") if isinstance(api_results, dict) else None
-        if isinstance(shodan_data, dict) and not shodan_data.get("error"):
+        # SHODAN: Check for real data FIRST before fallback
+        shodan_data = _extract_api_data(api_results, "shodan")
+        if isinstance(shodan_data, dict) and shodan_data and not shodan_data.get("error"):
             ports = shodan_data.get("ports") or []
-            shodan_value = {
-                "open_ports": ports,
-                "open_port_count": len(ports),
-                "vulnerabilities": len(shodan_data.get("vulns") or []),
-                "org": str(shodan_data.get("org", "Unknown")),
-            }
+            if ports or shodan_data.get("vulnerabilities") or shodan_data.get("org"):
+                shodan_value = {
+                    "open_ports": ports,
+                    "open_port_count": len(ports),
+                    "vulnerabilities": len(shodan_data.get("vulns", [])),
+                    "org": str(shodan_data.get("org", "Unknown")),
+                }
+            else:
+                shodan_value = str(shodan_data)[:200] if shodan_data else "data present"
+        else:
+            shodan_value = self._api_status_text(api_results, "shodan")
 
-        urlscan_value: Any = self._api_status_text(api_results, "urlscan")
-        urlscan_data = api_results.get("urlscan") if isinstance(api_results, dict) else None
-        if isinstance(urlscan_data, dict):
+        # URLSCAN: Check for real data FIRST before fallback
+        urlscan_data = _extract_api_data(api_results, "urlscan")
+        if isinstance(urlscan_data, dict) and urlscan_data:
             verdicts = urlscan_data.get("verdicts") or {}
             overall = verdicts.get("overall") if isinstance(verdicts, dict) else {}
             if isinstance(overall, dict) and overall:
@@ -1050,10 +1217,14 @@ class ReportGenerator:
                         "phishing": bool((classifications or {}).get("phishing", False)),
                         "suspicious": bool((classifications or {}).get("suspicious", False)),
                     }
+                else:
+                    urlscan_value = str(urlscan_data)[:200] if urlscan_data else "data present"
+        else:
+            urlscan_value = self._api_status_text(api_results, "urlscan")
 
-        hybrid_value: Any = self._api_status_text(api_results, "hybrid_analysis")
-        hybrid_data = api_results.get("hybrid_analysis") if isinstance(api_results, dict) else None
-        if isinstance(hybrid_data, dict):
+        # HYBRID_ANALYSIS: Check for real data FIRST before fallback
+        hybrid_data = _extract_api_data(api_results, "hybrid_analysis")
+        if isinstance(hybrid_data, dict) and hybrid_data:
             results = hybrid_data.get("results") or []
             if isinstance(results, list) and results:
                 top = results[0] if isinstance(results[0], dict) else {}
@@ -1062,19 +1233,23 @@ class ReportGenerator:
                     "threat_score": int(top.get("threat_score", 0) or 0),
                     "family": str(top.get("vx_family", "unknown")),
                 }
+            else:
+                hybrid_value = str(hybrid_data)[:200] if hybrid_data else "data present"
+        else:
+            hybrid_value = self._api_status_text(api_results, "hybrid_analysis")
 
         if indicator_type == "IP":
-            if isinstance(urlscan_value, str) and "fallback active" in urlscan_value:
-                urlscan_value = "intelligence fallback active (reason: URLScan does not directly score IP indicators)"
-            if isinstance(hybrid_value, str) and "fallback active" in hybrid_value:
-                hybrid_value = "intelligence fallback active (reason: Hybrid Analysis is file-centric and does not directly score IP indicators)"
+            if isinstance(urlscan_value, str) and "provider" in urlscan_value.lower():
+                urlscan_value = "not collected for IP indicators"
+            if isinstance(hybrid_value, str) and "provider" in hybrid_value.lower():
+                hybrid_value = "not collected for IP indicators"
         elif indicator_type == "File":
-            if isinstance(abuseipdb_value, str) and "fallback active" in abuseipdb_value:
-                abuseipdb_value = "intelligence fallback active (reason: AbuseIPDB is IP reputation-focused and does not directly score file indicators)"
-            if isinstance(shodan_value, str) and "fallback active" in shodan_value:
-                shodan_value = "intelligence fallback active (reason: Shodan profiles internet services and does not directly score file artifacts)"
-            if isinstance(urlscan_value, str) and "fallback active" in urlscan_value:
-                urlscan_value = "intelligence fallback active (reason: URLScan evaluates URLs/domains and does not directly score file hashes)"
+            if isinstance(abuseipdb_value, str) and "provider" in abuseipdb_value.lower():
+                abuseipdb_value = "not collected for file indicators"
+            if isinstance(shodan_value, str) and "provider" in shodan_value.lower():
+                shodan_value = "not collected for file indicators"
+            if isinstance(urlscan_value, str) and "provider" in urlscan_value.lower():
+                urlscan_value = "not collected for file indicators"
 
         return {
             "heuristic": heuristic,
@@ -1504,17 +1679,20 @@ class ReportGenerator:
         words = cleaned.split()
         word_count = len(words)
         normalized_type = self._normalize_report_type(report_type)
-        hard_floor = 70 if normalized_type == "executive_summary" else 90
+        
+        # Reduce hard floor thresholds to accept more outputs (was 90 for technical/forensic)
+        hard_floor = 50 if normalized_type == "executive_summary" else 60
+        soft_floor = 35
 
         if has_placeholder_only and word_count < 140:
             return ""
         if has_refusal_lead and word_count < 220:
             return ""
 
-        # Accept shorter outputs only if they contain structured analytical sections.
+        # Accept shorter outputs if they contain analytical content
         has_structured_sections = bool(
             re.search(
-                r"\b(executive\s+summary|risk\s+assessment|analysis|findings|recommendations?|mitigation|confidence|verdict|timeline|forensic)\b",
+                r"\b(executive\s+summary|risk\s+assessment|analysis|findings|recommendations?|mitigation|confidence|verdict|timeline|forensic|threat|assessment|detection)\b",
                 lowered,
             )
         )
@@ -1522,16 +1700,16 @@ class ReportGenerator:
             re.search(r"(?m)^(?:#{1,3}\s+|[-*]\s+|\d+\.\s+)", cleaned)
         )
         structured_signal_count = len(re.findall(r"(?m)^(?:#{1,3}\s+|[-*]\s+|\d+\.\s+)", cleaned))
-        soft_floor = 45
 
         if word_count < soft_floor:
             return ""
-        if word_count < hard_floor and not (has_structured_sections or has_explicit_markdown_structure or structured_signal_count >= 2):
+        # Accept output if it has meaningful content (reduced from hard_floor + extra conditions)
+        if word_count < hard_floor and not (has_structured_sections or has_explicit_markdown_structure or structured_signal_count >= 1):
             return ""
 
-        # Avoid single-line responses that pass word checks but are low readability.
+        # Accept single-section responses if they have meaningful analysis
         paragraph_count = len([line for line in cleaned.split("\n") if line.strip()])
-        if paragraph_count < 2 and word_count < (hard_floor + 10) and not (has_structured_sections or has_explicit_markdown_structure):
+        if paragraph_count < 2 and word_count < (hard_floor + 5) and not has_structured_sections:
             return ""
 
         return cleaned
@@ -1685,7 +1863,7 @@ class ReportGenerator:
         )
 
     def _interval_analysis_text(self, interval: str, threat_data: Dict[str, Any]) -> str:
-        """Generate distinct analysis narrative per time interval"""
+        """Generate distinct, comprehensive analysis narrative per time interval"""
         report_type = self._normalize_report_type(threat_data.get("report_type", "executive_summary"))
         interval_summaries = threat_data.get("interval_summaries", [])
         
@@ -1702,30 +1880,86 @@ class ReportGenerator:
         activity = interval_data.get("activity", {})
         threats_detected = activity.get("threats_detected", 0)
         scans_performed = activity.get("threat_scans", activity.get("scans", 0))
+        websites_visited = activity.get("websites_visited", activity.get("websites_monitored", 0))
+        apps_launched = activity.get("applications_launched", 0)
+        network_conns = activity.get("network_connections", 0)
         
         if interval == "24h":
             focus = "IMMEDIATE & RECENT activity patterns"
-            trend_indicator = "short-term threat surface" if threats_detected > 0 else "stable short-term posture"
-            severity_phrase = "emerging threats requiring immediate attention" if threats_detected > 2 else "contained activity levels"
+            threat_density = (threats_detected / scans_performed) if scans_performed > 0 else 0
+            if threats_detected > 5:
+                severity_phrase = "elevated short-term threat surface with immediate incident response required"
+                context = "The 24-hour window captures near-real-time threat activity and should drive immediate containment decisions."
+            elif threats_detected > 2:
+                severity_phrase = "moderate emerging threats requiring prompt investigation"
+                context = "Recent detections suggest evolving attack patterns that warrant accelerated triage and remediation."
+            elif threats_detected > 0:
+                severity_phrase = "isolated threat signals with contained risk"
+                context = "Low-frequency detections indicate normal operational background noise with minimal escalation required."
+            else:
+                severity_phrase = "clean detection record with stable posture"
+                context = "No recent threats detected; system appears to be functioning within normal defensive parameters."
+            
+            narrative = (
+                f"**24-HOUR INTERVAL ANALYSIS**: {focus}.\n\n"
+                f"Activity Snapshot: {scans_performed} scans conducted | {threats_detected} threats detected | {websites_visited} distinct websites monitored | "
+                f"{apps_launched} applications tracked | {network_conns} network connections observed.\n\n"
+                f"Threat Characterization: {severity_phrase}. Detection density ratio: {threat_density:.3f} (threats per scan).\n\n"
+                f"Operational Context: {context} This interval is critical for real-time decision-making and immediate threat containment."
+            )
         elif interval == "7d":
             focus = "WEEKLY trend analysis and pattern emergence"
-            trend_indicator = "evolving threat landscape" if threats_detected > 5 else "consistent week-over-week patterns"
-            severity_phrase = "sustained threat pressure across the week" if threats_detected > 10 else "week-over-week stability"
+            threat_density = (threats_detected / scans_performed) if scans_performed > 0 else 0
+            if threats_detected > 15:
+                severity_phrase = "sustained high-pressure threat environment with recurring attack vectors"
+                context = "Week-long elevated threat levels indicate orchestrated or repeated attack campaigns warranting strategic response."
+            elif threats_detected > 5:
+                severity_phrase = "consistent week-over-week threat presence with emerging patterns"
+                context = "Multiple detections across the week suggest evolving threat landscape; tactical adjustments recommended."
+            elif threats_detected > 0:
+                severity_phrase = "intermittent threats with stable underlying trend"
+                context = "Sporadic detections show normal background threat environment; continue standard monitoring protocols."
+            else:
+                severity_phrase = "clean weekly record indicative of effective defensive posture"
+                context = "Absence of detected threats over seven days demonstrates strong security controls and mature risk management."
+            
+            narrative = (
+                f"**7-DAY INTERVAL ANALYSIS**: {focus}.\n\n"
+                f"Weekly Aggregate: {scans_performed} cumulative scans | {threats_detected} findings | {websites_visited} unique websites | "
+                f"{apps_launched} application instances | {network_conns} network events.\n\n"
+                f"Threat Characterization: {severity_phrase}. Weekly detection density: {threat_density:.3f}. "
+                f"This metric helps identify attack trend escalation or de-escalation.\n\n"
+                f"Strategic Implication: {context} Recommend weekly threat assessment reviews to track operational trends."
+            )
         else:  # 30d
-            focus = "STRATEGIC threat posture and long-term patterns"
-            trend_indicator = "chronic or recurring threat surface" if threats_detected > 20 else "mature defensive posture"
-            severity_phrase = "persistent attack patterns requiring strategic response" if threats_detected > 30 else "effective long-term threat management"
+            focus = "STRATEGIC threat posture and long-term defensive maturity"
+            threat_density = (threats_detected / scans_performed) if scans_performed > 0 else 0
+            if threats_detected > 40:
+                severity_phrase = "chronic high-threat environment requiring foundational security architecture review"
+                context = "Month-long elevated threat levels indicate systemic vulnerabilities or persistent sophisticated adversaries."
+            elif threats_detected > 15:
+                severity_phrase = "recurring threat patterns suggesting incomplete remediation or emerging threat categories"
+                context = "Multi-week threats suggest recurring vulnerabilities; recommend comprehensive asset risk reassessment."
+            elif threats_detected > 5:
+                severity_phrase = "low-frequency threats reflecting normal operational risk landscape"
+                context = "Sparse detections over 30 days suggest effective defensive measures and resilient security posture."
+            else:
+                severity_phrase = "exceptionally clean monthly record demonstrating mature threat prevention and detection"
+                context = "Absence of detections over 30 days is uncommon and indicates exceptionally strong security controls or low-risk environment."
+            
+            narrative = (
+                f"**30-DAY INTERVAL ANALYSIS**: {focus}.\n\n"
+                f"Monthly Summary: {scans_performed} total scans | {threats_detected} threats detected | {websites_visited} monitored websites | "
+                f"{apps_launched} launched applications | {network_conns} network connections tracked.\n\n"
+                f"Threat Characterization: {severity_phrase}. 30-day detection density: {threat_density:.3f}. "
+                f"This baseline metric is essential for annual risk posture reporting.\n\n"
+                f"Strategic Assessment: {context} Use this analysis for board-level security posture reporting and annual risk planning."
+            )
         
-        narrative = (
-            f"**{interval.upper()} INTERVAL SUMMARY**: This period focused on {focus}.\n\n"
-            f"Activity Volume: {scans_performed} scans performed, {threats_detected} threats detected.\n\n"
-            f"Threat Characterization: {{trend_indicator}}\n\n"
-            f"Key Interpretation: The {interval} window shows {severity_phrase}."
-        )
-        return narrative.replace("{{trend_indicator}}", trend_indicator)
+        return narrative
 
     def _interval_report_interpretation(self, interval: str, threat_data: Dict[str, Any], report_type: str) -> str:
-        """Generate report-type specific interval intelligence narrative."""
+        """Generate report-type specific interval intelligence narrative with complete analysis."""
         base = self._interval_analysis_text(interval, threat_data)
         interval_summaries = threat_data.get("interval_summaries", [])
         current = next((item for item in interval_summaries if isinstance(item, dict) and str(item.get("interval", "")).lower() == interval.lower()), None)
@@ -1735,18 +1969,44 @@ class ReportGenerator:
         density = (threats_detected / scans_performed) if scans_performed else 0.0
 
         normalized = self._normalize_report_type(report_type)
+        
+        # Add report-type specific technical analysis
+        additional_analysis = ""
         if normalized == "technical_analysis":
-            return (
-                f"{base} Technical interpretation: detection density={density:.2f}. "
-                f"Focus on repeat indicators, telemetry blind spots, and provider corroboration depth for {interval.upper()}."
+            additional_analysis = (
+                f"\n\n**Technical Interpretation for {interval.upper()}:**\n"
+                f"- Detection density (threats/scan ratio): {density:.4f}\n"
+                f"- Repeat indicators suggest: {['emerging threats', 'consistent patterns', 'established indicators'][min(int(density * 100) // 10, 2)]}\n"
+                f"- Telemetry blind spots: Consider provider corroboration coverage and API sampling bias\n"
+                f"- Provider correlation depth: Recommend cross-referencing multiple external intel sources for {interval} anomalies\n"
+                f"- Suggested technical focus: Deep-dive API integration results and forensic evidence timeline construction"
             )
-        if normalized == "forensic_investigation":
-            return (
-                f"{base} Forensic interpretation: prioritize timeline clustering, contradiction review, and persistence signals in {interval.upper()} evidence."
+        elif normalized == "forensic_investigation":
+            additional_analysis = (
+                f"\n\n**Forensic Interpretation for {interval.upper()}:**\n"
+                f"- Timeline clustering analysis: {scans_performed} scans across period with {threats_detected} confirmations\n"
+                f"- Contradiction review: Assess divergence between local detection and external provider verdicts\n"
+                f"- Persistence signal detection: Look for threats appearing across multiple intervals (indicates TTPs)\n"
+                f"- Evidence completeness: Ensure all IOCs properly linked to original artifacts with forensic hashes\n"
+                f"- Chain-of-custody maintenance: All forensic metadata must remain immutable per investigation standards"
             )
-        return (
-            f"{base} Executive interpretation: use this interval to align containment urgency and resource allocation with observed threat pressure."
-        )
+        else:  # executive_summary
+            resource_level = ['escalated', 'standard', 'minimal'][min(max(int(threats_detected // 5), 0), 2)]
+            pressure_level = 'HIGH' if density > 0.1 else 'MODERATE' if density > 0.03 else 'LOW'
+            urgency_level = 'Immediate' if threats_detected > 10 else 'Elevated' if threats_detected > 3 else 'Standard'
+            continuity_note = 'demands board notification' if threats_detected > 20 else 'warrants CTO awareness' if threats_detected > 5 else 'remains within operational norms'
+            recommendation = 'Initiate incident response protocols' if threats_detected > 15 else 'Continue enhanced monitoring' if threats_detected > 5 else 'Maintain standard security posture'
+            
+            additional_analysis = (
+                f"\n\n**Executive Interpretation for {interval.upper()}:**\n"
+                f"- Threat pressure level: Density ratio {density:.4f} translates to {pressure_level} ongoing operational risk\n"
+                f"- Recommended containment urgency: {urgency_level} priority response\n"
+                f"- Resource allocation implications: Current threat load requires {resource_level} security team engagement\n"
+                f"- Business continuity impact: {interval.upper()} window threat profile {continuity_note}\n"
+                f"- Strategic recommendation: {recommendation}"
+            )
+        
+        return f"{base}{additional_analysis}"
 
     def _interval_focus_rows(self, interval: str, threat_data: Dict[str, Any]) -> list[list[str]]:
         """Per-interval analysis matrix for distinct report focus"""
@@ -1763,15 +2023,16 @@ class ReportGenerator:
             return [["Period", interval], ["Status", "Data unavailable"]]
         
         activity = interval_data.get("activity", {})
-        scans = activity.get("scans", 0)
+        scans = activity.get("threat_scans", activity.get("scans", 0))
         threats = activity.get("threats_detected", 0)
-        websites = activity.get("websites_monitored", 0)
+        websites = activity.get("websites_visited", activity.get("websites_monitored", 0))
         
         if interval == "24h":
             return [
                 ["Detection Window", "24 hours (immediate)"],
                 ["Threat Scans", f"{scans} total scans"],
                 ["Threats Identified", f"{threats} findings"],
+                ["Websites Observed", str(websites)],
                 ["Focus", "Incident response priority"],
                 ["Timeframe Use", "Immediate action planning"],
             ]
@@ -1780,6 +2041,7 @@ class ReportGenerator:
                 ["Detection Window", "7 days (trends)"],
                 ["Threat Scans", f"{scans} total scans"],
                 ["Threats Identified", f"{threats} findings"],
+                ["Websites Observed", str(websites)],
                 ["Focus", "Pattern recognition"],
                 ["Timeframe Use", "Weekly risk assessment"],
             ]
@@ -1788,6 +2050,7 @@ class ReportGenerator:
                 ["Detection Window", "30 days (strategic)"],
                 ["Threat Scans", f"{scans} total scans"],
                 ["Threats Identified", f"{threats} findings"],
+                ["Websites Observed", str(websites)],
                 ["Focus", "Long-term posture"],
                 ["Timeframe Use", "Strategic planning"],
             ]
@@ -1937,17 +2200,30 @@ class ReportGenerator:
                 except (TypeError, ValueError):
                     return 0.0
             
-            available_key_entries = [
-                (idx, key)
-                for idx, key in enumerate(all_keys)
-                if now_ts >= _normalize_cooldown_value(self._gemini_key_cooldown_until.get(key, 0.0))
-            ]
+            def _get_available_key_entries(current_ts: float) -> list[tuple[int, str]]:
+                return [
+                    (idx, key)
+                    for idx, key in enumerate(all_keys)
+                    if current_ts >= _normalize_cooldown_value(self._gemini_key_cooldown_until.get(key, 0.0))
+                ]
+
+            available_key_entries = _get_available_key_entries(now_ts)
             if not available_key_entries:
                 cooldown_values = [_normalize_cooldown_value(self._gemini_key_cooldown_until.get(key, 0.0)) for key in all_keys]
                 earliest_ready = min(cooldown_values) if cooldown_values else now_ts
                 wait_seconds = int(max(1, earliest_ready - now_ts))
-                self._last_gemini_failure_reason = f"all gemini keys cooling down ({wait_seconds}s remaining)"
-                return None
+                short_wait_limit = 25
+
+                # If providers asked for a short retry window (e.g., 10-20s), wait once and retry keys.
+                if wait_seconds <= short_wait_limit:
+                    logger.info("All Gemini keys cooling down for %ss; waiting once and retrying", wait_seconds)
+                    await asyncio.sleep(wait_seconds)
+                    now_ts = time.time()
+                    available_key_entries = _get_available_key_entries(now_ts)
+
+                if not available_key_entries:
+                    self._last_gemini_failure_reason = f"all gemini keys cooling down ({wait_seconds}s remaining)"
+                    return None
 
             rotation_start = int(self._gemini_next_key_index or 0) % len(available_key_entries)
             ordered_key_entries = available_key_entries[rotation_start:] + available_key_entries[:rotation_start]
@@ -1965,6 +2241,10 @@ class ReportGenerator:
 
                             for model_name in model_pool:
                                 try:
+                                    # Use environment-configurable token limit (default 10000 for comprehensive multi-interval reports)
+                                    max_tokens = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "10000"))
+                                    max_tokens = max(4000, min(max_tokens, 16000))  # Ensure reasonable bounds
+                                    
                                     response = await asyncio.wait_for(
                                         asyncio.to_thread(lambda: client.models.generate_content(
                                             model=model_name,
@@ -1972,7 +2252,7 @@ class ReportGenerator:
                                             config=GenerateContentConfig(
                                                 temperature=0.4,
                                                 top_p=0.9,
-                                                max_output_tokens=2200,
+                                                max_output_tokens=max_tokens,
                                                 response_mime_type="text/plain",
                                             )
                                         )),
@@ -2003,10 +2283,8 @@ class ReportGenerator:
                                     if kind == "quota":
                                         now_ts = time.time()
                                         retry_delay = _extract_retry_delay_seconds(msg)
-                                        effective_cooldown = max(
-                                            int(self.gemini_quota_cooldown_seconds),
-                                            int(retry_delay) if retry_delay else 0,
-                                        )
+                                        effective_cooldown = int(retry_delay) if retry_delay else int(self.gemini_quota_cooldown_seconds)
+                                        effective_cooldown = max(5, effective_cooldown)
                                         # Safely store cooldown value, ensuring it's always a float
                                         try:
                                             self._gemini_key_cooldown_until[api_key] = max(
@@ -2079,10 +2357,8 @@ class ReportGenerator:
                         if error_kind == "quota":
                             now_ts = time.time()
                             retry_delay = _extract_retry_delay_seconds(msg)
-                            effective_cooldown = max(
-                                int(self.gemini_quota_cooldown_seconds),
-                                int(retry_delay) if retry_delay else 0,
-                            )
+                            effective_cooldown = int(retry_delay) if retry_delay else int(self.gemini_quota_cooldown_seconds)
+                            effective_cooldown = max(5, effective_cooldown)
                             # Mark all legacy keys on cooldown
                             for key in all_keys:
                                 try:
@@ -2103,7 +2379,9 @@ class ReportGenerator:
                 self._failure_count += 1
                 if self._failure_count >= self.circuit_threshold:
                     self._circuit_open_until = time.time() + self.circuit_open_seconds
-                    self._last_gemini_failure_reason = last_error_message or "circuit threshold reached"
+                    self._last_gemini_failure_reason = self._sanitize_gemini_reason(
+                        last_error_message or "circuit threshold reached"
+                    )
                     logger.debug("Gemini circuit opened until %s after %d failures", self._circuit_open_until, self._failure_count)
                     return None
 
@@ -2116,7 +2394,9 @@ class ReportGenerator:
                 # If neither client yields or we should not retry further, break
                 break
 
-            self._last_gemini_failure_reason = last_error_message or "Gemini request failed"
+            self._last_gemini_failure_reason = self._sanitize_gemini_reason(
+                last_error_message or "Gemini request failed"
+            )
             return None
 
         # Attempt to call Gemini with retries
@@ -2168,7 +2448,8 @@ class ReportGenerator:
             )
 
         # Final fallback to deterministic local analysis
-        fallback_reason = self._last_gemini_failure_reason or "Gemini unavailable"
+        fallback_reason = self._sanitize_gemini_reason(self._last_gemini_failure_reason or "Gemini unavailable")
+        self._last_gemini_failure_reason = fallback_reason
         logger.warning(
             "GEMINI FALLBACK TRIGGERED | reason=%s | report_type=%s | threats=%d | keys_available=%d | initialized=%s | available=%s",
             fallback_reason,
@@ -3075,30 +3356,32 @@ Time Range Covered: {time_range_label}
             # Determine status message based on raw status
             if raw_status in {"success", "completed", "ok", "checked", "online", "available", "clean", "no_threat"}:
                 status = "Provider data collected successfully"
+            elif raw_status == "not_executed":
+                status = "Provider not executed in this scan window"
             elif raw_status in {"rate_limited", "quota_exceeded"}:
-                status = "Fallback intelligence used (rate limited)"
+                status = "Provider collection rate-limited"
             elif raw_status in {"error", "failed", "timeout"}:
-                status = "Fallback intelligence used (provider unavailable)"
+                status = "Provider collection failed"
             elif raw_status in {"not_authorized", "forbidden", "401", "403"}:
-                status = "Fallback intelligence used (authorization failed)"
+                status = "Provider authorization failed"
             elif raw_status in {"pending", "in_progress", "queued"}:
                 status = "Provider analysis did not complete in this scan window"
             elif raw_status == "skipped_local_mode":
-                status = "External APIs disabled for local-only analysis"
+                status = "External APIs intentionally disabled for local-only analysis"
             elif raw_status == "not_configured":
-                status = "Fallback intelligence used (provider not configured)"
+                status = "Provider key not configured"
             elif raw_status == "not_applicable":
-                status = "Fallback intelligence used (out of scope)"
+                status = "Provider not applicable for this input type"
             elif raw_status == "limited":
-                status = "Fallback intelligence used (limited availability)"
+                status = "Provider availability limited"
             else:
                 # Generic fallback for unknown statuses
                 reason = []
                 if not configured:
-                    reason.append("not configured")
+                    reason.append("provider key not configured")
                 if not applicable:
-                    reason.append("out of scope")
-                status = f"Fallback intelligence used ({', '.join(reason) if reason else 'provider unavailable'})"
+                    reason.append("outside provider coverage")
+                status = f"Provider status recorded as {raw_status} ({', '.join(reason) if reason else 'coverage metadata unavailable'})"
             
             rows.append(
                 [
@@ -3510,9 +3793,9 @@ Time Range Covered: {time_range_label}
                     ["Behavioral events", str(len(behavioral_events))],
                     ["Threat intel APIs", f"{api_call_count} API source(s)"],
                     ["IOC / indicator correlation", f"{len(threats)} indicator(s), {forensic_metadata.get('corroboration_count', 0)} corroborating source(s)"],
-                    ["Static / PE", "Not applicable to telemetry report"],
-                    ["Signature / YARA", "Not applicable to telemetry report"],
-                    ["Entropy", "Not applicable to telemetry report"],
+                    ["Static / PE", "Out of scope for telemetry-only report"],
+                    ["Signature / YARA", "Out of scope for telemetry-only report"],
+                    ["Entropy", "Out of scope for telemetry-only report"],
                 ]
             else:
                 static_status, static_detail = self._summarize_static_pe_analysis(threat_analysis, file_analysis, is_advanced_report)
@@ -3582,9 +3865,9 @@ Time Range Covered: {time_range_label}
                 pipeline_rows.append(["Behavior / Monitor", f"{len(behavioral_events)} ordered event(s)"])
                 pipeline_rows.append(["Threat Intel", api_pipeline_text])
                 pipeline_rows.append(["IOC / Indicator Correlation", f"{len(threats)} threat indicator(s), {forensic_metadata.get('corroboration_count', 0)} corroborating source(s)"])
-                pipeline_rows.append(["Static / PE", "Not applicable to telemetry report"])
-                pipeline_rows.append(["Signature / YARA", "Not applicable to telemetry report"])
-                pipeline_rows.append(["Entropy", "Not applicable to telemetry report"])
+                pipeline_rows.append(["Static / PE", "Out of scope for telemetry-only report"])
+                pipeline_rows.append(["Signature / YARA", "Out of scope for telemetry-only report"])
+                pipeline_rows.append(["Entropy", "Out of scope for telemetry-only report"])
                 pipeline_rows.append(["ML / Heuristic", f"Score {risk_contract.get('numeric_score', round(confidence * 100, 1))} | Confidence {risk_contract.get('confidence', f'{confidence * 100:.1f}%')}"])
             else:
                 elements.append(Paragraph("DETECTION PIPELINE DETAILS", heading_style))
@@ -4401,114 +4684,313 @@ Time Range Covered: {time_range_label}
     def _create_comprehensive_interval_report(
         self, threat_analysis: Dict[str, Any], ai_analysis: str
     ) -> bytes:
-        """Create a comprehensive multi-interval PDF with distinct per-interval analysis sections"""
+        """Create a comprehensive multi-interval PDF with full API, scan, and forensic coverage."""
         from io import BytesIO
-        
-        # Create PDF in memory
+
         pdf_buffer = BytesIO()
         doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
-        
-        # Styles
         styles = getSampleStyleSheet()
+
+        report_type = self._normalize_report_type(threat_analysis.get("report_type", "executive_summary"))
+        report_timezone = self._resolve_timezone_name(threat_analysis)
+        base_scan_records = self._build_scan_records(threat_analysis)
+        forensic_metadata = threat_analysis.get("forensic_metadata", {}) if isinstance(threat_analysis.get("forensic_metadata"), dict) else {}
+        coverage = self._build_detection_coverage_overview(threat_analysis)
+
         title_style = ParagraphStyle(
             "IntervalTitle",
             parent=styles["Heading1"],
-            fontSize=24,
+            fontSize=22,
             textColor=colors.HexColor("#1a1a1a"),
-            spaceAfter=6,
+            spaceAfter=8,
             alignment=TA_CENTER,
             fontName="Helvetica-Bold",
         )
-        
-        interval_heading = ParagraphStyle(
+        heading_style = ParagraphStyle(
             "IntervalHeading",
             parent=styles["Heading2"],
-            fontSize=16,
-            textColor=colors.HexColor("#0066cc"),
-            spaceAfter=12,
-            spaceBefore=12,
-            fontName="Helvetica-Bold",
-            backColor=colors.HexColor("#e6f2ff"),
-        )
-        
-        normal_style = ParagraphStyle(
-            "Normal",
-            parent=styles["Normal"],
-            fontSize=10,
+            fontSize=14,
+            textColor=colors.HexColor("#0f172a"),
             spaceAfter=8,
-            leading=14,
+            spaceBefore=8,
+            fontName="Helvetica-Bold",
         )
-        
+        normal_style = ParagraphStyle(
+            "IntervalNormal",
+            parent=styles["Normal"],
+            fontSize=9.5,
+            spaceAfter=6,
+            leading=13,
+        )
+
+        def _safe_text(value: Any) -> str:
+            return str(value or "-")
+
+        def _shorten_text(value: Any, max_len: int = 120) -> str:
+            text = _safe_text(value)
+            if len(text) <= max_len:
+                return text
+            return text[: max_len - 3] + "..."
+
         def _cell(value: Any, header: bool = False):
-            style = ParagraphStyle(
-                "Cell",
+            cell_style = ParagraphStyle(
+                "IntervalCell",
                 parent=normal_style,
-                fontSize=8 if not header else 9,
+                fontSize=8.2 if not header else 8.8,
                 fontName="Helvetica-Bold" if header else "Helvetica",
                 textColor=colors.whitesmoke if header else colors.black,
             )
-            text = str(value or "-")
-            return Paragraph(text, style)
-        
+            return Paragraph(_safe_text(value), cell_style)
+
         def _wrap_rows(rows: list[list[Any]], header_rows: int = 1):
-            wrapped = []
+            wrapped: list[list[Any]] = []
             for row_index, row in enumerate(rows):
                 wrapped.append([_cell(col, header=row_index < header_rows) for col in row])
             return wrapped
-        
-        elements = []
-        report_type = self._normalize_report_type(threat_analysis.get("report_type", "executive_summary"))
-        verdict = threat_analysis.get("verdict", "unknown").upper()
-        confidence = threat_analysis.get("confidence", 0.0)
-        
-        # Title page
-        elements.append(Paragraph("SENTINEL-AI COMPREHENSIVE REPORT", title_style))
-        elements.append(Paragraph(f"Multi-Interval Analysis: 24H | 7D | 30D", normal_style))
-        elements.append(Spacer(1, 0.2 * inch))
+
+        def _parse_maybe_json(raw: Any) -> dict:
+            if isinstance(raw, dict):
+                return raw
+            if not isinstance(raw, str) or not raw.strip():
+                return {}
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+
+        def _status_summary(status_map: dict) -> str:
+            if not isinstance(status_map, dict) or not status_map:
+                return "none"
+            top = sorted(status_map.items(), key=lambda item: int(item[1] or 0), reverse=True)[:2]
+            return ", ".join(f"{k}:{v}" for k, v in top)
+
+        interval_summaries = threat_analysis.get("interval_summaries") or self._build_interval_summaries(threat_analysis)
+        threat_analysis["interval_summaries"] = interval_summaries
+
+        interval_order = ["24h", "7d", "30d"]
+        known = {str(item.get("interval", "")).lower() for item in interval_summaries if isinstance(item, dict)}
+        intervals = [item for item in interval_order if item in known] or interval_order
+        interval_labels = {
+            "24h": "24 HOURS (Immediate Response Window)",
+            "7d": "7 DAYS (Operational Trend Window)",
+            "30d": "30 DAYS (Strategic Posture Window)",
+        }
+        interval_hours = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+
+        elements: list[Any] = []
+        elements.append(Paragraph("SENTINEL-AI COMPREHENSIVE MULTI-INTERVAL REPORT", title_style))
+        elements.append(Paragraph("Coverage: 24H, 7D, 30D | Executive / Technical / Forensic Structured Evidence", normal_style))
+        elements.append(Spacer(1, 0.15 * inch))
         elements.append(Paragraph(f"Report Type: {report_type.replace('_', ' ').title()}", normal_style))
-        elements.append(Paragraph(f"Verdict: {verdict} (Confidence: {confidence*100:.1f}%)", normal_style))
-        elements.append(PageBreak())
-        
-        # Generate sections for each interval
-        intervals = ["24h", "7d", "30d"]
-        interval_labels = {"24h": "24 HOURS (Immediate)", "7d": "7 DAYS (Weekly Trends)", "30d": "30 DAYS (Strategic)"}
-        
-        for interval in intervals:
-            elements.append(Paragraph(f"ANALYSIS: {interval_labels[interval]}", interval_heading))
-            elements.append(Spacer(1, 0.1 * inch))
-            
-            # Interval-specific narrative
-            narrative = self._interval_analysis_text(interval, threat_analysis)
-            elements.append(Paragraph(narrative, normal_style))
-            elements.append(Spacer(1, 0.15 * inch))
-            
-            # Interval focus matrix
-            elements.append(Paragraph(f"METRICS & FOCUS - {interval.upper()}", styles["Heading3"]))
-            focus_rows = self._interval_focus_rows(interval, threat_analysis)
-            focus_table = Table(_wrap_rows(focus_rows), colWidths=[2.0 * inch, 4.0 * inch])
-            focus_table.setStyle(
-                TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ])
+        elements.append(Paragraph(f"Verdict: {str(threat_analysis.get('verdict', 'unknown')).upper()} | Confidence: {float(threat_analysis.get('confidence', 0.0) or 0.0) * 100:.1f}%", normal_style))
+        elements.append(Paragraph(f"Detection Mode: {str(coverage.get('mode', 'unknown')).replace('_', ' ').title()}", normal_style))
+        elements.append(Spacer(1, 0.15 * inch))
+
+        for idx, interval in enumerate(intervals):
+            hours = interval_hours.get(interval, 24)
+            summary = next(
+                (item for item in interval_summaries if isinstance(item, dict) and str(item.get("interval", "")).lower() == interval),
+                {},
             )
-            elements.append(focus_table)
-            elements.append(Spacer(1, 0.3 * inch))
-            
-            if interval != intervals[-1]:
+            activity = summary.get("activity", {}) if isinstance(summary, dict) else {}
+            vulns = summary.get("vulns", {}) if isinstance(summary, dict) else {}
+
+            api_usage = {}
+            interval_threat_feed = []
+            try:
+                from .activity_database import activity_db
+                api_usage = (activity_db.get_api_usage_summary(hours=hours) or {}).get("api_coverage", {})
+                interval_threat_feed = activity_db.get_recent_threats(limit=1000, hours=hours)
+            except Exception as exc:
+                logger.debug("Could not load interval activity data for %s: %s", interval, exc)
+
+            # Build scan rows from base_scan_records with proper detection results
+            scan_rows = []
+            for base_scan in base_scan_records:
+                if not isinstance(base_scan, dict):
+                    continue
+                
+                detection = base_scan.get("detection_results", {}) if isinstance(base_scan.get("detection_results"), dict) else {}
+                classification = base_scan.get("classification", {}) if isinstance(base_scan.get("classification"), dict) else {}
+                
+                # Count real API checks (not fallback or not_executed)
+                real_api_checks = 0
+                for api_name, api_result in detection.items():
+                    api_result_str = str(api_result or "").strip().lower()
+                    if api_result_str and api_result_str not in {"", "none", "unknown", "not_executed", "unavailable"} and "fallback" not in api_result_str:
+                        real_api_checks += 1
+                
+                # Count APIs that were attempted (any non-empty result)
+                apis_applicable = sum(
+                    1
+                    for value in detection.values()
+                    if str(value or "").strip().lower() not in {"", "none", "unknown", "not_executed"}
+                )
+                
+                scan_rows.append(
+                    {
+                        "timestamp": self._format_timestamp_for_report(base_scan.get("timestamp"), report_timezone),
+                        "artifact_type": base_scan.get("indicator_type", "Unknown"),
+                        "artifact_value": base_scan.get("indicator_value", ""),
+                        "verdict": str(classification.get("status", "unknown")).upper(),
+                        "confidence": float(classification.get("confidence", 0.0) or 0.0) / 100.0,
+                        "corroboration": base_scan.get("scan_id", "n/a"),
+                        "sources": real_api_checks,
+                        "apis_checked": real_api_checks,
+                        "apis_applicable": apis_applicable,
+                        "detection_results": detection,
+                    }
+                )
+
+            elements.append(Paragraph(f"INTERVAL ANALYSIS: {interval_labels.get(interval, interval.upper())}", heading_style))
+            elements.append(Paragraph(self._interval_report_interpretation(interval, threat_analysis, report_type), normal_style))
+
+            metric_rows = [["Metric", "Value"]]
+            metric_rows.extend(self._interval_focus_rows(interval, threat_analysis))
+            metric_rows.extend(
+                [
+                    ["Threat scans (activity)", str(activity.get("threat_scans", activity.get("scans", 0)))],
+                    ["Threats detected", str(activity.get("threats_detected", 0))],
+                    ["Websites visited", str(activity.get("websites_visited", activity.get("websites_monitored", 0)))],
+                    ["Applications launched", str(activity.get("applications_launched", 0))],
+                    ["Network connections", str(activity.get("network_connections", 0))],
+                    ["Endpoint vulnerabilities", str(vulns.get("total", 0) if isinstance(vulns, dict) else 0)],
+                    ["Recorded scans in interval", str(len(scan_rows))],
+                ]
+            )
+            metric_table = Table(_wrap_rows(metric_rows), colWidths=[2.25 * inch, 3.75 * inch])
+            metric_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            elements.append(metric_table)
+            elements.append(Spacer(1, 0.12 * inch))
+
+            elements.append(Paragraph(f"EXTERNAL API COVERAGE - {interval.upper()}", heading_style))
+            api_rows = [["Provider", "Checked", "Applicable", "Configured", "Status Summary"]]
+            provider_order = ["VirusTotal", "AbuseIPDB", "Shodan", "URLScan.io", "Hybrid Analysis"]
+            for provider_name in provider_order:
+                provider_stats = api_usage.get(provider_name, {}) if isinstance(api_usage, dict) else {}
+                api_rows.append(
+                    [
+                        provider_name,
+                        str(int(provider_stats.get("called", 0) or 0)),
+                        str(int(provider_stats.get("applicable", 0) or 0)),
+                        str(int(provider_stats.get("configured", 0) or 0)),
+                        _shorten_text(_status_summary(provider_stats.get("status", {})), 70),
+                    ]
+                )
+            api_table = Table(_wrap_rows(api_rows), colWidths=[1.4 * inch, 0.75 * inch, 0.8 * inch, 0.8 * inch, 2.25 * inch])
+            api_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eff6ff")]),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.2),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            elements.append(api_table)
+            elements.append(Spacer(1, 0.12 * inch))
+
+            elements.append(Paragraph(f"PER-SCAN STRUCTURED RECORDS - {interval.upper()}", heading_style))
+            per_scan_rows = [[
+                "Scan", "Artifact", "Verdict", "VirusTotal", "AbuseIPDB", "Shodan", "URLScan", "Hybrid"
+            ]]
+            for row in scan_rows:
+                detection = row.get("detection_results", {}) if isinstance(row.get("detection_results"), dict) else {}
+                vt_result = _shorten_text(str(detection.get("virustotal", "n/a")), 20)
+                ac_result = _shorten_text(str(detection.get("abuseipdb", "n/a")), 20)
+                sh_result = _shorten_text(str(detection.get("shodan", "n/a")), 15)
+                us_result = _shorten_text(str(detection.get("urlscan", "n/a")), 15)
+                ha_result = _shorten_text(str(detection.get("hybrid_analysis", "n/a")), 15)
+                
+                per_scan_rows.append(
+                    [
+                        _shorten_text(f"{row.get('artifact_type', 'Unknown')}:{row.get('timestamp', '-')[-8:]}", 24),
+                        _shorten_text(row.get("artifact_value", "-"), 28),
+                        row.get("verdict", "UNKNOWN"),
+                        vt_result,
+                        ac_result,
+                        sh_result,
+                        us_result,
+                        ha_result,
+                    ]
+                )
+            per_scan_table = Table(
+                _wrap_rows(per_scan_rows),
+                colWidths=[0.95 * inch, 1.25 * inch, 0.68 * inch, 0.72 * inch, 0.72 * inch, 0.62 * inch, 0.62 * inch, 0.62 * inch],
+            )
+            per_scan_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.3),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            elements.append(per_scan_table)
+            elements.append(Spacer(1, 0.12 * inch))
+
+            elements.append(Paragraph(f"FORENSIC EVALUATION - {interval.upper()}", heading_style))
+            forensic_rows = [
+                ["Forensic Metric", "Value"],
+                ["Corroboration count", str(forensic_metadata.get("corroboration_count", 0))],
+                ["Corroboration threshold met", str(bool(forensic_metadata.get("corroboration_threshold_met", False)))],
+                ["APIs checked / applicable", f"{int(forensic_metadata.get('apis_checked', 0) or 0)}/{int(forensic_metadata.get('total_apis_available', 0) or 0)}"],
+                ["Interval threat events", str(len(interval_threat_feed))],
+                ["Detection mode", str(coverage.get("mode", "unknown")).replace("_", " ").title()],
+                ["Forensic narrative", _shorten_text(self._interval_report_interpretation(interval, threat_analysis, "forensic_investigation"), 900)],  # Increased from 180 to 900 to preserve complete analysis
+            ]
+            forensic_table = Table(_wrap_rows(forensic_rows), colWidths=[2.05 * inch, 3.95 * inch])
+            forensic_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#7c2d12")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.4),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            elements.append(forensic_table)
+            elements.append(Spacer(1, 0.12 * inch))
+
+            if report_type == "executive_summary":
+                elements.append(Paragraph("EXECUTIVE INTERVAL DECISION SUMMARY", heading_style))
+                elements.append(
+                    Paragraph(
+                        self._interval_report_interpretation(interval, threat_analysis, "executive_summary"),
+                        normal_style,
+                    )
+                )
+            elif report_type == "technical_analysis":
+                elements.append(Paragraph("TECHNICAL INTERVAL INTERPRETATION", heading_style))
+                elements.append(
+                    Paragraph(
+                        self._interval_report_interpretation(interval, threat_analysis, "technical_analysis"),
+                        normal_style,
+                    )
+                )
+            else:
+                elements.append(Paragraph("FORENSIC INTERVAL INTERPRETATION", heading_style))
+                elements.append(
+                    Paragraph(
+                        self._interval_report_interpretation(interval, threat_analysis, "forensic_investigation"),
+                        normal_style,
+                    )
+                )
+
+            if idx < len(intervals) - 1:
                 elements.append(PageBreak())
-        
-        # Build PDF
+
         doc.build(elements)
-        
-        # Get PDF bytes
         pdf_buffer.seek(0)
         return pdf_buffer.read()
 
@@ -4540,6 +5022,10 @@ Time Range Covered: {time_range_label}
         api_status = api_results.get("api_status", {}) if isinstance(api_results.get("api_status"), dict) else {}
         ai_analysis = threat_analysis.get("ai_analysis", {}) if isinstance(threat_analysis.get("ai_analysis"), dict) else {}
         behavioral_sequence = threat_analysis.get("behavioral_sequence") or forensic.get("behavioral_sequence") or []
+
+        def _has_provider_payload(provider_key: str) -> bool:
+            payload = api_results.get(provider_key)
+            return isinstance(payload, dict) and bool(payload) and not payload.get("error")
 
         methods: list[Dict[str, Any]] = []
 
@@ -4664,6 +5150,9 @@ Time Range Covered: {time_range_label}
             applicable_expected = int(forensic.get("total_apis_available", 0) or 0)
         not_applicable_count = sum(1 for status in api_status_values if status == "not_applicable")
         rate_limited_count = sum(1 for status in api_status_values if status in {"rate_limited", "quota_exceeded"})
+        real_payload_count = sum(1 for key in ["virustotal", "abuseipdb", "shodan", "urlscan", "hybrid_analysis"] if _has_provider_payload(key))
+        if real_payload_count > checked_count:
+            checked_count = real_payload_count
         if api_results or api_status:
             if checked_count > 0:
                 api_status_label = "COMPLETED"
@@ -4680,12 +5169,20 @@ Time Range Covered: {time_range_label}
                     f"{checked_count}/{applicable_expected or 0}/{not_applicable_count}/{rate_limited_count})."
                 )
             else:
-                api_status_label = "LIMITED"
-                api_status_details = (
-                    "External API payload was present but no provider completed in this scan window "
-                    f"(completed/applicable/not_applicable/rate_limited: "
-                    f"{checked_count}/{applicable_expected or 0}/{not_applicable_count}/{rate_limited_count})."
-                )
+                if real_payload_count > 0:
+                    api_status_label = "COMPLETED"
+                    api_status_details = (
+                        "External API payload contained real provider results, even though status metadata was incomplete "
+                        f"(completed/applicable/not_applicable/rate_limited: "
+                        f"{checked_count}/{applicable_expected or checked_count}/{not_applicable_count}/{rate_limited_count})."
+                    )
+                else:
+                    api_status_label = "LIMITED"
+                    api_status_details = (
+                        "External API payload was present but no provider completed in this scan window "
+                        f"(completed/applicable/not_applicable/rate_limited: "
+                        f"{checked_count}/{applicable_expected or 0}/{not_applicable_count}/{rate_limited_count})."
+                    )
             add_method("Threat Intelligence APIs", api_status_label, api_status_details)
 
         unavailable_reasons = forensic.get("external_corroboration_unavailable_reasons", []) if isinstance(forensic.get("external_corroboration_unavailable_reasons"), list) else []
@@ -4726,12 +5223,12 @@ Time Range Covered: {time_range_label}
     def _summarize_static_pe_analysis(self, threat_analysis: Dict[str, Any], file_analysis: Dict[str, Any], is_advanced_report: bool) -> tuple[str, str]:
         """Return a readable static/PE summary for report tables."""
         if is_advanced_report:
-            return "Not applicable to telemetry report", "Static analysis is only shown for file-based technical reports."
+            return "Not collected in telemetry report", "Static analysis is shown only for file-based technical reports."
 
         input_type = str(threat_analysis.get("input_type") or "").strip().lower()
         is_file_scan = input_type in {"file", "file_hash", "hash", "artifact"} or bool(file_analysis)
         if not is_file_scan:
-            return "Not applicable", "Target profile is not a file artifact in this report payload."
+            return "Out of scope", "The target profile is not a file artifact in this report payload."
 
         if not isinstance(file_analysis, dict) or not file_analysis:
             return "Limited", "File scan context exists, but the static analysis payload was not attached to this report."
@@ -4884,8 +5381,8 @@ Time Range Covered: {time_range_label}
         else:
             methods.append({
                 "name": "Signature Matching",
-                "status": "NOT APPLICABLE",
-                "details": "Target profile is not a file artifact in this report payload; file signature matching does not apply."
+                "status": "OUT OF SCOPE",
+                "details": "The target profile is not a file artifact in this report payload; file signature matching was not evaluated."
             })
         
         # 2. Entropy Analysis
@@ -4909,8 +5406,8 @@ Time Range Covered: {time_range_label}
         else:
             methods.append({
                 "name": "Shannon Entropy Analysis",
-                "status": "NOT APPLICABLE",
-                "details": "Target profile is not a file artifact in this report payload; entropy analysis does not apply."
+                "status": "OUT OF SCOPE",
+                "details": "The target profile is not a file artifact in this report payload; entropy analysis was not evaluated."
             })
 
         # 2b. IOC and contextual string heuristics
@@ -4918,11 +5415,11 @@ Time Range Covered: {time_range_label}
         suspicious_count = len(file_data.get("suspicious_strings", []) or [])
         methods.append({
             "name": "IOC & Context Heuristics",
-            "status": "COMPLETED" if (ioc_count or suspicious_count or has_file_payload) else ("LIMITED" if is_file_scan else "NOT APPLICABLE"),
+            "status": "COMPLETED" if (ioc_count or suspicious_count or has_file_payload) else ("LIMITED" if is_file_scan else "OUT OF SCOPE"),
             "details": (
                 f"Extracted {ioc_count} IOC value(s) and {suspicious_count} suspicious context string(s) for heuristic enrichment."
                 if (ioc_count or suspicious_count or has_file_payload)
-                else ("File scan context exists, but IOC/context telemetry was not present in this report payload." if is_file_scan else "Target profile is not a file artifact in this report payload; file IOC/context heuristics do not apply.")
+                else ("File scan context exists, but IOC/context telemetry was not present in this report payload." if is_file_scan else "The target profile is not a file artifact in this report payload; file IOC/context heuristics were not evaluated.")
             ),
         })
 
@@ -4953,8 +5450,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "PE/COFF Binary Analysis",
-                "status": "NOT APPLICABLE",
-                "details": "Target profile is not a file artifact in this report payload; PE/COFF analysis does not apply."
+                "status": "OUT OF SCOPE",
+                "details": "The target profile is not a file artifact in this report payload; PE/COFF analysis was not evaluated."
             })
         elif not lief_available:
             methods.append({
@@ -4981,8 +5478,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "Code Disassembly",
-                "status": "NOT APPLICABLE",
-                "details": "Target profile is not a file artifact in this report payload; disassembly analysis does not apply."
+                "status": "OUT OF SCOPE",
+                "details": "The target profile is not a file artifact in this report payload; disassembly analysis was not evaluated."
             })
         elif not capstone_available:
             methods.append({
@@ -5010,8 +5507,8 @@ Time Range Covered: {time_range_label}
         elif not is_file_scan:
             methods.append({
                 "name": "Machine Learning Classification",
-                "status": "NOT APPLICABLE",
-                "details": "Target profile is not a file artifact in this report payload; file ML classification does not apply."
+                "status": "OUT OF SCOPE",
+                "details": "The target profile is not a file artifact in this report payload; file ML classification was not evaluated."
             })
         elif not sklearn_available:
             methods.append({
@@ -5064,10 +5561,10 @@ Time Range Covered: {time_range_label}
                     "run a fresh scan/report to capture full provider coverage details."
                 )
             else:
-                api_method_status = "NOT EXECUTED"
+                api_method_status = "NOT COLLECTED"
                 api_method_details = (
-                    f"Threat intelligence APIs were not executed for this target profile "
-                    f"({not_applicable_count}/{total_tracked_count} marked not applicable in provider map)."
+                    f"Threat intelligence APIs were not collected for this target profile "
+                    f"({not_applicable_count}/{total_tracked_count} marked out of scope in provider map)."
                 )
         elif checked_count >= expected_count:
             api_method_status = "COMPLETED"

@@ -526,6 +526,7 @@ class ClientRegistrationRequest(BaseModel):
 
     hostname: str
     ip_address: str
+    enrollment_token: Optional[str] = None
     mac_address: Optional[str] = None
     os_type: str
     os_version: Optional[str] = None
@@ -1070,6 +1071,30 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
     Register a new client installation or update existing one
     """
     try:
+        organization_id = None
+        department_id = None
+        token_prefix = None
+        if request.enrollment_token:
+            from ....models import EnrollmentToken
+
+            token_hash = hashlib.sha256(request.enrollment_token.strip().encode("utf-8")).hexdigest()
+            token_result = await db.execute(
+                select(EnrollmentToken).where(
+                    EnrollmentToken.token_hash == token_hash,
+                    EnrollmentToken.is_active.is_(True),
+                )
+            )
+            enrollment = token_result.scalar_one_or_none()
+            if enrollment is None:
+                raise HTTPException(status_code=401, detail="Invalid or expired enrollment token")
+            if enrollment.expires_at and enrollment.expires_at < utcnow():
+                enrollment.is_active = False
+                await db.commit()
+                raise HTTPException(status_code=401, detail="Enrollment token expired")
+            organization_id = enrollment.organization_id
+            department_id = enrollment.department_id
+            token_prefix = enrollment.token_prefix
+
         # Check if client already exists (by IP or hostname)
         query = select(ClientInstallation).where(
             or_(
@@ -1177,6 +1202,8 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                 gateway=request.gateway,
                 dns_servers=request.dns_servers or [],
                 version=request.version,
+                organization_id=organization_id,
+                department_id=department_id,
                 protection_enabled=True,
                 is_active=False,
                 blocked_ips=[],
@@ -1186,6 +1213,27 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
             db.add(new_client)
             await db.commit()
             await db.refresh(new_client)
+
+            if request.enrollment_token:
+                from ....models import AuditLog
+
+                db.add(
+                    AuditLog(
+                        organization_id=organization_id,
+                        department_id=department_id,
+                        action="client.enroll",
+                        resource_type="client_installation",
+                        resource_id=str(new_client.id),
+                        outcome="success",
+                        details={
+                            "client_id": new_client.client_id,
+                            "hostname": new_client.hostname,
+                            "ip_address": new_client.ip_address,
+                            "token_prefix": token_prefix,
+                        },
+                    )
+                )
+                await db.commit()
 
             logger.info("New client registered from hostname=%s ip=%s", request.hostname, request.ip_address)
 

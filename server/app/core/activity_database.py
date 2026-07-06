@@ -902,6 +902,10 @@ class ActivityDatabase:
                 except Exception:
                     meta_obj = {}
                 host_ip = meta_obj.get("host_ip")
+                try:
+                    confidence_value = float(risk_score if risk_score is not None else 0.0)
+                except (TypeError, ValueError):
+                    confidence_value = 0.0
                 results.append({
                     "url": url or "",
                     "domain": display,
@@ -915,7 +919,7 @@ class ActivityDatabase:
                     "visit_time_raw": meta_obj.get("visit_time"),
                     "verdict": (verdict or "unknown").lower(),
                     "risk_level": (risk_level or "LOW").upper(),
-                    "confidence": round(float(risk_score or 0.0), 1),
+                    "confidence": round(confidence_value, 1),
                     "scan_status": status or "pending",
                     "time": ts,
                 })

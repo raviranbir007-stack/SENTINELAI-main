@@ -13,11 +13,11 @@ from typing import Dict, Any, Optional, List
 
 # Make google.genai import optional to prevent server crash
 try:
-    import google.genai as genai
-    from google.genai.types import GenerateContentConfig, HttpOptions
+    import google.genai as genai  # type: ignore
+    from google.genai.types import GenerateContentConfig, HttpOptions  # type: ignore
     GENAI_AVAILABLE = True
 except ImportError:
-    genai = None
+    genai: Optional[Any] = None
     GenerateContentConfig = None
     HttpOptions = None
     GENAI_AVAILABLE = False
@@ -25,7 +25,7 @@ except ImportError:
 # Legacy fallback: google-generativeai - REMOVED to eliminate deprecation warnings
 # The system now uses google.genai exclusively
 LEGACY_GENAI_AVAILABLE = False
-legacy_genai = None
+legacy_genai: Optional[Any] = None
 
 try:
     from app.config import settings
@@ -117,10 +117,47 @@ class GeminiIntegration:
     def _build_client(self, api_key: str):
         if not GENAI_AVAILABLE:
             return None
-        return genai.Client(
-            api_key=api_key,
-            http_options=HttpOptions(api_version='v1alpha')
-        )
+
+        # At runtime genai should be a module; assert for static analyzers
+        if genai is None:
+            return None
+
+        # Attempt to build HttpOptions safely - some versions may not accept api_version kw
+        http_opts = None
+        if HttpOptions is not None:
+            try:
+                # Preferred form (may be flagged by static checkers depending on installed genai)
+                http_opts = HttpOptions(api_version='v1alpha')  # type: ignore
+            except TypeError:
+                try:
+                    # Some older variants may accept a single positional arg
+                    http_opts = HttpOptions('v1alpha')  # type: ignore
+                except Exception:
+                    http_opts = None
+            except Exception:
+                http_opts = None
+
+        # Use dynamic lookup for Client to avoid static type issues and allow runtime flexibility
+        ClientCls = getattr(genai, 'Client', None)
+        if ClientCls is None:
+            return None
+
+        try:
+            if http_opts is not None:
+                # type: ignore to silence static analyzers about varying Client signatures
+                return ClientCls(api_key=api_key, http_options=http_opts)  # type: ignore
+            # Fallback: create client without http options
+            return ClientCls(api_key=api_key)  # type: ignore
+        except TypeError:
+            # Some genai.Client constructors may have different signatures; try positional
+            try:
+                return ClientCls(api_key)  # type: ignore
+            except Exception as e:
+                logger.debug("Failed to construct genai.Client (positional): %s", e)
+                return None
+        except Exception as e:
+            logger.debug("Failed to construct genai.Client: %s", e)
+            return None
 
     def _classify_error(self, message: str) -> str:
         lower = str(message or "").lower()
@@ -174,8 +211,32 @@ class GeminiIntegration:
                 for idx, api_key in enumerate(self.api_keys):
                     try:
                         candidate_client = self._build_client(api_key)
-                        models = candidate_client.models.list()
-                        candidate_models = [model.name for model in models if 'gemini' in model.name.lower()]
+                        if candidate_client is None:
+                            # Unexpected: client could not be built for this key
+                            self._last_error = "client_build_failed"
+                            continue
+
+                        models_attr = getattr(candidate_client, 'models', None)
+                        if models_attr is None or not hasattr(models_attr, 'list'):
+                            # Models attribute not present on client - skip this key
+                            self._last_error = 'models_unavailable_on_client'
+                            continue
+
+                        try:
+                            models = models_attr.list() or []
+                        except Exception:
+                            models = []
+
+                        candidate_models = []
+                        for m in models:
+                            name = getattr(m, 'name', '')
+                            if not isinstance(name, str) or not name:
+                                continue
+                            try:
+                                if 'gemini' in name.lower():
+                                    candidate_models.append(name)
+                            except Exception:
+                                continue
                         self.client = candidate_client
                         self.available_models = candidate_models
                         self.active_key_index = idx
@@ -195,14 +256,29 @@ class GeminiIntegration:
                     return
             elif LEGACY_GENAI_AVAILABLE:
                 # Legacy google-generativeai client
-                legacy_genai.configure(api_key=self.api_keys[0])
+                if legacy_genai is None:
+                    logger.error("Legacy genai client not available despite flag; skipping")
+                    self.initialized = False
+                    return
+                first_key = self.api_keys[0] if self.api_keys else ""
+                legacy_genai.configure(api_key=first_key)
                 self.client = legacy_genai
                 self.backend = "google-generativeai"
 
                 # Try to list models if available
                 try:
-                    models = self.client.list_models()
-                    self.available_models = [m.name for m in models if 'gemini' in m.name.lower()]
+                    models = self.client.list_models() or []
+                    available = []
+                    for m in models:
+                        name = getattr(m, 'name', '')
+                        if not isinstance(name, str) or not name:
+                            continue
+                        try:
+                            if 'gemini' in name.lower():
+                                available.append(name)
+                        except Exception:
+                            continue
+                    self.available_models = available
                     if not self.available_models:
                         logger.warning("⚠️ Gemini API key may be expired or invalid - no models available")
                         self.initialized = False
@@ -294,17 +370,32 @@ class GeminiIntegration:
 
         if self.backend == "google-generativeai":
             try:
+                if not self.client:
+                    return {"success": False, "error": "legacy client unavailable", "text": None}
+
                 model_name = self.model_candidates[0]
-                model = self.client.GenerativeModel(model_name)
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "temperature": temperature,
-                        "max_output_tokens": max_output_tokens,
-                        "top_p": 0.8,
-                        "top_k": 40,
-                    },
-                )
+                GenerativeModelCls = getattr(self.client, 'GenerativeModel', None)
+                if GenerativeModelCls is None:
+                    return {"success": False, "error": "GenerativeModel not available on legacy client", "text": None}
+
+                try:
+                    model = GenerativeModelCls(model_name)  # type: ignore
+                except Exception:
+                    return {"success": False, "error": "failed to construct legacy GenerativeModel", "text": None}
+
+                # Some legacy clients expect a generation_config object; attempt to use dict
+                try:
+                    response = model.generate_content(
+                        prompt,
+                        generation_config={
+                            "temperature": temperature,
+                            "max_output_tokens": max_output_tokens,
+                            "top_p": 0.8,
+                            "top_k": 40,
+                        },
+                    )  # type: ignore
+                except Exception as e:
+                    return {"success": False, "error": str(e), "text": None}
                 text = getattr(response, "text", None)
                 return {"success": bool(text), "text": text, "model": model_name, "key_index": 1, "error": ""}
             except Exception as e:
@@ -324,17 +415,47 @@ class GeminiIntegration:
                     last_error = str(e)
                     continue
 
+                if client is None:
+                    last_error = 'client_build_failed'
+                    continue
+
+                models_attr = getattr(client, 'models', None)
+                if models_attr is None or not hasattr(models_attr, 'generate_content'):
+                    last_error = 'models_api_unavailable'
+                    continue
+
                 for model_name in self.model_candidates:
                     try:
-                        response = client.models.generate_content(
+                        gen_config_cls = GenerateContentConfig
+                        if gen_config_cls is None:
+                            # If the typed class is not available, attempt to pass a dict and rely on runtime duck-typing
+                            gen_config = {
+                                "temperature": temperature,
+                                "max_output_tokens": max_output_tokens,
+                                "top_p": 0.8,
+                                "top_k": 40,
+                            }
+                        else:
+                            try:
+                                gen_config = gen_config_cls(
+                                    temperature=temperature,
+                                    max_output_tokens=max_output_tokens,
+                                    top_p=0.8,
+                                    top_k=40,
+                                )  # type: ignore
+                            except Exception:
+                                # Fallback to dict if instantiation fails for this variant
+                                gen_config = {
+                                    "temperature": temperature,
+                                    "max_output_tokens": max_output_tokens,
+                                    "top_p": 0.8,
+                                    "top_k": 40,
+                                }
+
+                        response = models_attr.generate_content(
                             model=model_name,
                             contents=prompt,
-                            config=GenerateContentConfig(
-                                temperature=temperature,
-                                max_output_tokens=max_output_tokens,
-                                top_p=0.8,
-                                top_k=40,
-                            )
+                            config=gen_config
                         )
                         text = getattr(response, "text", None)
                         if text:
@@ -376,7 +497,7 @@ class GeminiIntegration:
         self._last_error = last_error or "Gemini generation failed"
         return {"success": False, "error": self._last_error, "text": None}
     
-    async def analyze_with_gemini(self, prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def analyze_with_gemini(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Analyze content with Gemini AI (async wrapper)
         
@@ -567,7 +688,7 @@ class GeminiIntegration:
         except Exception as e:
             return {"status": "parse_error", "error": str(e)}
     
-    def _format_hybrid_analysis_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_hybrid_analysis_data(self, data: Any) -> Dict[str, Any]:
         """Format Hybrid Analysis data"""
         try:
             if isinstance(data, list) and len(data) > 0:

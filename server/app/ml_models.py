@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Union, overload
 
 # Optional numpy import - models work without it (minimal storage mode)
 try:
@@ -60,16 +60,26 @@ class AnomalyDetectionModel:
         self.threshold = 0.8
         logger.info(f"AnomalyDetectionModel initialized (NumPy: {NUMPY_AVAILABLE})")
         
-    def predict(self, features) -> Dict[str, Any]:
-        """Predict anomalies using enhanced rule-based approach
-        
-        Args:
-            features: Either Dict[str, Any] or List[Dict[str, Any]]
+    @overload
+    def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+    @overload
+    def predict(self, features: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        ...
+
+    def predict(self, features: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Predict anomalies using enhanced rule-based approach.
+
+        Supports single-item dict input or a list of dicts for batch prediction.
         """
-        # Handle list input (batch prediction)
         if isinstance(features, list):
-            return [self.predict(f) for f in features]
-            
+            return [self._predict_single(f) for f in features]
+
+        return self._predict_single(features)
+
+    def _predict_single(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal single-item prediction implementation."""
         # Enhanced anomaly detection
         score = 0.12
         anomaly_factors = []
@@ -213,10 +223,33 @@ class AnomalyDetectionModel:
         else:
             risk_level = "low"
 
+        # CRITICAL FIX: Ensure confidence calculation is valid and bounded
+        base_conf = 0.62
+        try:
+            base_conf = float(base_conf or 0.62)
+        except (TypeError, ValueError):
+            base_conf = 0.62
+
+        factors_boost = 0.0
+        try:
+            factors_boost = min(0.30, float(0.05 * len(anomaly_factors) if anomaly_factors else 0))
+        except (TypeError, ValueError):
+            factors_boost = 0.0
+
+        score_boost = 0.0
+        try:
+            score_boost = float(0.08 if float(score or 0.0) >= 0.85 else 0.0)
+        except (TypeError, ValueError):
+            score_boost = 0.0
+
+        # Calculate and strictly bound confidence to [0, 1]
+        confidence = base_conf + factors_boost + score_boost
+        confidence = max(0.0, min(0.98, float(confidence or 0.0)))
+
         return {
             "is_anomaly": score > self.threshold,
             "score": round(score, 3),
-            "confidence": min(0.98, 0.62 + (0.05 * len(anomaly_factors)) + (0.08 if score >= 0.85 else 0.0)),
+            "confidence": confidence,
             "factors": anomaly_factors,
             "risk_level": risk_level,
             "signal_breakdown": signal_breakdown,
@@ -230,22 +263,31 @@ class ThreatPredictionModel:
         self.threshold = 0.7
         logger.info(f"ThreatPredictionModel initialized (NumPy: {NUMPY_AVAILABLE})")
         
-    def predict(self, features) -> Dict[str, Any]:
-        """Predict threats using enhanced rule-based approach
-        
-        Args:
-            features: Either Dict[str, Any] or List[Dict[str, Any]]
+    @overload
+    def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        ...
+
+    @overload
+    def predict(self, features: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        ...
+
+    def predict(self, features: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Predict threats using enhanced rule-based approach.
+
+        Supports single-item dict input or a list of dicts for batch prediction.
         """
-        # Handle list input (batch prediction)
         if isinstance(features, list):
-            return [self.predict(f) for f in features]
-            
+            return [self._predict_single(f) for f in features]
+
+        return self._predict_single(features)
+
+    def _predict_single(self, features: Dict[str, Any]) -> Dict[str, Any]:
         # Enhanced threat prediction
         probability = 0.08
         threat_level = "safe"
         factors = []
         signal_breakdown: Dict[str, float] = {}
-        
+
         threat_indicators = features.get('threat_indicators', [])
         indicator_count = len(threat_indicators) if isinstance(threat_indicators, list) else _safe_int(features.get('threat_indicator_count', 0))
         critical_count = 0
@@ -398,12 +440,35 @@ class ThreatPredictionModel:
             threat_level = "suspicious"
         else:
             threat_level = "safe"
+        
+        # CRITICAL FIX: Ensure all components are valid floats with strict bounds
+        base_conf = 0.58
+        try:
+            base_conf = float(base_conf or 0.58)
+        except (TypeError, ValueError):
+            base_conf = 0.58
+        
+        factors_boost = 0.0
+        try:
+            factors_boost = min(0.30, float(0.04 * len(factors) if factors else 0))
+        except (TypeError, ValueError):
+            factors_boost = 0.0
+        
+        prob_boost = 0.0
+        try:
+            prob_boost = float(0.08 if float(probability or 0.0) >= 0.92 else 0.0)
+        except (TypeError, ValueError):
+            prob_boost = 0.0
+        
+        # Calculate and strictly bound confidence to [0, 1]
+        confidence = base_conf + factors_boost + prob_boost
+        confidence = max(0.0, min(0.98, float(confidence or 0.0)))
             
         return {
             "is_threat": probability > self.threshold,
             "probability": round(probability, 3),
             "threat_level": threat_level,
-            "confidence": min(0.98, 0.58 + (0.04 * len(factors)) + (0.08 if probability >= 0.92 else 0.0)),
+            "confidence": confidence,
             "factors": factors,
             "signal_breakdown": signal_breakdown,
             "source": "enhanced_local_model"
