@@ -320,7 +320,6 @@ class IntrusionDetector:
                 try:
                     network = ipaddress.ip_network(range_str)
                     if ip_obj in network:
-                        logger.debug(f"IP {ip} is in legitimate service range: {range_str}")
                         return True
                 except ValueError:
                     continue

@@ -153,13 +153,28 @@ async def _generate_report_bytes_with_timeout(threat_analysis: dict, data: Repor
     # Keep endpoint timeout aligned with report generator limits.
     timeout_seconds = max(10.0, min(timeout_seconds, 120.0))
     try:
-        return await asyncio.wait_for(
+        logger.info(
+            "REPORT_GENERATION_START | target=%s | report_type=%s | timeout=%ss",
+            threat_analysis.get("input", "unknown"),
+            threat_analysis.get("report_type", "unknown"),
+            timeout_seconds
+        )
+        result = await asyncio.wait_for(
             report_generator.generate_analysis_report(threat_analysis),
             timeout=timeout_seconds,
         )
+        logger.info(
+            "REPORT_GENERATION_SUCCESS | target=%s | report_type=%s | reason=%s",
+            threat_analysis.get("input", "unknown"),
+            threat_analysis.get("report_type", "unknown"),
+            report_generator._last_gemini_failure_reason or "Gemini success"
+        )
+        return result
     except asyncio.TimeoutError:
         logger.warning(
-            "Report generation exceeded %ss; using fallback PDF",
+            "REPORT_GENERATION_TIMEOUT | target=%s | report_type=%s | timeout=%ss | using fallback",
+            threat_analysis.get("input", "unknown"),
+            threat_analysis.get("report_type", "unknown"),
             timeout_seconds,
         )
         fallback_text = report_generator._get_fallback_analysis(threat_analysis)
@@ -167,6 +182,16 @@ async def _generate_report_bytes_with_timeout(threat_analysis: dict, data: Repor
         forensic_summary = report_generator._format_forensic_summary(threat_analysis)
         fallback_blob = f"{fallback_text}\n\n---\n\nSCAN RESULTS\n\n{scan_results}\n\nFORENSIC SUMMARY\n\n{forensic_summary}"
         return create_pdf(fallback_blob, data).getvalue()
+    except Exception as e:
+        logger.error(
+            "REPORT_GENERATION_ERROR | target=%s | report_type=%s | error=%s | reason=%s",
+            threat_analysis.get("input", "unknown"),
+            threat_analysis.get("report_type", "unknown"),
+            str(e)[:200],
+            report_generator._last_gemini_failure_reason or "unknown",
+            exc_info=True
+        )
+        raise
 
 
 # ---------- API Endpoint ----------
@@ -466,3 +491,29 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Download report failed: {e}")
         raise HTTPException(status_code=500, detail="Report download failed")
+
+
+@router.get("/diagnostics/gemini-status")
+async def get_gemini_status():
+    """Get detailed diagnostics about Gemini API availability and configuration.
+    
+    Returns information about:
+    - API key configuration and validity
+    - Circuit breaker state
+    - Quota/rate limit status
+    - Daily report usage
+    - Recent failure reasons
+    """
+    try:
+        diagnosis = await report_generator.diagnose_gemini_status()
+        return JSONResponse(diagnosis)
+    except Exception as e:
+        logger.error(f"Gemini diagnostics failed: {e}")
+        return JSONResponse(
+            {
+                "error": str(e),
+                "gemini_available": GEMINI_READY,
+                "timestamp": utcnow().isoformat()
+            },
+            status_code=500
+        )

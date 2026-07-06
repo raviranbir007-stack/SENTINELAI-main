@@ -1842,16 +1842,24 @@ class ReportGenerator:
             self._store_cached_analysis(cache_key, analysis_text)
             return analysis_text
 
-        should_use_gemini, usage_reason = self._should_use_gemini_for_report(threat_data)
-        if not should_use_gemini:
-            self._last_gemini_failure_reason = usage_reason
-            logger.info("Skipping Gemini call: %s", usage_reason)
+        # Check Gemini initialization and availability FIRST
+        if not self.initialized or not GEMINI_AVAILABLE:
+            self._last_gemini_failure_reason = "Gemini integration unavailable or not initialized"
+            logger.warning(
+                "Gemini not available | initialized=%s | available=%s | keys=%d",
+                self.initialized,
+                GEMINI_AVAILABLE,
+                len(self.gemini_keys)
+            )
             analysis_text = self._get_fallback_analysis(threat_data)
             self._store_cached_analysis(cache_key, analysis_text)
             return analysis_text
         
-        if not self.initialized or not GEMINI_AVAILABLE:
-            self._last_gemini_failure_reason = "Gemini integration unavailable or not initialized"
+        # Check if we should use Gemini based on policy/limits
+        should_use_gemini, usage_reason = self._should_use_gemini_for_report(threat_data)
+        if not should_use_gemini:
+            self._last_gemini_failure_reason = usage_reason
+            logger.info("Skipping Gemini call: %s", usage_reason)
             analysis_text = self._get_fallback_analysis(threat_data)
             self._store_cached_analysis(cache_key, analysis_text)
             return analysis_text
@@ -2160,7 +2168,16 @@ class ReportGenerator:
             )
 
         # Final fallback to deterministic local analysis
-        logger.debug("Using local analysis (%s)", self._last_gemini_failure_reason or "Gemini unavailable")
+        fallback_reason = self._last_gemini_failure_reason or "Gemini unavailable"
+        logger.warning(
+            "GEMINI FALLBACK TRIGGERED | reason=%s | report_type=%s | threats=%d | keys_available=%d | initialized=%s | available=%s",
+            fallback_reason,
+            threat_data.get("report_type", "unknown"),
+            len(threat_data.get("threat_indicators", [])),
+            len(self.gemini_keys),
+            self.initialized,
+            GEMINI_AVAILABLE
+        )
         analysis_text = self._get_fallback_analysis(threat_data)
         self._store_cached_analysis(cache_key, analysis_text)
         return analysis_text
@@ -5149,6 +5166,114 @@ Time Range Covered: {time_range_label}
             unique_methods.append(method)
 
         return unique_methods
+
+    async def diagnose_gemini_status(self) -> Dict[str, Any]:
+        """Diagnose Gemini API availability and configuration status."""
+        diagnosis = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "gemini_available": GEMINI_AVAILABLE,
+            "gemini_initialized": self.initialized,
+            "api_keys_configured": len(self.gemini_keys),
+            "api_keys_valid": False,
+            "models_available": self.gemini_model_candidates,
+            "circuit_breaker_open": time.time() < self._circuit_open_until,
+            "circuit_open_until": (
+                datetime.fromtimestamp(self._circuit_open_until, tz=timezone.utc).isoformat()
+                if self._circuit_open_until > 0 else None
+            ),
+            "quota_cooldown_active": time.time() < float(self._quota_cooldown_until or 0),
+            "quota_cooldown_until": (
+                datetime.fromtimestamp(self._quota_cooldown_until, tz=timezone.utc).isoformat()
+                if self._quota_cooldown_until and self._quota_cooldown_until > 0 else None
+            ),
+            "daily_reports_count": len(getattr(self, "_daily_reports", [])),
+            "daily_reports_limit": self.gemini_daily_report_limit,
+            "failure_count": self._failure_count,
+            "circuit_threshold": self.circuit_threshold,
+            "last_failure_reason": self._last_gemini_failure_reason,
+            "key_cooldowns": {}
+        }
+        
+        # Check key cooldowns
+        now_ts = time.time()
+        for idx, key in enumerate(self.gemini_keys):
+            key_display = f"{key[:20]}...{key[-4:]}" if len(key) > 24 else key
+            cooldown_until = self._gemini_key_cooldown_until.get(key, 0.0)
+            if isinstance(cooldown_until, (list, dict)):
+                cooldown_until = 0.0
+            else:
+                try:
+                    cooldown_until = float(cooldown_until or 0.0)
+                except (TypeError, ValueError):
+                    cooldown_until = 0.0
+            
+            diagnosis["key_cooldowns"][f"key_{idx+1}"] = {
+                "cooldown_active": now_ts < cooldown_until,
+                "cooldown_until": (
+                    datetime.fromtimestamp(cooldown_until, tz=timezone.utc).isoformat()
+                    if cooldown_until > now_ts else None
+                ),
+                "key_sample": key_display
+            }
+        
+        # Try a test call if possible
+        if self.initialized and GEMINI_AVAILABLE and len(self.gemini_keys) > 0:
+            try:
+                test_prompt = "Say OK in one word."
+                test_response = await asyncio.wait_for(
+                    asyncio.to_thread(self._test_gemini_call, test_prompt),
+                    timeout=10.0
+                )
+                diagnosis["api_keys_valid"] = bool(test_response)
+                if test_response:
+                    diagnosis["test_call_status"] = "SUCCESS"
+                    logger.info("Gemini API test call successful")
+                else:
+                    diagnosis["test_call_status"] = "FAILED_EMPTY_RESPONSE"
+            except asyncio.TimeoutError:
+                diagnosis["test_call_status"] = "TIMEOUT"
+            except Exception as e:
+                diagnosis["test_call_status"] = f"ERROR: {str(e)[:100]}"
+        
+        return diagnosis
+
+    def _test_gemini_call(self, prompt: str) -> Optional[str]:
+        """Synchronous test call to validate Gemini API."""
+        if not self.gemini_keys or not (GEMINI_AVAILABLE and self.initialized):
+            return None
+        
+        try:
+            def _build_genai_client(api_key: str):
+                if hasattr(genai, "Client"):
+                    return genai.Client(api_key=api_key)
+                if hasattr(genai, "client") and hasattr(genai.client, "Client"):
+                    return genai.client.Client(api_key=api_key)
+                return None
+            
+            # Try first key
+            client = _build_genai_client(self.gemini_keys[0])
+            if client and hasattr(client, "models"):
+                model_name = self.gemini_model_candidates[0] if self.gemini_model_candidates else "gemini-2.5-flash"
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=50,
+                        response_mime_type="text/plain",
+                    )
+                )
+                return self._extract_text_from_genai_response(response)
+            
+            # Fallback to legacy API
+            if hasattr(genai, "GenerativeModel"):
+                model = genai.GenerativeModel(self.gemini_model_candidates[0] if self.gemini_model_candidates else "gemini-pro")
+                response = model.generate_content(prompt)
+                return getattr(response, "text", None)
+        except Exception as e:
+            logger.debug(f"Gemini test call failed: {str(e)}")
+        
+        return None
 
 
 # Global instance

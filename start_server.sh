@@ -12,6 +12,12 @@ source .venv/bin/activate
 
 # Set Python path
 export PYTHONPATH="$PWD/server:$PYTHONPATH"
+## Start client in background so local host acts as both admin/server and a client
+echo "⚙️  Launching local client in background (client logs: client/sentinel_client_v3.log)"
+export SENTINEL_FORCE_CLIENT_MODE=1
+nohup python3 client/sentinel_client_v3.py >> client/sentinel_client_v3.log 2>&1 &
+CLIENT_PID=$!
+echo "Client started (PID: $CLIENT_PID)"
 
 # Start server
 echo "🚀 Starting SENTINEL-AI Server..."

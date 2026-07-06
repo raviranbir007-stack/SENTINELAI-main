@@ -30,16 +30,33 @@ logger = logging.getLogger("FileScanner")
 
 try:
     import pefile
-    import lief
-    import capstone
-    import yara
-    PE_ANALYSIS_AVAILABLE = True
+    PEFILE_AVAILABLE = True
 except ImportError:
     pefile = None
+    PEFILE_AVAILABLE = False
+
+try:
+    import lief
+    LIEF_AVAILABLE = True
+except ImportError:
     lief = None
+    LIEF_AVAILABLE = False
+
+try:
+    import capstone
+    CAPSTONE_AVAILABLE = True
+except ImportError:
     capstone = None
+    CAPSTONE_AVAILABLE = False
+
+try:
+    import yara
+    YARA_AVAILABLE = True
+except ImportError:
     yara = None
-    PE_ANALYSIS_AVAILABLE = False
+    YARA_AVAILABLE = False
+
+PE_ANALYSIS_AVAILABLE = LIEF_AVAILABLE
 
 # Try to import ML libraries separately
 try:
@@ -52,8 +69,17 @@ except ImportError:
 
 if not PE_ANALYSIS_AVAILABLE:
     logger.warning("Advanced PE analysis libraries not available. Using basic PE parsing.")
+if not YARA_AVAILABLE:
+    logger.warning("YARA library not available. Signature rules scanning disabled.")
 if not ML_ANALYSIS_AVAILABLE:
     logger.warning("ML analysis libraries not available. Using rule-based classification.")
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +136,13 @@ REGEX_SIGNATURES: List[Tuple[str, str, str]] = [
 COMPILED_REGEX_SIGNATURES: List[Tuple[str, Any, str]] = [
     (name, re.compile(pattern, re.IGNORECASE), severity) for name, pattern, severity in REGEX_SIGNATURES
 ]
+
+SIGNATURE_SEVERITY_MAP: Dict[str, str] = {
+    name.upper(): str(severity).upper() for name, _, _, severity in BYTE_SIGNATURES
+}
+SIGNATURE_SEVERITY_MAP.update({
+    name.upper(): str(severity).upper() for name, _, severity in REGEX_SIGNATURES
+})
 
 MAGIC_BYTES: Dict[bytes, Tuple[str, bool]] = {
     b"MZ":               ("Windows PE",           False),
@@ -229,8 +262,20 @@ class FileScanner:
         self.db_path = db_path
         self.quarantine_dir = Path(quarantine_dir)
         self.yara_rules = None
+        # Enable all analysis methods by default (can be tuned via env toggles).
+        self._macro_detection_enabled = _env_flag("SENTINEL_ENABLE_MACRO_DETECTION", True)
+        self._pe_analysis_enabled = _env_flag("SENTINEL_ENABLE_PE_ANALYSIS", True)
+        self._yara_analysis_enabled = _env_flag("SENTINEL_ENABLE_YARA_ANALYSIS", True)
+        self._ml_analysis_enabled = _env_flag("SENTINEL_ENABLE_ML_ANALYSIS", True) and ML_ANALYSIS_AVAILABLE
+        self._behavioral_analysis_enabled = _env_flag("SENTINEL_ENABLE_BEHAVIORAL_ANALYSIS", True)
         self._load_yara_rules()
         self._init_db()
+        logger.info("✅ FileScanner initialized | macro=%s | pe=%s | yara=%s | ml=%s | behavioral=%s",
+                    self._macro_detection_enabled,
+                    self._pe_analysis_enabled,
+                    self._yara_analysis_enabled,
+                    self._ml_analysis_enabled,
+                    self._behavioral_analysis_enabled)
 
     def _init_db(self):
         try:
@@ -262,7 +307,7 @@ class FileScanner:
 
     def _load_yara_rules(self):
         """Load YARA rules for malware detection"""
-        if not PE_ANALYSIS_AVAILABLE:
+        if not YARA_AVAILABLE or not self._yara_analysis_enabled:
             return
         try:
             rules_path = Path(__file__).parent / "signatures" / "malware.yara"
@@ -276,7 +321,7 @@ class FileScanner:
 
     def _scan_yara(self, data: bytes) -> List[str]:
         """Scan data with YARA rules"""
-        if not self.yara_rules:
+        if not self._yara_analysis_enabled or not self.yara_rules:
             return []
         try:
             matches = self.yara_rules.match(data=data)
@@ -327,8 +372,8 @@ class FileScanner:
             result["deobfuscated_strings"] = self._extract_deobfuscated_strings(sample)
 
             if result["analysis_family"] == "office_ole":
-                ole_info = self._analyse_ole_container(sample, result)
-                if ole_info:
+                ole_info = self._analyse_ole_container(sample, result) if self._macro_detection_enabled else {}
+                if ole_info and self._macro_detection_enabled:
                     result["ole_info"] = ole_info
                     result["forensic_metadata"]["container_type"] = ole_info.get("container_type")
                     result["forensic_metadata"]["macro_indicators"] = ole_info.get("macro_indicators", [])
@@ -336,10 +381,11 @@ class FileScanner:
                         result["signatures"].append("OLE_MACRO_ACTIVITY")
             
             # YARA scanning
-            yara_matches = self._scan_yara(sample)
-            result["signatures"].extend(yara_matches)
+            if self._yara_analysis_enabled:
+                yara_matches = self._scan_yara(sample)
+                result["signatures"].extend(yara_matches)
 
-            pe_info = self._analyse_pe(sample)
+            pe_info = self._analyse_pe(sample) if self._pe_analysis_enabled else None
             if pe_info:
                 result["pe_info"] = pe_info
                 result["analysis_family"] = "pe_coff"
@@ -349,7 +395,7 @@ class FileScanner:
                     result["signatures"].append("PE_ANOMALY")
                 
                 # Add disassembly analysis
-                disassembly_info = self._disassemble_binary(sample, pe_info)
+                disassembly_info = self._disassemble_binary(sample, pe_info) if CAPSTONE_AVAILABLE else {}
                 if disassembly_info:
                     result["disassembly_info"] = disassembly_info
                     # Add suspicious disassembly patterns to signatures
@@ -357,12 +403,15 @@ class FileScanner:
                         result["signatures"].append("SUSPICIOUS_DISASSEMBLY")
             
             # ML-based classification
-            if ML_ANALYSIS_AVAILABLE:
+            if self._ml_analysis_enabled:
                 ml_features = self._extract_ml_features(result)
                 ml_result = self._ml_classify_malware(ml_features)
                 result["ml_classification"] = ml_result
             else:
                 result["ml_classification"] = {"prediction": "UNKNOWN", "confidence": 0.0}
+
+            if self._behavioral_analysis_enabled:
+                result["behavioral_profile"] = self._build_behavioral_profile(result)
 
             result["risk_level"] = self._score_risk(result)
             score_value, score_reasons, score_confidence = self._score_risk_detailed(result)
@@ -437,17 +486,22 @@ class FileScanner:
 
     def _match_signatures(self, data: bytes) -> List[str]:
         matched = []
+        seen = set()
         text = data.decode("latin-1", errors="replace")
         for name, pattern, _, _ in BYTE_SIGNATURES:
             try:
                 if isinstance(pattern, bytes) and pattern in data:
-                    matched.append(name)
+                    if name not in seen:
+                        matched.append(name)
+                        seen.add(name)
             except Exception:
                 pass
         for name, pattern, _ in COMPILED_REGEX_SIGNATURES:
             try:
                 if pattern.search(text):
-                    matched.append(name)
+                    if name not in seen:
+                        matched.append(name)
+                        seen.add(name)
             except Exception:
                 pass
         return matched
@@ -588,6 +642,14 @@ class FileScanner:
                 "details": f"Model predicted {ml_result.get('prediction', 'UNKNOWN')} with confidence {float(ml_result.get('confidence', 0.0) or 0.0):.2f}.",
             })
 
+        behavioral = result.get("behavioral_profile", {}) or {}
+        if behavioral:
+            methods.append({
+                "name": "Behavioral Pattern Analysis",
+                "status": "COMPLETED",
+                "details": f"Behavior score {behavioral.get('score', 0)} with stage hints: {', '.join(behavioral.get('stage_hints', []) or ['none'])}.",
+            })
+
         return methods
 
     def _classify_family(self, magic_type: str, extension: str) -> str:
@@ -611,6 +673,7 @@ class FileScanner:
         """Best-effort OLE/Office macro analysis using lightweight string heuristics."""
         text = data.decode("latin-1", errors="replace")
         lower_text = text.lower()
+        is_ooxml = data.startswith(b"PK\x03\x04")
         macro_markers = [
             ("AutoOpen", "document auto-open macro entry point"),
             ("Auto_Open", "document auto-open macro entry point"),
@@ -640,22 +703,74 @@ class FileScanner:
         ]
 
         indicators = []
+        seen_markers = set()
         for marker, description in macro_markers:
             if marker.lower() in lower_text:
-                indicators.append({"marker": marker, "description": description})
+                marker_lower = marker.lower()
+                if marker_lower not in seen_markers:
+                    indicators.append({"marker": marker, "description": description})
+                    seen_markers.add(marker_lower)
 
         embedded_objects = []
         for pattern in (r"Package\b", r"ObjectPool", r"Mso\w+", r"\x00VBA\x00", r"vbaProject\.bin", r"VBA/dir"):
             if re.search(pattern, text, re.IGNORECASE):
                 embedded_objects.append(pattern)
 
+        canonical_macro_markers = [
+            marker for marker in OLE_MACRO_MARKERS if marker in lower_text
+        ]
+
         return {
-            "container_type": "OLE2",
+            "container_type": "OOXML" if is_ooxml else "OLE2",
             "macro_indicators": indicators,
+            "canonical_macro_markers": sorted(canonical_macro_markers),
             "embedded_object_signals": embedded_objects,
             "embedded_object_count": len(embedded_objects),
             "has_macro_activity": bool(indicators),
             "is_macro_capable": result.get("extension", "").lower() in {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".xlam", ".ppam", ".doc", ".xls", ".ppt"} or bool(indicators),
+        }
+
+    def _build_behavioral_profile(self, result: Dict) -> Dict[str, Any]:
+        """Derive behavior-level risk signals from static evidence for consistent downstream scoring."""
+        signatures = {str(sig).upper() for sig in result.get("signatures", [])}
+        suspicious_strings = " ".join(result.get("suspicious_strings", [])).lower()
+        ole_info = result.get("ole_info", {}) if isinstance(result.get("ole_info", {}), dict) else {}
+
+        execution_markers = [
+            marker for marker in ("POWERSHELL_ENCODED", "MSHTA", "RUNDLL32", "REGSVR32", "SCHTASK_CREATE")
+            if marker in signatures
+        ]
+        delivery_markers = [
+            marker for marker in ("CERTUTIL_DL", "WGET_SH", "CURL_SH")
+            if marker in signatures
+        ]
+        macro_execution = bool(ole_info.get("has_macro_activity")) or "OLE_MACRO_ACTIVITY" in signatures
+        code_injection = any(marker in signatures for marker in ("CREATEREMOTETHREAD", "VIRTUALALLOC", "SHELLCODE_NOP"))
+        url_download_hint = "urldownloadtofile" in suspicious_strings
+
+        behavior_score = 0
+        if macro_execution:
+            behavior_score += 3
+        if execution_markers:
+            behavior_score += min(3, len(execution_markers))
+        if delivery_markers or url_download_hint:
+            behavior_score += min(2, len(delivery_markers) + (1 if url_download_hint else 0))
+        if code_injection:
+            behavior_score += 3
+
+        return {
+            "score": behavior_score,
+            "macro_execution": macro_execution,
+            "execution_markers": execution_markers,
+            "delivery_markers": delivery_markers,
+            "code_injection_markers": code_injection,
+            "stage_hints": [
+                stage for stage, enabled in (
+                    ("initial_access", bool(delivery_markers) or url_download_hint),
+                    ("execution", bool(execution_markers) or macro_execution),
+                    ("defense_evasion", code_injection),
+                ) if enabled
+            ],
         }
 
     def _analyse_pe(self, data: bytes) -> Optional[Dict]:
@@ -1275,10 +1390,14 @@ class FileScanner:
         high_sigs     = {"POWERSHELL_ENCODED", "WGET_SH", "CURL_SH", "PE_ANOMALY",
                           "NET_USER_ADD", "SCHTASK_CREATE", "VIRTUALALLOC", "packed_executable", "keylogger_imports"}
         for sig in result.get("signatures", []):
-            if sig in critical_sigs:
+            sig_upper = str(sig).upper()
+            severity = SIGNATURE_SEVERITY_MAP.get(sig_upper, "")
+            if sig in critical_sigs or severity == "CRITICAL":
                 add(5, "CRITICAL_SIGNATURE", f"Critical signature matched: {sig}")
-            elif sig in high_sigs:
+            elif sig in high_sigs or severity == "HIGH":
                 add(3, "HIGH_SIGNATURE", f"High-risk signature matched: {sig}")
+            elif severity == "MEDIUM":
+                add(2, "MEDIUM_SIGNATURE", f"Medium-risk signature matched: {sig}")
             else:
                 add(1, "GENERIC_SIGNATURE", f"Signature matched: {sig}")
 
@@ -1305,6 +1424,15 @@ class FileScanner:
                 add(2, "OLE_MACRO_MARKERS", "Canonical macro markers were observed in the Office container")
             if any(str(signal).lower() in OLE_EMBEDDED_OBJECT_MARKERS for signal in ole_info.get("embedded_object_signals", [])):
                 add(1, "OLE_EMBEDDED_OBJECT_MARKERS", "Embedded object markers matched Office container heuristics")
+
+        behavioral = result.get("behavioral_profile", {}) if isinstance(result.get("behavioral_profile", {}), dict) else {}
+        behavior_score = int(behavioral.get("score", 0) or 0)
+        if behavior_score:
+            add(min(5, behavior_score), "BEHAVIORAL_PROFILE", f"Behavioral pattern analysis produced score {behavior_score}")
+        if behavioral.get("code_injection_markers"):
+            add(2, "BEHAVIOR_CODE_INJECTION", "Behavioral indicators suggest code-injection or memory manipulation stages")
+        if behavioral.get("macro_execution"):
+            add(2, "BEHAVIOR_MACRO_EXECUTION", "Behavioral indicators suggest Office macro-triggered execution flow")
         
         # PE/ELF-specific scoring
         binary_info = result.get("pe_info", {})

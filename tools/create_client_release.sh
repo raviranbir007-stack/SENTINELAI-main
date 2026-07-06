@@ -12,7 +12,7 @@ STAGING_DIR="$DIST_DIR/SENTINELAI-main"
 DATE_TAG="$(date +%Y%m%d_%H%M%S)"
 ZIP_NAME="sentinelai-client-release-${DATE_TAG}.zip"
 ZIP_PATH="$DIST_DIR/$ZIP_NAME"
-DEFAULT_RELEASE_PASSWORD="${SENTINEL_RELEASE_PASSWORD:-ranbir@69}"
+DEFAULT_RELEASE_PASSWORD="${SENTINEL_RELEASE_PASSWORD:-CHANGE_ME_RELEASE_PASSWORD}"
 
 if [[ ! -f "$ROOT_DIR/.env" ]]; then
   echo "ERROR: $ROOT_DIR/.env not found."
@@ -47,10 +47,17 @@ rsync -a \
 
 mkdir -p "$STAGING_DIR/secure"
 
+if [[ -z "$DEFAULT_RELEASE_PASSWORD" ]]; then
+  echo "ERROR: SENTINEL_RELEASE_PASSWORD is not set."
+  echo "Set it before running this script, for example:"
+  echo "  export SENTINEL_RELEASE_PASSWORD='set-a-strong-password'"
+  exit 1
+fi
+
 PASS1="$DEFAULT_RELEASE_PASSWORD"
 PASS2="$DEFAULT_RELEASE_PASSWORD"
 
-echo "Using configured release password from SENTINEL_RELEASE_PASSWORD or default."
+echo "Using release password from SENTINEL_RELEASE_PASSWORD."
 
 echo "Encrypting .env -> secure/.env.enc"
 printf '%s' "$PASS1" | openssl enc -aes-256-cbc -pbkdf2 -iter 250000 -salt \

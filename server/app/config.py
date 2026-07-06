@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
-    SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
+    SMTP_PASSWORD: Optional[str] = (os.getenv("SMTP_PASSWORD", "") or "").replace(" ", "").strip() or None
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "alerts@sentinel-ai.com")
     ALERT_EMAIL: Optional[str] = os.getenv("ALERT_EMAIL", os.getenv("SMTP_USERNAME") or "raviranbir007@gmail.com")
     CLIENT_REGISTRATION_ALERT_EMAILS: str = os.getenv("CLIENT_REGISTRATION_ALERT_EMAILS", "raviranbir007@gmail.com")

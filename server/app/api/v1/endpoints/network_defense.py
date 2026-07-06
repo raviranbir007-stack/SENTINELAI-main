@@ -143,14 +143,8 @@ def _client_safe_mode_enabled() -> bool:
 
 
 def _registration_alert_recipients() -> list[str]:
-    recipients = []
-    for candidate in [settings.ADMIN_EMAIL, settings.ALERT_EMAIL, settings.SMTP_USERNAME]:
-        if candidate:
-            recipients.append(str(candidate).strip())
-
     extra = str(getattr(settings, "CLIENT_REGISTRATION_ALERT_EMAILS", "") or "")
-    if extra:
-        recipients.extend([p.strip() for p in extra.replace(";", ",").split(",") if p.strip()])
+    recipients = [p.strip() for p in extra.replace(";", ",").split(",") if p.strip()] if extra else []
 
     normalized: list[str] = []
     seen = set()
@@ -197,6 +191,23 @@ def _registration_alert_context(*, client_id: str, request, status: str, changed
     )
     subject = f"SENTINEL-AI: {title} — {request.hostname}"
     return subject, body
+
+
+def _registration_prompt_log_details(*, client_id: str, request, status: str, changed_fields: Optional[list[str]] = None) -> dict:
+    return {
+        "prompt_type": "client_registration",
+        "status": status,
+        "client_id": client_id,
+        "hostname": request.hostname,
+        "ip_address": request.ip_address,
+        "mac_address": request.mac_address,
+        "version": request.version,
+        "changed_fields": changed_fields or [],
+        "response_options": ["ALLOW", "BLOCK"],
+        "target_type": "client",
+        "severity": "high" if status == "pending_verification" else "medium",
+        "title": "Client Registration",
+    }
 
 
 async def _upsert_client_alert(
@@ -1119,6 +1130,19 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                     description=alert_body,
                     client_id=existing_client.client_id,
                 )
+                db.add(
+                    SystemLog(
+                        log_level="WARNING",
+                        component="network_defense",
+                        message=f"Client registration updated: {request.hostname}",
+                        details=_registration_prompt_log_details(
+                            client_id=existing_client.client_id,
+                            request=request,
+                            status="updated",
+                            changed_fields=changed_fields,
+                        ),
+                    )
+                )
                 await db.commit()
 
                 recipients = _registration_alert_recipients()
@@ -1129,7 +1153,9 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                         status="updated",
                         changed_fields=changed_fields,
                     )
-                    asyncio.create_task(NotificationEngine.send_email(recipients, _subj, _body))
+                    sent = await NotificationEngine.send_email(recipients, _subj, _body)
+                    if not sent:
+                        logger.warning("Registration update email alert failed for client %s", existing_client.client_id)
 
             return {
                 "status": "updated",
@@ -1175,6 +1201,19 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                 ),
                 client_id=client_id,
             )
+            db.add(
+                SystemLog(
+                    log_level="WARNING",
+                    component="network_defense",
+                    message=f"Client registration pending verification: {request.hostname}",
+                    details=_registration_prompt_log_details(
+                        client_id=client_id,
+                        request=request,
+                        status="pending_verification",
+                        changed_fields=None,
+                    ),
+                )
+            )
             await db.commit()
 
             # ── Email alert: new client enrolled and pending verification ──
@@ -1186,9 +1225,9 @@ async def register_client(request: ClientRegistrationRequest, db: AsyncSession =
                     status="pending_verification",
                     changed_fields=None,
                 )
-                asyncio.create_task(
-                    NotificationEngine.send_email(recipients, _subj, _body)
-                )
+                sent = await NotificationEngine.send_email(recipients, _subj, _body)
+                if not sent:
+                    logger.warning("Registration email alert failed for client %s", client_id)
             # ──────────────────────────────────────────────────────────────
 
             return {
@@ -1237,8 +1276,10 @@ async def client_heartbeat(
             if not client:
                 raise HTTPException(status_code=404, detail="Client not found")
 
+            now = utcnow()
             was_active = bool(client.is_active)
-            client.last_seen = utcnow()
+            previous_last_seen = client.last_seen
+            client.last_seen = now
             client.is_active = True
 
             heartbeat_status = request.status if request and isinstance(request.status, dict) else {}
@@ -1300,11 +1341,13 @@ async def client_heartbeat(
                             }
                         )
 
-            if not was_active:
+            stale_reconnect = bool(previous_last_seen and (now - previous_last_seen) > timedelta(minutes=2))
+            if (not was_active) or stale_reconnect:
                 first_seen_alert = {
                     "client_id": client.client_id,
                     "hostname": client.hostname,
                     "ip_address": client.ip_address,
+                    "reconnect_reason": "stale_reconnect" if stale_reconnect else "first_seen",
                 }
 
             await db.commit()
@@ -1333,6 +1376,25 @@ async def client_heartbeat(
                     f"({first_seen_alert.get('ip_address')})."
                 ),
                 client_id=client_id,
+            )
+            db.add(
+                SystemLog(
+                    log_level="WARNING",
+                    component="network_defense",
+                    message=f"Client online pending review: {first_seen_alert.get('hostname') or client_id}",
+                    details={
+                        "prompt_type": "client_registration",
+                        "status": "pending_verification",
+                        "client_id": client_id,
+                        "hostname": first_seen_alert.get("hostname"),
+                        "ip_address": first_seen_alert.get("ip_address"),
+                        "reconnect_reason": first_seen_alert.get("reconnect_reason"),
+                        "target_type": "client",
+                        "response_options": ["ALLOW", "BLOCK"],
+                        "severity": "medium",
+                        "title": "Client Registration",
+                    },
+                )
             )
             await db.commit()
             recipients = _registration_alert_recipients()
@@ -2002,8 +2064,8 @@ async def respond_to_defense_event(
     """Persist analyst responses for popup actions such as block/ignore/quarantine."""
     try:
         action = (request.action or "").strip().upper()
-        if action not in {"BLOCK", "IGNORE", "QUARANTINE"}:
-            raise HTTPException(status_code=400, detail="action must be BLOCK, IGNORE, or QUARANTINE")
+        if action not in {"ALLOW", "BLOCK", "IGNORE", "QUARANTINE"}:
+            raise HTTPException(status_code=400, detail="action must be ALLOW, BLOCK, IGNORE, or QUARANTINE")
 
         client_fk = None
         if request.client_id:
@@ -2046,6 +2108,7 @@ async def respond_to_defense_event(
             target_type = "system"
 
         action_type = {
+            "ALLOW": "allow",
             "BLOCK": "block_ip" if target_type == "ip" else "block_indicator",
             "IGNORE": "ignore",
             "QUARANTINE": "quarantine",
@@ -2114,6 +2177,8 @@ async def respond_to_defense_event(
         if action == "BLOCK" and action_type in {"block_ip", "block_domain"}:
             response_action.action_type = action_type
             successful = await _apply_defense_action(response_action, db)
+        elif action == "ALLOW":
+            successful = True
         else:
             successful = True
 
@@ -2142,6 +2207,7 @@ async def respond_to_defense_event(
 
         if attack is not None:
             attack.status = {
+                "ALLOW": "allowed",
                 "BLOCK": "blocked",
                 "IGNORE": "ignored",
                 "QUARANTINE": "quarantined",

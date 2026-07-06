@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENC_ENV="$ROOT_DIR/secure/.env.enc"
 TMP_ENV="$ROOT_DIR/.env"
-DEFAULT_UNLOCK_PASSWORD="${SENTINEL_RELEASE_PASSWORD:-ranbir@69}"
+DEFAULT_UNLOCK_PASSWORD="${SENTINEL_RELEASE_PASSWORD:-CHANGE_ME_RELEASE_PASSWORD}"
 
 if [[ ! -f "$ENC_ENV" ]]; then
   echo "ERROR: Encrypted env file not found at $ENC_ENV"
@@ -28,11 +28,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-read -r -s -p "Enter env unlock password [press Enter for default]: " ENV_PASSWORD
+read -r -s -p "Enter env unlock password [press Enter to use SENTINEL_RELEASE_PASSWORD]: " ENV_PASSWORD
 echo
 
 if [[ -z "$ENV_PASSWORD" ]]; then
   ENV_PASSWORD="$DEFAULT_UNLOCK_PASSWORD"
+fi
+
+if [[ -z "$ENV_PASSWORD" ]]; then
+  echo "ERROR: No unlock password provided."
+  echo "Set SENTINEL_RELEASE_PASSWORD or type the password when prompted."
+  exit 1
 fi
 
 if ! printf '%s' "$ENV_PASSWORD" | openssl enc -d -aes-256-cbc -pbkdf2 -iter 250000 \

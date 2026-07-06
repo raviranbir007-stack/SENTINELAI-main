@@ -9124,6 +9124,41 @@
             const component = String(log.component || '').toLowerCase();
             const message = String(log.message || '');
             const details = typeof log.details === 'object' && log.details ? log.details : {};
+            if (details.show_response_actions === false) return null;
+            const promptType = String(details.prompt_type || '').toLowerCase();
+            const isClientRegistrationNotification =
+                promptType === 'client_registration'
+                || (
+                    component === 'network_defense'
+                    && /client registration|new client|pending verification|awaiting admin verification|client online|client enrolled|registration updated/i.test(`${message} ${details.description || ''} ${details.title || ''}`)
+                );
+
+            if (isClientRegistrationNotification) {
+                const target = details.client_id || details.hostname || details.ip_address || log.target || 'client registration';
+                const targetDisplay = [details.hostname, details.ip_address].filter(Boolean).join(' · ') || target;
+                const promptId = String(log.id || log.event_id || log.scan_id || `${Date.now()}_${component}_client_registration`);
+                return {
+                    promptKey: `registration:${promptId}`,
+                    attackId: log.event_id || log.id || null,
+                    eventId: log.event_id || log.id || null,
+                    clientId: details.client_id || null,
+                    threatId: promptId,
+                    title: 'Client Registration',
+                    severity: 'info',
+                    source: 'network_defense',
+                    target,
+                    targetType: 'client',
+                    targetDisplay,
+                    metadata: {
+                        prompt_type: 'client_registration',
+                        level,
+                        message,
+                        details,
+                        response_options: ['ALLOW', 'BLOCK'],
+                    },
+                };
+            }
+
             const scannerThreatLevel = String(details.threat_level || details.verdict || log.threat_level || '').toLowerCase();
             const scannerAlertSignal = /sql injection|sqli|xss|cross-site scripting|cross-site request forgery|csrf|<script|javascript:|union select|drop table|command injection|remote code execution|rce|path traversal|lfi|rfi|malicious|critical|high|suspicious|medium/i;
             const scannerMessage = `${message} ${details.description || ''} ${details.short_description || ''} ${JSON.stringify(details)}`;
@@ -9131,6 +9166,11 @@
                 && scannerThreatLevel
                 && !['clean', 'safe', 'unknown', 'info'].includes(scannerThreatLevel)
                 && (scannerAlertSignal.test(scannerMessage) || ['critical', 'high', 'medium', 'suspicious', 'malicious'].includes(scannerThreatLevel));
+
+            const isBenignLegitimateRangeLog = /legitimate service range/i.test(message)
+                && ['debug', 'info'].includes(level)
+                && /intrusion|protection/.test(component);
+            if (isBenignLegitimateRangeLog) return null;
 
             const isSecurityLog = ['warning', 'error', 'critical'].includes(level)
                 || /defense|intrusion|attack|quarantine|threat/.test(component)
@@ -9176,33 +9216,45 @@
                 clearTimeout(activeSecurityPromptTimer);
                 activeSecurityPromptTimer = null;
             }
+            const modal = document.getElementById('securityPromptModal');
+            const promptType = String(prompt?.metadata?.prompt_type || '').toLowerCase();
+            const responseOptions = Array.isArray(prompt?.metadata?.response_options) && prompt.metadata.response_options.length > 0
+                ? prompt.metadata.response_options.map(value => String(value || '').toUpperCase())
+                : (promptType === 'client_registration' ? ['ALLOW', 'BLOCK'] : ['IGNORE', 'BLOCK', 'QUARANTINE']);
+            const primaryLabel = promptType === 'client_registration' ? 'Client Registration Prompt' : 'Incident Response Prompt';
+            const titleLabel = promptType === 'client_registration' ? 'Client Registration' : (prompt.title || 'Security Incident');
+            const promptNotice = promptType === 'client_registration'
+                ? 'Review this client registration request and choose Allow or Block.'
+                : 'Respond within 60 seconds. Unanswered prompts are escalated and after 5 misses the system enters automatic quarantine.';
+            const notificationTitle = promptType === 'client_registration' ? 'Client registration review requested' : 'Defense action requested';
+
             addNotification(
-                'Defense action requested',
-                `${prompt.title} on ${prompt.targetDisplay || prompt.target}. Choose BLOCK / IGNORE / QUARANTINE from logs or alerts.`,
+                notificationTitle,
+                `${prompt.title} on ${prompt.targetDisplay || prompt.target}. ${promptType === 'client_registration' ? 'Choose Allow or Block.' : 'Choose BLOCK / IGNORE / QUARANTINE from logs or alerts.'}`,
                 prompt.severity === 'critical' ? 'error' : 'warning',
                 `prompt_open:${prompt.promptKey}`,
                 12000
             );
 
-            const modal = document.getElementById('securityPromptModal');
             if (modal) {
                 modal.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,0.78);z-index:1600;display:flex;align-items:center;justify-content:center;padding:1rem;';
                 modal.innerHTML = `
                     <div style="width:min(560px,96vw);background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,0.5);overflow:hidden;">
                         <div style="padding:1rem 1.15rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:0.8rem;">
                             <div>
-                                <div style="font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--warning);font-family:'JetBrains Mono', monospace;">Incident Response Prompt</div>
-                                <div style="font-size:1rem;font-weight:700;margin-top:0.2rem;">${escHtml(prompt.title || 'Security Incident')}</div>
+                                <div style="font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--warning);font-family:'JetBrains Mono', monospace;">${escHtml(primaryLabel)}</div>
+                                <div style="font-size:1rem;font-weight:700;margin-top:0.2rem;">${escHtml(titleLabel)}</div>
                             </div>
                             <button class="icon-btn" onclick="closeSecurityPrompt(true,false)">✖️</button>
                         </div>
                         <div style="padding:1rem 1.15rem;display:grid;gap:0.8rem;">
                             <div style="font-size:0.9rem;line-height:1.55;">Target: <code>${escHtml(prompt.targetDisplay || prompt.target || 'unknown')}</code></div>
-                            <div style="font-size:0.84rem;color:var(--muted-foreground);">Respond within 60 seconds. Unanswered prompts are escalated and after 5 misses the system enters automatic quarantine.</div>
+                            <div style="font-size:0.84rem;color:var(--muted-foreground);">${escHtml(promptNotice)}</div>
                             <div style="display:flex;gap:0.55rem;justify-content:flex-end;flex-wrap:wrap;">
-                                <button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="respondToSecurityPrompt('IGNORE')">Ignore</button>
-                                <button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="respondToSecurityPrompt('BLOCK')">Block</button>
-                                <button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="respondToSecurityPrompt('QUARANTINE')">Quarantine</button>
+                                ${responseOptions.includes('ALLOW') ? `<button class="btn btn-outline" style="border-color:var(--success);color:var(--success);" onclick="respondToSecurityPrompt('ALLOW')">Allow</button>` : ''}
+                                ${responseOptions.includes('IGNORE') ? `<button class="btn btn-outline" style="border-color:var(--warning);color:var(--warning);" onclick="respondToSecurityPrompt('IGNORE')">Ignore</button>` : ''}
+                                ${responseOptions.includes('BLOCK') ? `<button class="btn btn-outline" style="border-color:var(--primary);color:var(--primary);" onclick="respondToSecurityPrompt('BLOCK')">Block</button>` : ''}
+                                ${responseOptions.includes('QUARANTINE') ? `<button class="btn btn-cyber" style="background:var(--destructive);border-color:var(--destructive);" onclick="respondToSecurityPrompt('QUARANTINE')">Quarantine</button>` : ''}
                             </div>
                         </div>
                     </div>
@@ -9463,12 +9515,13 @@
             const component = String(log.component || '').toLowerCase();
             const message = String(log.message || '').toLowerCase();
             const prompt = buildSecurityPromptPayloadFromLog(log);
+            const promptType = String(prompt?.metadata?.prompt_type || '').toLowerCase();
 
             // Fast-path for immediate web attack alerts (network_defense component with xss/sql indicators)
             const isWebAttackAlert = component === 'network_defense' 
                 && (level === 'critical' || (level === 'warning' && /immediate alert|web attack|xss|sql injection|sqli/i.test(message)));
             
-            if (isWebAttackAlert) {
+            if (isWebAttackAlert && promptType !== 'client_registration') {
                 const popupType = level === 'critical' ? 'error' : 'warning';
                 showToast(`🚨 SECURITY ALERT: ${log.message}`, popupType);
                 addNotification(
@@ -9495,7 +9548,7 @@
                         targetDisplay: details.source_ip || details.source_domain || 'unknown source',
                         metadata: { level, message: log.message, details }
                     };
-                    if (prompt) {
+                    if (prompt && promptType !== 'client_registration') {
                         queueSecurityPrompt(prompt);
                     } else {
                         queueSecurityPrompt(webAttackPrompt);
@@ -10597,10 +10650,28 @@
             list.innerHTML = logs.map((log, index) => {
                 const level = (log.level || 'INFO').toLowerCase();
                 const badge = level === 'error' || level === 'critical' ? 'badge-threat' : level === 'warning' ? 'badge-warning' : 'badge-safe';
-                const hasDetails = Boolean(log && (log.details || extractScanIdFromLog(log)));
+                const detailsObj = (log && typeof log.details === 'object' && log.details) ? log.details : {};
+                const detailKeys = Object.keys(detailsObj).filter((key) => {
+                    const value = detailsObj[key];
+                    if (value === null || value === undefined) return false;
+                    if (typeof value === 'string') return value.trim().length > 0;
+                    if (Array.isArray(value)) return value.length > 0;
+                    if (typeof value === 'object') return Object.keys(value).length > 0;
+                    return true;
+                });
+                const hasDetails = Boolean(detailKeys.length > 0 || extractScanIdFromLog(log));
                 const hasDefenseActions = Boolean(buildSecurityPromptPayloadFromLog(log));
                 const summary = String(log.message || '').replace(/\s+/g, ' ').trim();
-                const detailsPreview = log.details ? (typeof log.details === 'string' ? log.details : JSON.stringify(log.details)) : '';
+                let detailsPreview = '';
+                if (typeof log.details === 'string' && log.details.trim()) {
+                    detailsPreview = log.details;
+                } else if (detailsObj.short_details && String(detailsObj.short_details).trim()) {
+                    detailsPreview = String(detailsObj.short_details).trim();
+                } else if (detailsObj.description && String(detailsObj.description).trim()) {
+                    detailsPreview = String(detailsObj.description).trim();
+                } else if (hasDetails) {
+                    detailsPreview = JSON.stringify(detailsObj);
+                }
                 return `
                     <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:flex-start;padding:0.9rem 1rem;border-bottom:1px solid rgba(45,212,191,0.08);">
                         <div style="min-width:0;">
@@ -10649,7 +10720,12 @@
             }
 
             const detailsText = log.details
-                ? (typeof log.details === 'string' ? log.details : JSON.stringify(log.details, null, 2))
+                ? (() => {
+                    if (typeof log.details === 'string') return log.details;
+                    if (log.details.short_details) return String(log.details.short_details);
+                    const keys = Object.keys(log.details || {});
+                    return keys.length ? JSON.stringify(log.details, null, 2) : 'No additional details available';
+                })()
                 : 'No additional details available';
 
             const existing = document.getElementById('logDetailModal');

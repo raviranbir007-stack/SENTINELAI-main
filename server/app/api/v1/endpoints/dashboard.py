@@ -1,6 +1,7 @@
 import os
 import socket
 import ipaddress
+import re
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select, or_
@@ -373,6 +374,209 @@ def _parse_utc_timestamp(value):
     return None
 
 
+def _is_high_risk_severity(value: object) -> bool:
+    level = str(value or "").strip().lower()
+    return level in {"critical", "high", "malicious", "suspicious"}
+
+
+def _has_credential_risk_text(value: object) -> bool:
+    text = str(value or "").lower()
+    markers = (
+        "credential",
+        "password",
+        "passwd",
+        "otp",
+        "2fa",
+        "token",
+        "session",
+        "cookie",
+        "phish",
+        "login",
+        "auth",
+        "harvest",
+        "steal",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_process_or_attack_context(component: object, message: object, details: dict) -> bool:
+    component_text = str(component or "").lower()
+    message_text = str(message or "").lower()
+    detail_text = " ".join(str(v) for v in (details or {}).values()).lower()
+    target_type = str((details or {}).get("target_type") or "").lower()
+
+    if target_type == "process":
+        return True
+
+    attack_tokens = (
+        "attack",
+        "intrusion",
+        "malware",
+        "ransom",
+        "trojan",
+        "exploit",
+        "process",
+        "c2",
+        "botnet",
+        "phishing",
+        "credential",
+    )
+
+    component_attackish = any(token in component_text for token in ("intrusion", "defense", "ids", "attack", "security"))
+    message_attackish = any(token in message_text for token in attack_tokens)
+    details_attackish = any(token in detail_text for token in attack_tokens)
+    return component_attackish or message_attackish or details_attackish
+
+
+def _build_short_details(component: object, message: object, details: dict) -> str:
+    d = details or {}
+    scan_id = d.get("scan_id")
+    target = d.get("target")
+    threat_level = str(d.get("threat_level") or d.get("verdict") or "").strip().lower()
+    threats_detected = d.get("threats_detected")
+    confidence = d.get("confidence")
+    target_type = d.get("target_type")
+
+    if scan_id or target or threat_level or threats_detected is not None:
+        parts = []
+        if scan_id:
+            parts.append(f"scan={scan_id}")
+        if target_type:
+            parts.append(f"type={target_type}")
+        if target:
+            parts.append(f"target={target}")
+        if threat_level:
+            parts.append(f"verdict={threat_level}")
+        if threats_detected is not None:
+            parts.append(f"indicators={int(threats_detected or 0)}")
+        if confidence is not None:
+            try:
+                conf_pct = float(confidence) * 100.0 if float(confidence) <= 1.0 else float(confidence)
+                parts.append(f"confidence={conf_pct:.1f}%")
+            except Exception:
+                pass
+        return " | ".join(parts)
+
+    msg = str(message or "").strip()
+    if not msg:
+        return "No detail text available"
+    return msg[:220]
+
+
+def _normalize_dashboard_log_entry(entry: dict) -> dict:
+    details = entry.get("details")
+    if not isinstance(details, dict):
+        details = {}
+
+    message = entry.get("message")
+    component = entry.get("component")
+    short_details = _build_short_details(component, message, details)
+
+    # Gate operator action prompts to true risk contexts only.
+    severity_signal = details.get("severity") or details.get("threat_level") or details.get("verdict")
+    high_risk = _is_high_risk_severity(severity_signal)
+    credential_risk = _has_credential_risk_text(short_details) or _has_credential_risk_text(message) or _has_credential_risk_text(details)
+    process_or_attack = _is_process_or_attack_context(component, message, details)
+    actionable = bool((high_risk or credential_risk) and process_or_attack)
+
+    normalized = {
+        **entry,
+        "details": {
+            **details,
+            "short_details": short_details,
+            "show_response_actions": actionable,
+            "action_policy": "high_risk_only",
+            "action_options": ["BLOCK", "IGNORE", "QUARANTINE"] if actionable else [],
+            "risk_context": {
+                "high_risk": high_risk,
+                "credential_risk": credential_risk,
+                "process_or_attack": process_or_attack,
+            },
+        },
+    }
+    return normalized
+
+
+def _is_empty_log_details(details: dict) -> bool:
+    if not isinstance(details, dict) or not details:
+        return True
+    for value in details.values():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, dict) and not value:
+            continue
+        if isinstance(value, list) and not value:
+            continue
+        return False
+    return True
+
+
+def _is_benign_noise_log(entry: dict) -> bool:
+    level = str(entry.get("level") or "").strip().lower()
+    component = str(entry.get("component") or "").strip().lower()
+    message = str(entry.get("message") or "").strip().lower()
+
+    if level in {"debug", "trace"}:
+        if "legitimate service range" in message:
+            return True
+        if "inbound connection" in message and "listening" in message:
+            return True
+        if component in {"protection", "intrusiondetector", "intrusion_detector", "ids"}:
+            return True
+
+    noisy_patterns = (
+        r"\blegitimate service range\b",
+        r"\bheartbeat\b",
+        r"\bkeep[- ]?alive\b",
+        r"\bhealthcheck\b",
+    )
+    if level in {"debug", "info"} and any(re.search(pattern, message) for pattern in noisy_patterns):
+        return True
+
+    return False
+
+
+def _is_required_dashboard_log(entry: dict) -> bool:
+    level = str(entry.get("level") or "").strip().lower()
+    message = str(entry.get("message") or "").strip()
+    details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+
+    if not message and _is_empty_log_details(details):
+        return False
+
+    if _is_benign_noise_log(entry):
+        return False
+
+    if level in {"critical", "error", "warning"}:
+        return True
+
+    risk_context = details.get("risk_context") if isinstance(details.get("risk_context"), dict) else {}
+    if bool(details.get("show_response_actions")):
+        return True
+    if bool(risk_context.get("high_risk")) or bool(risk_context.get("credential_risk")):
+        return True
+
+    has_scan_summary = any(
+        details.get(key) not in (None, "", [], {})
+        for key in ("scan_id", "target", "target_type", "threat_level", "verdict", "threats_detected", "short_details")
+    )
+    if has_scan_summary:
+        return True
+
+    security_message = message.lower()
+    required_signal = re.search(
+        r"\b(attack|intrusion|blocked|quarantine|malicious|threat|incident|defense response|scan result|scan completed)\b",
+        security_message,
+    )
+    return bool(required_signal)
+
+
+def _filter_required_dashboard_logs(entries: list[dict]) -> list[dict]:
+    return [entry for entry in entries if _is_required_dashboard_log(entry)]
+
+
 def _load_security_summary_logs(since=None):
     if not SECURITY_EVENT_LOG_PATH.exists():
         return []
@@ -400,7 +604,7 @@ def _load_security_summary_logs(since=None):
 
                 details = entry.get("details") or {}
                 records.append(
-                    {
+                    _normalize_dashboard_log_entry({
                         "id": f"security-summary-{line_number}",
                         "level": "WARNING",
                         "component": "security_summary",
@@ -411,7 +615,7 @@ def _load_security_summary_logs(since=None):
                         "client_ip": entry.get("client_ip"),
                         "path": entry.get("path"),
                         "method": entry.get("method"),
-                    }
+                    })
                 )
     except Exception:
         logger.debug("Failed to read security summary log", exc_info=True)
@@ -420,19 +624,20 @@ def _load_security_summary_logs(since=None):
 
 
 def _serialize_system_log(log):
-    return {
+    return _normalize_dashboard_log_entry({
         "id": log.id,
         "level": log.log_level,
         "component": log.component,
         "message": log.message,
-        "details": log.details,
+        "details": log.details if isinstance(log.details, dict) else {},
         "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-    }
+    })
 
 
 def _merge_dashboard_logs(system_logs, security_summaries):
     combined = [_serialize_system_log(log) for log in system_logs]
     combined.extend(security_summaries)
+    combined = _filter_required_dashboard_logs(combined)
     combined.sort(key=lambda item: _parse_utc_timestamp(item.get("timestamp")) or datetime.min, reverse=True)
     return combined
 
@@ -466,14 +671,14 @@ def _load_protection_log_entries(limit: int = 200):
                     message = tail or line
 
             records.append(
-                {
+                _normalize_dashboard_log_entry({
                     "id": f"protection-log-{idx}",
                     "level": level,
                     "component": "protection",
                     "message": message,
                     "details": {},
                     "timestamp": (ts.isoformat() + "Z") if ts else None,
-                }
+                })
             )
     except Exception:
         logger.debug("Failed to read protection log fallback", exc_info=True)
@@ -1570,8 +1775,11 @@ async def get_dashboard_logs(
     if component and component.lower() != "protection":
         protection_entries = []
 
+    protection_entries = _filter_required_dashboard_logs(protection_entries)
+
     merged = _merge_dashboard_logs(logs, security_summaries)
     merged.extend(protection_entries)
+    merged = _filter_required_dashboard_logs(merged)
     merged.sort(key=lambda item: _parse_utc_timestamp(item.get("timestamp")) or datetime.min, reverse=True)
     return merged[:limit]
 
@@ -1822,6 +2030,7 @@ async def stream_logs(db: AsyncSession = Depends(get_db)):
             logs = result.scalars().all()
             security_summaries = _load_security_summary_logs(since=last_ts)
             merged = _merge_dashboard_logs(logs, security_summaries)
+            merged = _filter_required_dashboard_logs(merged)
             for payload in merged:
                 payload_ts = _parse_utc_timestamp(payload.get("timestamp"))
                 if payload_ts and payload_ts > last_ts:

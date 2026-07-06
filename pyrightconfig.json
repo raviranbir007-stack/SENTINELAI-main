@@ -1,0 +1,35 @@
+{
+  "include": [
+    "*.py",
+    "server",
+    "client",
+    "tests",
+    "tools"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/.*",
+    "**/.git",
+    "**/.venv",
+    ".venv",
+    "**/venv",
+    "venv",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.mypy_cache",
+    "**/.ruff_cache",
+    "**/generated_reports",
+    "logs"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": [
+        "server",
+        "client"
+      ]
+    }
+  ]
+}
