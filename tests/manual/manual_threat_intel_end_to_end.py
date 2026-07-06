@@ -17,7 +17,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Add server to path
-sys.path.insert(0, str(Path(__file__).parent / "server"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "server"))
 
 from app.config import settings
 from app.core.threat_analyzer import ThreatAnalyzer
@@ -123,7 +124,7 @@ async def test_threat_analyzer():
 2. If providers show status "error" or "not_configured":
    - Check your API keys in .env
    - Verify EXTERNAL_APIS_ENABLED=true
-   - Run: python validate_system.py
+    - Run: python scripts/validation/validate_system.py
 
 3. Next steps:
    - Run actual threat scans through the dashboard

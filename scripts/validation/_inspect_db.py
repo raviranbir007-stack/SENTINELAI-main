@@ -4,7 +4,7 @@ import sqlite3
 import pathlib
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parent
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # Resolve database path without importing server modules.
 # Priority:

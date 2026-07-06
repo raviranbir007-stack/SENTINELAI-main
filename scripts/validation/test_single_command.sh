@@ -7,7 +7,9 @@ echo "🧪 Testing Single Command Startup"
 echo "========================================"
 echo ""
 
-cd "$(dirname "$0")/server" || exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT/server" || exit 1
 
 echo "Testing imports..."
 python3 << 'EOF'

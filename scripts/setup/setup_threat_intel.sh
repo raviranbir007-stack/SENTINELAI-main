@@ -9,7 +9,7 @@ echo "════════════════════════�
 echo "           SENTINEL-AI THREAT INTELLIGENCE PROVIDER SETUP WIZARD"
 echo "════════════════════════════════════════════════════════════════════════════════"
 
-PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$PROJECT_ROOT"
 
 echo ""
@@ -34,8 +34,8 @@ fi
 echo "✅ .env file found"
 
 # Check if Python test scripts exist
-if [ ! -f "validate_system.py" ]; then
-    echo "⚠️ validate_system.py not found - creating it..."
+if [ ! -f "scripts/validation/validate_system.py" ]; then
+    echo "⚠️ scripts/validation/validate_system.py not found"
 fi
 
 echo ""
@@ -102,13 +102,13 @@ echo ""
 echo "To fully test and fix your setup, run these tools in order:"
 echo ""
 echo "  1️⃣  System Validation:"
-echo "      python validate_system.py"
+echo "      python scripts/validation/validate_system.py"
 echo ""
 echo "  2️⃣  Provider Connectivity Test:"
-echo "      python test_threat_intel_providers.py"
+echo "      python tests/manual/manual_threat_intel_provider_check.py"
 echo ""
 echo "  3️⃣  End-to-End Analysis Test:"
-echo "      python test_end_to_end.py"
+echo "      python tests/manual/manual_threat_intel_end_to_end.py"
 echo ""
 
 echo "────────────────────────────────────────────────────────────────────────────────"
@@ -116,7 +116,7 @@ echo ""
 echo "✅ SETUP COMPLETE!"
 echo ""
 echo "Next steps:"
-echo "  1. Run: python validate_system.py"
+echo "  1. Run: python scripts/validation/validate_system.py"
 echo "  2. Fix any missing API keys shown above"
 echo "  3. Restart SENTINEL-AI server"
 echo "  4. Run a threat scan and check the telemetry coverage report"

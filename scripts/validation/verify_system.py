@@ -11,6 +11,7 @@ import json
 
 BASE_URL = "http://localhost:8000"
 API_PREFIX = f"{BASE_URL}/api/v1"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class Colors:
     GREEN = '\033[92m'
@@ -88,10 +89,10 @@ def check_files():
     print_header("File Integrity Checks")
     
     checks = [
-        ("compat.py router", Path("/home/kali/Documents/SENTINELAI-main/server/app/api/compat.py")),
-        ("reports.py", Path("/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/reports.py")),
-        ("dashboard.py", Path("/home/kali/Documents/SENTINELAI-main/server/app/api/v1/endpoints/dashboard.py")),
-        ("api.js", Path("/home/kali/Documents/SENTINELAI-main/server/app/static/js/api.js")),
+        ("compat.py router", PROJECT_ROOT / "server/app/api/compat.py"),
+        ("reports.py", PROJECT_ROOT / "server/app/api/v1/endpoints/reports.py"),
+        ("dashboard.py", PROJECT_ROOT / "server/app/api/v1/endpoints/dashboard.py"),
+        ("api.js", PROJECT_ROOT / "server/app/static/js/api.js"),
     ]
     
     for name, path in checks:
@@ -145,7 +146,7 @@ def main():
     
     # Check files
     check_files()
-    compat_path = Path("/home/kali/Documents/SENTINELAI-main/server/app/api/compat.py")
+    compat_path = PROJECT_ROOT / "server/app/api/compat.py"
     check_router_init(compat_path)
     
     # Test endpoints

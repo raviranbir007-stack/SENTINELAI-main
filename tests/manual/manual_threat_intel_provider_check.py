@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 
 # Add server to path
-sys.path.insert(0, str(Path(__file__).parent / "server"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "server"))
 
 from app.config import settings
 from app.services.virus_total import VirusTotalService

@@ -7,6 +7,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 .env
 .venv/
 .venv-ml/
@@ -19,6 +20,7 @@ venv.bak/
 *.egg-info/
 dist/
 build/
+pip-wheel-metadata/
 
 # API Keys & Secrets
 .env
@@ -34,6 +36,8 @@ client/config.ini
 .idea/
 *.swp
 *.swo
+*.bak
+*.orig
 
 # OS
 .DS_Store
@@ -42,20 +46,31 @@ Thumbs.db
 # Logs
 *.log
 logs/
+*.log.*
+nohup.out
 quarantine_log.json
 
 # Temp files
 *.tmp
 *.temp
+tmp/
+temp/
 
 # Database
 *.db
 *.db-wal
 *.db-shm
 *.sqlite
+*.sqlite3
 instance/
 server/generated_reports/
 generated_reports/
+
+# Runtime outputs
+*.pid
+*.out
+*.err
+reports_output/
 
 # Coverage
 .coverage
@@ -65,3 +80,6 @@ htmlcov/
 .ipynb_checkpoints
 
 # PyCharm
+
+# VS Code test/workflow noise
+.vscode-test/

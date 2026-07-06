@@ -145,7 +145,7 @@ echo ""
 echo -e "${BLUE}Next steps:${NC}"
 case $SETUP_TYPE in
     "complete")
-        echo "  1. Start the system: ./START.sh"
+        echo "  1. Start the system: ./scripts/run/START.sh"
         echo "  2. Access dashboard: http://localhost:8000"
         ;;
     "server")

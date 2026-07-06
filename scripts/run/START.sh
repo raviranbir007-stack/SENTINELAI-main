@@ -1,6 +1,9 @@
 #!/bin/bash
 # Quick Start - SENTINEL-AI Integrated System
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 clear
 echo "╔══════════════════════════════════════════════════════════════════╗"
 echo "║           SENTINEL-AI v3.0 - Quick Start                        ║"
@@ -30,14 +33,14 @@ case $choice in
         echo ""
         echo "🚀 Starting SENTINEL-AI with full monitoring..."
         echo ""
-        cd /home/kali/Documents/SENTINELAI-main/server
+        cd "$PROJECT_ROOT/server"
         sudo bash start_integrated.sh
         ;;
     2)
         echo ""
         echo "⚠️  Starting without sudo (blocking disabled)..."
         echo ""
-        cd /home/kali/Documents/SENTINELAI-main/server
+        cd "$PROJECT_ROOT/server"
         python3 run_app.py
         ;;
     3)
@@ -52,7 +55,7 @@ case $choice in
         ;;
     4)
         echo ""
-        cd /home/kali/Documents/SENTINELAI-main/client
+        cd "$PROJECT_ROOT/client"
         if [ -f "activity_logs.db" ]; then
             echo "📊 Activity Database Statistics:"
             echo ""

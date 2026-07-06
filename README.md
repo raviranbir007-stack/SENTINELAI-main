@@ -1,53 +1,46 @@
 # SENTINEL-AI
 
-SENTINEL-AI is a Python-based security platform for endpoint monitoring, threat detection, defense orchestration, and operational reporting. It combines a local client, a server-side API and dashboard, and external threat-intelligence integrations into a single workflow for defensive security operations.
+SENTINEL-AI is a Python-based cybersecurity platform developed as a final-year project to demonstrate endpoint monitoring, threat intelligence enrichment, attack detection, and defensive response coordination.
 
-## Overview
+## Problem Statement
 
-The repository is organized around two primary components:
+Modern endpoints generate large volumes of security-relevant events, but many small organizations and student labs lack integrated tooling to correlate telemetry, enrich threats, and respond quickly. SENTINEL-AI addresses this gap by combining local monitoring, server-side analysis, and actionable dashboard visibility in one project.
 
-- `client/` contains the endpoint client and local scanning modules.
-- `server/` contains the FastAPI backend, dashboard API, defense workflows, and reporting logic.
-
-Supporting folders provide dependency manifests, automated tests, and operational utilities.
-
-## Key Capabilities
+## Key Features
 
 - Real-time endpoint telemetry collection
-- Intrusion detection and prevention orchestration
-- Network, process, file, DNS, USB, email, and behavior monitoring
-- Threat enrichment through VirusTotal, AbuseIPDB, URLScan, Shodan, and Hybrid Analysis
-- AI-assisted analysis and reporting with Gemini support
-- Dashboard and API endpoints for monitoring, defense, threats, and reports
-- Rotating log files and health checks for operational visibility
+- Multi-surface monitoring: process, file, network, DNS, USB, email, and behavior
+- Threat intelligence enrichment via VirusTotal, AbuseIPDB, Shodan, URLScan, and Hybrid Analysis
+- AI-assisted analysis and reporting workflows
+- FastAPI-powered backend with dashboard and API endpoints
+- Defensive orchestration for alerting and containment pipelines
+- Security reporting and operational visibility
 
-## Architecture
+## Architecture Overview
 
-1. The client agent collects endpoint telemetry and performs local scans.
-2. The server receives data, applies analysis, and exposes dashboard and API workflows.
-3. Threat-intelligence services enrich indicators with external context.
-4. Defense modules coordinate alerting, blocking, and response actions.
-5. Reporting modules generate operational and advanced security reports.
+1. Client modules collect host telemetry and suspicious activity signals.
+2. Server APIs ingest and normalize events.
+3. Core analysis components score and correlate threats.
+4. Intelligence adapters enrich indicators with external context.
+5. Defense components coordinate alerts and response actions.
+6. Reporting modules generate technical and executive outputs.
 
-## Project Structure
+## Technology Stack
 
-- `client/sentinel_client_v3.py` is the main client entry point.
-- `client/scanner/` contains the endpoint monitoring and scan engines.
-- `server/run_server.py` is the integrated launcher.
-- `server/app/main.py` defines the FastAPI application lifecycle.
-- `server/app/api/v1/endpoints/` contains the public API surface.
-- `server/app/core/` contains the detection, response, and reporting logic.
-- `server/app/services/` contains external integration adapters.
-- `tests/` contains the automated test suite.
-- `tools/` contains helper scripts for validation and reporting.
-- `requirements/` contains the dependency sets for different runtime targets.
+- Language: Python 3.11+
+- Backend: FastAPI, Uvicorn
+- Database: SQLite (project runtime)
+- Security tooling: Bandit, Gitleaks, custom IDS/IPS components
+- Testing: Pytest and manual security validation scripts
+- Integrations: VirusTotal, AbuseIPDB, Shodan, URLScan, Hybrid Analysis, Gemini
 
-## Quick Start
+## Installation
 
-### 1. Create a virtual environment
+1. Clone the repository and enter project root.
+2. Create and activate a virtual environment.
+3. Install dependencies.
 
 ```bash
-cd /home/kali/Documents/SENTINELAI-main
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -55,78 +48,70 @@ pip install -r requirements/server.txt
 pip install -r requirements/client.txt
 ```
 
-### 2. Configure environment variables
+4. Prepare environment configuration.
 
 ```bash
 cp .env.example .env
 ```
 
-Configure the required secrets and integrations in `.env`, including:
+5. Add required API keys in `.env`.
 
-- `VIRUSTOTAL_API_KEY`
-- `ABUSEIPDB_API_KEY`
-- `SHODAN_API_KEY`
-- `HYBRIDANALYSIS_API_KEY`
-- `URLSCAN_API_KEY`
+## Usage
 
-Optional values for AI and notifications can also be added, such as:
-
-- `GEMINI_API_KEY`
-- `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
-- `FROM_EMAIL`, `ALERT_EMAIL`, `CLIENT_REGISTRATION_ALERT_EMAILS`
-
-### 3. Start the system
+1. Start backend service:
 
 ```bash
-sudo /home/kali/Documents/SENTINELAI-main/.venv/bin/python /home/kali/Documents/SENTINELAI-main/server/run_server.py
-```
-
-Then open:
-
-- Dashboard: `http://localhost:8000`
-- API docs: `http://localhost:8000/api/docs`
-- Health check: `http://localhost:8000/api/v1/health`
-
-## Main API Areas
-
-The API is grouped under the `/api/v1` prefix:
-
-- `/auth` for authentication workflows
-- `/scan` for scan submission and analysis
-- `/threats` for findings and threat management
-- `/dashboard` for status and summary views
-- `/monitoring` for background monitor control
-- `/network` for network defense operations
-- `/defense` for response and containment actions
-- `/reports` and `/advanced-reports` for standard and advanced reporting
-- `/ai-prediction` and `/analyze` for AI-assisted analysis
-
-## Testing
-
-Run the main test suite from the repository root:
-
-```bash
-cd /home/kali/Documents/SENTINELAI-main
 source .venv/bin/activate
-pytest -q
+python server/run_server.py
 ```
 
-Additional validation scripts are available in `tests/` and `tools/` for targeted checks.
+2. Open local interfaces:
+- Dashboard: http://localhost:8000
+- API docs: http://localhost:8000/api/docs
+- Health endpoint: http://localhost:8000/api/v1/health
 
-## Operational Notes
+3. Optional operational scripts:
+- Full run helper: `scripts/run/run_complete_system.sh`
+- Validation checks: `scripts/validation/`
+- Security simulation scripts: `scripts/security/`
 
-- Logs are written to `logs/` with rotation enabled.
-- The server can run with elevated host-level prevention controls when launched with the appropriate privileges.
-- Admin infrastructure identity can be controlled through `ADMIN_INFRA_HOSTNAMES` and `ADMIN_INFRA_IPS` in `.env`.
-- Keep environment files and API keys private; do not commit secrets to the repository.
+## Project Structure
 
-## Contributing
+```text
+SENTINELAI-main/
+|-- client/                 # Endpoint agent and scanner modules
+|-- server/                 # FastAPI app, core logic, services, migrations
+|-- tests/                  # Automated tests and manual validation scripts
+|   |-- manual/             # Manual/instructor demonstration test scripts
+|-- scripts/                # Run, setup, validation, and security helper scripts
+|-- tools/                  # Utility tooling for development and packaging
+|-- docs/                   # Supplemental project documentation
+|-- requirements/           # Dependency sets by runtime profile
+|-- README.md
+|-- LICENSE
+```
 
-1. Create a feature branch for the change.
-2. Keep each commit focused and testable.
-3. Run the relevant validation steps before opening a pull request.
-4. Include clear technical notes and evidence of verification.
+## Screenshots
 
-## Security Notice
+Add screenshots in this section before final submission/public showcase.
 
-SENTINEL-AI includes active monitoring and defensive controls. Use it only on systems you own or are explicitly authorized to test.
+- Dashboard overview
+- Threat detection event feed
+- Incident/alerts panel
+- Report generation view
+
+## Ethical Use and Disclaimer
+
+This project is for defensive cybersecurity education and authorized testing only. Do not run attack simulations, scanning, or automated defensive controls against systems you do not own or do not have explicit permission to assess.
+
+## Future Improvements
+
+- Containerized deployment for reproducible environments
+- Expanded SIEM integration and structured log export
+- Role-based access controls and stronger audit trails
+- More comprehensive unit and integration test coverage
+- Threat model documentation and benchmarking dataset support
+
+## License
+
+This project is distributed under the license in [LICENSE](LICENSE).

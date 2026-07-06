@@ -2,10 +2,14 @@
 # SENTINEL-AI Simple Server Launcher
 # This script starts the FastAPI server properly
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
 
 # Activate virtual environment
-source .venv/bin/activate
+if [ -f ".venv/bin/activate" ]; then
+	source .venv/bin/activate
+fi
 
 # Snapshot credentials before startup so .env can be restored if files are lost.
 ./tools/backup_env.sh

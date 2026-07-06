@@ -4,6 +4,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,7 +37,7 @@ echo -e "${NC}"
 # Check if running with proper privileges
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}❌ This script must be run as root or with sudo${NC}"
-   echo "Usage: sudo ./run_complete_system.sh"
+    echo "Usage: sudo ./scripts/run/run_complete_system.sh"
    exit 1
 fi
 
@@ -98,8 +102,8 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Prefer venv Python if available
 PYTHON_BIN="python3"
-if [ -x "/home/kali/Documents/SENTINELAI-main/.venv/bin/python" ]; then
-    PYTHON_BIN="/home/kali/Documents/SENTINELAI-main/.venv/bin/python"
+if [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+    PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
 elif [ -x "$PWD/.venv/bin/python" ]; then
     PYTHON_BIN="$PWD/.venv/bin/python"
 fi

@@ -4,6 +4,9 @@ import json
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # Test imports
 try:
     from server.app.api.v1.endpoints import scan as scan_ep
@@ -63,9 +66,9 @@ async def run_tests():
             
             # Test 7: Check file paths
             print("\n📁 Test 7: File Paths Verification")
-            generated_dir = Path(__file__).resolve().parents[0] / "generated_reports"
-            protection_log = Path(__file__).resolve().parents[0] / "logs" / "protection.log"
-            activity_db = Path(__file__).resolve().parents[0] / "server" / "activity_monitoring.db"
+            generated_dir = PROJECT_ROOT / "generated_reports"
+            protection_log = PROJECT_ROOT / "logs" / "protection.log"
+            activity_db = PROJECT_ROOT / "server" / "activity_monitoring.db"
             
             print(f"  📂 Generated reports dir: {generated_dir.exists() and '✅' or '⚠️'}")
             print(f"  📂 Protection log: {protection_log.exists() and '✅' or '⚠️'}")

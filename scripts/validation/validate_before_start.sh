@@ -6,7 +6,8 @@ set -u
 echo "🔍 Validating system before start..."
 echo ""
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
 if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="$(command -v python3)"

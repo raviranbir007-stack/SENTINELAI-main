@@ -9,8 +9,10 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 # Test database
-db_path = Path("/home/kali/Documents/SENTINELAI-main/server/database.db")
+db_path = PROJECT_ROOT / "server/database.db"
 
 def get_test_scan_data():
     """Get test scan data from database"""
@@ -34,7 +36,7 @@ def get_test_scan_data():
 def trigger_report_generation():
     """Trigger report generation via the report generator"""
     import sys
-    sys.path.insert(0, '/home/kali/Documents/SENTINELAI-main')
+    sys.path.insert(0, str(PROJECT_ROOT))
     
     from server.app.core.report_generator import ReportGenerator
     from server.app.config import settings

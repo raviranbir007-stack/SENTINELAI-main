@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple
 def check_env_file() -> Tuple[bool, Dict[str, str]]:
     """Check if .env file exists and contains required API keys"""
     
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).resolve().parents[2] / ".env"
     
     print("\n" + "="*80)
     print("1. ENVIRONMENT FILE CHECK")
@@ -165,11 +165,11 @@ STEP 2: Enable External APIs
 
 STEP 3: Test Provider Connectivity
 ───────────────────────────────────
-   python test_threat_intel_providers.py
+    python tests/manual/manual_threat_intel_provider_check.py
 
 STEP 4: Verify System Configuration
 ────────────────────────────────────
-   python validate_system.py
+    python scripts/validation/validate_system.py
 
 COMMON ISSUES & SOLUTIONS
 ═════════════════════════
@@ -308,7 +308,6 @@ def main():
     
     if all_apis_working < 1:
         print("\n❌ NO THREAT INTELLIGENCE PROVIDERS CONFIGURED!")
-        print("   Your system will only use local heuristic analysis.")
     elif all_apis_working < 3:
         print("\n⚠️  LIMITED THREAT INTELLIGENCE COVERAGE")
         print("   Configure more providers for better threat detection.")

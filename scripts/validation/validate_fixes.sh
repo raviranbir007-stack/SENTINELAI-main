@@ -3,7 +3,8 @@
 
 set -u
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR" || exit 1
 
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
